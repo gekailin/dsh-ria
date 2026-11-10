@@ -257,6 +257,44 @@ continuation 要求 worker 先检查工作区、已改文件和测试，从中�
 - 微信消息只进入 Super，不直接进 worker。
 - 重连时待发文本超过 10 条，只补发最后 10 条，并先提示跳过了多少条。
 
+### 11.1 长回复转 .md 文件
+
+微信的普通 sendText 会按 1800 字切块，超过 4 块截断，长回复和复杂 Markdown 在微信里很难读。出站改为：每条 assistant 文本先判定，命中任一条件就发完整的 .md 文件；短消息和简单文本仍直接发文本，不多出附件。
+
+判定条件是 OR：
+
+- enabled 为真，且字符数超过 charThreshold。
+- 有围栏代码块（三个反引号或三个波浪线）。
+- 有 Markdown 表格（表头行 + 分隔行）。
+- Markdown 标题数达到 headingCount。
+- Markdown 链接数达到 linkCount。
+
+默认值：enabled=true、charThreshold=1800、codeBlock=true、table=true、headingCount=4、linkCount=6。阈值限制在 80–100000，标题/链接数限制在 1–50/1–500。
+
+配置可以在 profile 的插件行里给 markdownFile，也可以被环境变量覆盖（环境变量优先）：
+
+~~~yaml
+- id: super-session
+  config:
+    markdownFile:
+      enabled: true
+      charThreshold: 1800
+      codeBlock: true
+      table: true
+      headingCount: 4
+      linkCount: 6
+~~~
+
+markdownFile 也可以直接写 false 关闭。环境变量优先于 profile 配置：DSH_SUPER_SESSION_MD_FILE、DSH_SUPER_SESSION_MD_THRESHOLD、DSH_SUPER_SESSION_MD_CODE、DSH_SUPER_SESSION_MD_TABLE、DSH_SUPER_SESSION_MD_HEADINGS、DSH_SUPER_SESSION_MD_LINKS。布尔值接受 1/true/yes/on 和 0/false/no/off。
+
+发送：
+
+- 文件名 super-<Session id 后 8 位>-YYYYMMDD-HHmmss.md；内容是完整回复，不截断。
+- 文件先在内存里，不落临时文件；Outbound 的文本和文件共用同一个串行队列。
+- WebWxClient.sendFile 先 multipart 上传到网页版文件主机（file.wx.qq.com），拿到 MediaId/Signature，再发 Type=6 的 appmsg。
+- 命中后先发一条短文本“（内容较长，已转为 Markdown 文件发送）”，再发文件，不重复正文。
+- 上传或发送失败时回退文本，正文前加“（原回复已转为 Markdown 文件，但文件发送失败，以下改为文本）”。仍然失败就进 outbox，按重连策略处理。
+
 微信设置放在 Super Session 入口标题右侧的 chip：
 
 - 宽侧边栏显示；折叠状态暂不显示。
@@ -333,6 +371,8 @@ Phase 7：任务派发防误发提示（仅带 taskId 的 request，固定 text 
 
 Phase 8：临时 worker 权限 grant（set/list/reset、原值记录、task 关闭/过期/启动恢复、审计）。
 
+Phase 9：微信出站长回复/复杂 Markdown 转 .md 文件（可配置阈值和复杂度规则、完整文件、失败回退文本）。
+
 ## 16. 验收
 
 1. 点击入口只创建一个 Super。
@@ -351,6 +391,7 @@ Phase 8：临时 worker 权限 grant（set/list/reset、原值记录、task 关�
 14. 新建 Super 显示一次欢迎消息；已存在/重启不重复；不占用户消息位；不调用模型；Web UI 显示为正常 assistant 消息。
 15. 任务派发提示要求 worker 对明显无关的消息先确认、相关消息正常执行；不改 worker tools/system prompt；quick relay 不加提示。
 16. 临时权限只能由用户明确指令触发；set 需要 userConfirmed=true；记录原值；task close/reset/expiry/startup 恢复；手工改动跳过；审计可查。
+17. 微信长回复/复杂 Markdown 按可配置规则转完整 .md 文件；短消息不变；文件发送失败回退文本并提示。
 
 ## 17. 已确认
 
@@ -359,6 +400,7 @@ Phase 8：临时 worker 权限 grant（set/list/reset、原值记录、task 关�
 - 微信积压 N=10。
 - memory 只做 memory.md，不做 lessons/FTS5。
 - 微信设置在入口右侧 chip。
+- 微信长回复/复杂 Markdown 转 .md：默认 1800 字，代码块/表格/4 标题/6 链接任一命中。
 - request 是普通会话消息，使用 DSH 支持的消息类型。
 
 ## 18. 风险
@@ -373,6 +415,7 @@ Phase 8：临时 worker 权限 grant（set/list/reset、原值记录、task 关�
 | memory 过期/膨胀 | 当前消息优先；4KB 上限；用户可删 |
 | 微信全量同步 | 已接受；后续可做 turn 关联 |
 | 微信长连接绑 DSH 进程 | 重启加载 creds 重连，通常不扫码 |
+| 微信文件上传协议随网页版变化 | 规则命中时尝试上传/发 appmsg；任一步失败回退文本并提示 |
 | 入口 chip 是 DOM 注入 | MutationObserver；宽侧边栏才显示 |
 | 欢迎消息伪造 turn 0 | 已用真实 UI 验证正常显示；UI 会计 1 轮 1 步并显示已完成，属可接受的外观副作用 |
 | 临时权限被滥用 | 只能用户明确指令 + userConfirmed；单 worker、单 grant、TTL 上限 24h；task close/启动恢复；审计 |
@@ -381,14 +424,15 @@ Phase 8：临时 worker 权限 grant（set/list/reset、原值记录、task 关�
 
 ## 19. 总结
 
-全局一个 Super Session，PTC preset（agentPreset=ptc）+ 管理者 prompt、memory.md 和 7 个工具；模型通过 run_code SDK 调用工具；用 task 管理谁做什么，request 就是普通会话消息；带 taskId 的派发自动附一条中性的防误发提示；重启按 task 继续；微信客户端进程内运行；新建会话有一条不调用模型的一次性欢迎消息。
+全局一个 Super Session，PTC preset（agentPreset=ptc）+ 管理者 prompt、memory.md 和 7 个工具；模型通过 run_code SDK 调用工具；用 task 管理谁做什么，request 就是普通会话消息；带 taskId 的派发自动附一条中性的防误发提示；重启按 task 继续；微信客户端进程内运行，长回复/复杂 Markdown 自动转 .md 文件；新建会话有一条不调用模型的一次性欢迎消息。
 
 ## 20. 实现状态
 
 截至当前版本：
 
-- Phase 0–8 已实现；Phase 0–4 和 Phase 6 通过隔离环境的真实 DSH 验证，Phase 5、Phase 7 和 Phase 8 由单元测试和 smoke 覆盖。
+- Phase 0–9 已实现；Phase 0–4 和 Phase 6 通过隔离环境的真实 DSH 验证，Phase 5、Phase 7、Phase 8 和 Phase 9 由单元测试和 smoke 覆盖。
 - 临时 worker 权限（审批阶段二）已实现，等待用户在真实会话里首次验证。
+- 微信文件发送链路已实现并用 mock 覆盖，尚未用真实微信账号完成 .md 收发验证。
 
 文件：
 
@@ -396,11 +440,13 @@ Phase 8：临时 worker 权限 grant（set/list/reset、原值记录、task 关�
 - lib/approvals.mjs：approval/request 只读观察器、pending 列表、TTL/abort/shutdown 清理。
 - lib/grants.mjs：临时权限 set/list/reset、原值记录、task close/expiry/startup 恢复、审计、失败重试。
 - lib/client.js：侧边栏入口、瞬时 launcher、入口右侧微信 chip 和登录弹层。
-- lib/wechat/wxweb.mjs、login.mjs、outbound.mjs：复用的文件传输助手协议、扫码登录和串行发送。
-- lib/wechat/service.mjs：进程内连接、assistant 文本回传、入站去重、Super 投递、重连积压处理。
+- lib/wechat/wxweb.mjs、login.mjs、outbound.mjs：复用的文件传输助手协议、扫码登录、串行发送，以及 .md 文件上传/appmsg 发送。
+- lib/wechat/markdown.mjs：长度/代码块/表格/标题/链接判定、配置归一化、文件名。
+- lib/wechat/service.mjs：进程内连接、assistant 文本回传、长回复转文件/失败回退、入站去重、Super 投递、重连积压处理。
 - cordis.patch.yml：插件 patch。
 - test/smoke.mjs：Host 流程 smoke。
 - test/wechat.mjs：微信服务单元测试。
+- test/wechat-file.mjs：Markdown 判定、文件发送、失败回退和 multipart/appmsg 单元测试。
 - test/approvals.mjs：审批观察器单元测试。
 - test/grants.mjs：临时权限单元测试（过期、startup、漂移跳过、恢复失败、审计）。
 
@@ -413,7 +459,7 @@ Phase 8：临时 worker 权限 grant（set/list/reset、原值记录、task 关�
 - GET /health、POST /ensure、GET /state 正常。
 - GET /wechat/status 返回 idle；POST /wechat/login 返回 data:image/jpeg 二维码；弹层显示 190×190 二维码。
 - 宽侧边栏中 chip 位于 Super Session 标题右侧；折叠侧边栏不插入。
-- smoke 覆盖 Workspace 挂载、7 个工具注册、request 投递、task 派发防误发提示、quick relay 不加提示、status、read、memory、持久化，以及 welcome 五事件序列和第二次 ensure 不重复；wechat 测试覆盖文本提取、事件过滤、入站去重/回显过滤、失败标记、reconnect skip 和状态视图；approvals 测试覆盖活跃 executor 过滤、始终 next()、abort/TTL/shutdown 清理和 lossless 输出；grants 测试覆盖授权门槛、原值记录、task done 自动恢复、显式 reset、过期、startup、漂移跳过、恢复失败和审计。
+- smoke 覆盖 Workspace 挂载、7 个工具注册、request 投递、task 派发防误发提示、quick relay 不加提示、status、read、memory、持久化，以及 welcome 五事件序列和第二次 ensure 不重复；wechat 测试覆盖文本提取、事件过滤、入站去重/回显过滤、失败标记、reconnect skip 和状态视图；approvals 测试覆盖活跃 executor 过滤、始终 next()、abort/TTL/shutdown 清理和 lossless 输出；grants 测试覆盖授权门槛、原值记录、task done 自动恢复、显式 reset、过期、startup、漂移跳过、恢复失败和审计；wechat-file 测试覆盖阈值/代码块/表格/标题/链接、配置/env、文件名、短消息不变、长消息发 .md、失败回退，以及上传和 appmsg 字段。npm test 五个测试全部通过。
 - 新建 Super 后真实 Web UI 显示欢迎消息；会话界面显示“已完成，用时 1 秒”和“1 轮 1 步”，输入框正常；没有浏览器 runtime error。
 - 审批观察器没有在真实 UI 中触发过；只做了单元测试和 smoke。首次实际审批时需确认 pending 列表和清理行为。
 - welcome 的合成 turn 会被 UI 计入“1 轮 1 步”，并显示“已完成”；这是 assistant 气泡可正常渲染的代价。
@@ -427,3 +473,5 @@ Phase 8：临时 worker 权限 grant（set/list/reset、原值记录、task 关�
 - 防误发提示依赖 worker 模型遵守；插件无法强制或验证，worker 仍可能直接执行。
 - 临时权限没有在真实会话里触发过；只做了单元测试和 smoke，首次 grant 时需确认 DSH 事件投影和恢复行为。
 - sandbox override 无法清除；恢复写回原 effective mode，可能留下同值 override。
+- 微信 .md 文件发送只按网页版协议 mock 验证；真实账号的文件上传/下载尚未验证。
+- .md 文件发送失败回退文本时，若文本仍超过 4 块，会按原有文本切块策略截断。

@@ -8,9 +8,9 @@ Super 自己是一个普通的顶层 DSH Session，运行 PTC preset，带管理
 
 ## 当前状态
 
-- Phase 0–8 已实现：单例、PTC 创建、任务、转述、读取、memory、重启恢复、侧边栏入口、进程内微信和入口右侧的微信 chip、worker 审批可见性、新会话欢迎消息、任务派发防误发提示，以及临时 worker 权限调整。
+- Phase 0–9 已实现：单例、PTC 创建、任务、转述、读取、memory、重启恢复、侧边栏入口、进程内微信和入口右侧的微信 chip、worker 审批可见性、新会话欢迎消息、任务派发防误发提示、临时 worker 权限调整，以及微信长回复/复杂 Markdown 自动转 .md 文件。
 - 已验证环境：DSH 0.2.2-rc.1，Node 26，真实 Web profile 的隔离副本。
-- 微信只支持文本；扫码登录需要在弹层里完成一次，之后 DSH 重启会自动复用凭据。
+- 微信入站只接受文本；扫码登录需要在弹层里完成一次，之后 DSH 重启会自动复用凭据。
 
 ## 安装
 
@@ -70,9 +70,40 @@ Super Session 入口标题右侧有一个“微信”chip。点开后可以扫�
 - 凭据和去重/待发状态在 `DSH_HOME/state/super-session/wechat/`，文件权限 0600。
 - 微信发来的文本原样作为普通用户消息进入 Super，不加前缀，也不直接进 worker。
 - Super 的每条 assistant 文本回复都会同步回微信。
-- 只处理文本；图片和文件仍建议直接在 Super Session 界面发送。
+- 入站只处理文本；图片和文件仍建议直接在 Super Session 界面发送。
+- 出站长回复或复杂 Markdown 时，默认改发完整的 .md 文件；短消息和简单文本保持原样。
 - DSH 重启后如有 creds 会自动重连；待发文本超过 10 条时只补发最后 10 条，并先提示跳过了多少条。
 - chip 只在宽侧边栏显示；折叠侧边栏不插入。
+
+### 长回复转 .md 文件
+
+每条 assistant 文本回复都会先过规则；命中任意一项就发 .md 文件，否则直接发文本：
+
+| 命中条件 | 默认值 |
+|---|---|
+| 字符数 | 超过 1800 |
+| 代码块 | 有围栏代码块（三个反引号或三个波浪线） |
+| 表格 | 有 Markdown 表格 |
+| 标题 | 4 个及以上 Markdown 标题 |
+| 链接 | 6 个及以上 Markdown 链接 |
+
+文件名形如 `super-<会话短 id>-YYYYMMDD-HHmmss.md`，内容是完整回复，不截断。命中后先发一条短提示“（内容较长，已转为 Markdown 文件发送）”，再发文件，不重复正文；上传或发送文件失败时，回退为文本，并在正文前加“（原回复已转为 Markdown 文件，但文件发送失败，以下改为文本）”。
+
+配置写在 profile 的 `cordis.yml` 里，覆盖插件行：
+
+~~~yaml
+- id: super-session
+  config:
+    markdownFile:
+      enabled: true
+      charThreshold: 1800
+      codeBlock: true
+      table: true
+      headingCount: 4
+      linkCount: 6
+~~~
+
+也可以直接写 `markdownFile: false` 关闭整套规则。环境变量优先级高于 profile 配置：`DSH_SUPER_SESSION_MD_FILE`、`DSH_SUPER_SESSION_MD_THRESHOLD`、`DSH_SUPER_SESSION_MD_CODE`、`DSH_SUPER_SESSION_MD_TABLE`、`DSH_SUPER_SESSION_MD_HEADINGS`、`DSH_SUPER_SESSION_MD_LINKS`。阈值会被限制在安全范围（80–100000 字符）。
 
 ## 工具
 
@@ -161,11 +192,13 @@ DSH_HOME/state/super-session/
 npm test
 ~~~
 
-smoke 使用 mock ctx 覆盖 ensure、Workspace 挂载、7 个工具、request、task 派发防误发提示、quick relay 不加提示、status、read、memory、持久化、grant 的 set/list/reset 与 task 关闭恢复、GET /state 的 grants，以及欢迎消息的五事件序列和第二次 ensure 不重复；wechat 测试覆盖 assistant 文本提取、入口事件过滤、微信入站去重/回显过滤、失败标记、reconnect skip 和状态视图；approvals 测试覆盖只记录活跃 executor、始终 next()、abort/超时/shutdown 清理和 lossless 输出；grants 测试覆盖过期、startup、task 缺失/关闭、漂移跳过、恢复失败和审计。
+smoke 使用 mock ctx 覆盖 ensure、Workspace 挂载、7 个工具、request、task 派发防误发提示、quick relay 不加提示、status、read、memory、持久化、grant 的 set/list/reset 与 task 关闭恢复、GET /state 的 grants，以及欢迎消息的五事件序列和第二次 ensure 不重复；wechat 测试覆盖 assistant 文本提取、入口事件过滤、微信入站去重/回显过滤、失败标记、reconnect skip 和状态视图；wechat-file 测试覆盖阈值/代码块/表格/标题/链接判定、配置/env 覆盖、文件名、短消息不变、长消息发 .md、失败回退文本，以及上传 multipart 和 appmsg 的字段/签名/去重；approvals 测试覆盖只记录活跃 executor、始终 next()、abort/超时/shutdown 清理和 lossless 输出；grants 测试覆盖过期、startup、task 缺失/关闭、漂移跳过、恢复失败和审计。
 
 ## 限制
 
-- 微信协议依赖「文件传输助手」网页版，只有文本；扫码登录和消息收发需要真实微信账号验证。
+- 微信协议依赖「文件传输助手」网页版；入站只有文本，出站文件也只发 .md。
+- 微信文件上传/发送链路按网页版协议实现并用 mock 覆盖，尚未用真实微信账号完成一次 .md 文件收发验证。
+- 扫码登录和消息收发仍需要真实微信账号验证。
 - 审批可见性只报告 pending，不代批、不自动唤醒 Super；临时权限需要用户明确指令，Super 不能自行判断后提权。
 - 不做 needs_input/failed 的即时自动唤醒；需要时用官方 schedule 或用户回来问。
 - 不做多实例防双开。

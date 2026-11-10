@@ -14,7 +14,7 @@
   "type": "module",
   "main": "lib/index.js",
   "scripts": {
-    "test": "node test/smoke.mjs && node test/wechat.mjs && node test/approvals.mjs && node test/grants.mjs"
+    "test": "node test/smoke.mjs && node test/wechat.mjs && node test/wechat-file.mjs && node test/approvals.mjs && node test/grants.mjs"
   },
   "exports": {
     ".": "./lib/index.js",

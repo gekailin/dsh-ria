@@ -68,7 +68,7 @@ const ctx = {
     async list() {
       return { items: [
         { sessionId: superId, running: false, blank: false, updatedAt: 1, cwd: stateDir },
-        { sessionId: 'session-worker', running: true, blank: false, updatedAt: 2, cwd: '/tmp' },
+        { sessionId: 'session-worker', running: true, blank: false, updatedAt: 2 },
         { sessionId: 'session-child', running: false, blank: false, updatedAt: 3, cwd: '/tmp', parentSessionId: 'session-worker', origin: 'subagent' },
       ] }
     },
@@ -80,6 +80,18 @@ const ctx = {
     async events() { return { records: [], hasMore: false, cursor: 0 } },
     async rename() { return { title: 'Super Session', seq: 1 } },
   },
+}
+
+function assertLossless(value, path = '$') {
+  if (value === undefined) throw new Error(path + ' is undefined')
+  if (typeof value === 'number' && !Number.isFinite(value)) throw new Error(path + ' is not a finite number')
+  if (typeof value === 'bigint' || typeof value === 'function' || typeof value === 'symbol') throw new Error(path + ' is not JSON data')
+  if (value && typeof value === 'object') {
+    if (Object.prototype.toString.call(value) === '[object Date]') throw new Error(path + ' is a Date')
+    if (Array.isArray(value)) value.forEach((item, index) => assertLossless(item, path + '[' + index + ']'))
+    else for (const [key, item] of Object.entries(value)) assertLossless(item, path + '.' + key)
+  }
+  JSON.stringify(value)
 }
 
 apply(ctx, { stateDir })
@@ -122,8 +134,15 @@ assert.equal(prompts.at(-1).content[0].text, 'please fix')
 assert.equal(prompts.at(-1).requestId.startsWith('req_'), true)
 const status = await call('super_session_status', { scope: 'tasks' })
 assert.equal(status.tasks[0].status, 'working')
+assertLossless(status)
 const sessions = await call('super_session_status', { scope: 'sessions' })
 assert.deepEqual(sessions.sessions.map(item => item.sessionId), [superId, 'session-worker'].filter(id => id !== superId))
+assertLossless(sessions)
+assert.equal('parentSessionId' in sessions.sessions[0], false)
+assert.equal('cwd' in sessions.sessions[0], false)
+const sessionStatus = await call('super_session_status', { scope: 'sessions', sessionId: 'session-worker' })
+assert.equal(sessionStatus.session.sessionId, 'session-worker')
+assertLossless(sessionStatus)
 const read = await call('super_session_read', { sessionId: 'session-worker', limit: 10 })
 assert.equal(read.messages[0].text, 'worker says done')
 await call('super_session_memory', { action: 'remember', key: 'language', text: 'Chinese' })

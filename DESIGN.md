@@ -126,7 +126,9 @@ request 就是一条普通会话消息，没有单独的消息类型体系。
 
 - message 直接使用 DSH Session 支持的内容：文本、图片、文件等。
 - 不做额外的文件分类、根目录白名单或专用上传流程；由 DSH 现有 message/content 能力处理。
-- content 只有用户想说的话，没有“Super 说”“转发”等包装。
+- 带 taskId 的任务派发：Host 在 content 最前面插入一个固定的 text part「任务转交 · 防误发」，说明这是另一个会话转交的任务；本会话空闲、刚建立或消息相关时正常执行，只有在做另一件明显不同的事或完全对不上时才先向用户确认、不直接执行。它是同一条 user message 的普通文本，不是 system role，也不改 worker 的 tools 或 system prompt。
+- 不带 taskId 的 quick relay 保持原文，不加提示；用于“原话转发”和短消息，不用于任务派发。
+- 防误发提示只是行为约束，不是硬拦截；Host 看不到 worker 的内部上下文，无法判断是否真的发错。
 - source 是 user-rpc，worker 看到的就是普通用户消息。
 - requestId 每目标独立；重试复用同一个 requestId。
 - 可带 taskId；task.executor 必须等于目标 sessionId。发送成功后 task.status=working。
@@ -311,12 +313,14 @@ Phase 5：审批可见性 observer、super_session_approval list、清理与 TTL
 
 Phase 6：新建 Super 的一次性欢迎消息（合成 assistant turn，不调用模型）。
 
+Phase 7：任务派发防误发提示（仅带 taskId 的 request，固定 text part，quick relay 不加）。
+
 ## 16. 验收
 
 1. 点击入口只创建一个 Super。
 2. Super 以 agentPreset=ptc 创建；模型只直接看到 run_code，6 个 super_session_* 通过 SDK 可用。
 3. 没有 attach/detach。
-4. request 在 worker 中显示为普通用户消息，支持 DSH 支持的消息类型。
+4. request 在 worker 中显示为普通用户消息，支持 DSH 支持的消息类型；task 派发带可见防误发提示，quick relay 原样。
 5. 一个 task 只有一个 executor；self 可做用户明确要求的任务，session 做分派任务。
 6. 重启后 pending request 原 requestId 重试；已送达 task 用新 requestId 继续。
 7. 同一 task 自动恢复最多 3 次。
@@ -327,6 +331,7 @@ Phase 6：新建 Super 的一次性欢迎消息（合成 assistant turn，不调
 12. 微信 chip 在 Super 入口右侧，宽侧边栏显示。
 13. 审批 observer 只记录活跃 task executor，记录后调用 next()，从不改变审批结果；abort/超时/重启后不残留 pending。
 14. 新建 Super 显示一次欢迎消息；已存在/重启不重复；不占用户消息位；不调用模型；Web UI 显示为正常 assistant 消息。
+15. 任务派发提示要求 worker 对明显无关的消息先确认、相关消息正常执行；不改 worker tools/system prompt；quick relay 不加提示。
 
 ## 17. 已确认
 
@@ -354,13 +359,13 @@ Phase 6：新建 Super 的一次性欢迎消息（合成 assistant turn，不调
 
 ## 19. 总结
 
-全局一个 Super Session，PTC preset（agentPreset=ptc）+ 管理者 prompt、memory.md 和 6 个工具；模型通过 run_code SDK 调用工具；用 task 管理谁做什么，request 就是普通会话消息；重启按 task 继续；微信客户端进程内运行；新建会话有一条不调用模型的一次性欢迎消息。
+全局一个 Super Session，PTC preset（agentPreset=ptc）+ 管理者 prompt、memory.md 和 6 个工具；模型通过 run_code SDK 调用工具；用 task 管理谁做什么，request 就是普通会话消息；带 taskId 的派发自动附一条中性的防误发提示；重启按 task 继续；微信客户端进程内运行；新建会话有一条不调用模型的一次性欢迎消息。
 
 ## 20. 实现状态
 
 截至当前版本：
 
-- Phase 0–6 已实现；Phase 0–4 和 Phase 6 通过隔离环境的真实 DSH 验证，Phase 5 由单元测试和 smoke 覆盖。
+- Phase 0–7 已实现；Phase 0–4 和 Phase 6 通过隔离环境的真实 DSH 验证，Phase 5 和 Phase 7 由单元测试和 smoke 覆盖。
 - Phase 2 临时 worker 权限调整未实现，等待用户确认后再做。
 
 文件：
@@ -384,7 +389,7 @@ Phase 6：新建 Super 的一次性欢迎消息（合成 assistant turn，不调
 - GET /health、POST /ensure、GET /state 正常。
 - GET /wechat/status 返回 idle；POST /wechat/login 返回 data:image/jpeg 二维码；弹层显示 190×190 二维码。
 - 宽侧边栏中 chip 位于 Super Session 标题右侧；折叠侧边栏不插入。
-- smoke 覆盖 Workspace 挂载、6 个工具注册、request 投递、status、read、memory、持久化，以及 welcome 五事件序列和第二次 ensure 不重复；wechat 测试覆盖文本提取、事件过滤、入站去重/回显过滤、失败标记、reconnect skip 和状态视图；approvals 测试覆盖活跃 executor 过滤、始终 next()、abort/TTL/shutdown 清理和 lossless 输出。
+- smoke 覆盖 Workspace 挂载、6 个工具注册、request 投递、task 派发防误发提示、quick relay 不加提示、status、read、memory、持久化，以及 welcome 五事件序列和第二次 ensure 不重复；wechat 测试覆盖文本提取、事件过滤、入站去重/回显过滤、失败标记、reconnect skip 和状态视图；approvals 测试覆盖活跃 executor 过滤、始终 next()、abort/TTL/shutdown 清理和 lossless 输出。
 - 新建 Super 后真实 Web UI 显示欢迎消息；会话界面显示“已完成，用时 1 秒”和“1 轮 1 步”，输入框正常；没有浏览器 runtime error。
 - 审批观察器没有在真实 UI 中触发过；只做了单元测试和 smoke。首次实际审批时需确认 pending 列表和清理行为。
 - welcome 的合成 turn 会被 UI 计入“1 轮 1 步”，并显示“已完成”；这是 assistant 气泡可正常渲染的代价。
@@ -395,4 +400,5 @@ Phase 6：新建 Super 的一次性欢迎消息（合成 assistant turn，不调
 - 隔离测试 profile 没有配置模型，界面显示“请选择模型”；真实 profile 使用用户当前默认模型。
 - 真实 ~/.dsh/profiles/web 尚未安装本插件；安装后需要重启 dsh web。
 - 阶段一不代批、不推送、不自动唤醒；审批仍需在 worker 会话里完成。
+- 防误发提示依赖 worker 模型遵守；插件无法强制或验证，worker 仍可能直接执行。
 - 阶段二临时权限调整未实现。

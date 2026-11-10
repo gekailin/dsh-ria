@@ -8,7 +8,7 @@ Super 自己是一个普通的顶层 DSH Session，运行 PTC preset，带管理
 
 ## 当前状态
 
-- Phase 0–6 已实现：单例、PTC 创建、任务、转述、读取、memory、重启恢复、侧边栏入口、进程内微信和入口右侧的微信 chip、worker 审批可见性，以及新会话欢迎消息。
+- Phase 0–7 已实现：单例、PTC 创建、任务、转述、读取、memory、重启恢复、侧边栏入口、进程内微信和入口右侧的微信 chip、worker 审批可见性、新会话欢迎消息，以及任务派发防误发提示。
 - 已验证环境：DSH 0.2.2-rc.1，Node 26，真实 Web profile 的隔离副本。
 - 微信只支持文本；扫码登录需要在弹层里完成一次，之后 DSH 重启会自动复用凭据。
 
@@ -80,7 +80,7 @@ Super Session 入口标题右侧有一个“微信”chip。点开后可以扫�
 |---|---|
 | super_session_task | 建/改任务。字段：goal、acceptance、executor（self 或一个顶层 worker sessionId）、status（open/working/blocked/done/cancelled）。一个任务只有一个 executor。 |
 | super_session_status | 查看任务和可管理的顶层 Session。可带 scope=tasks 或 scope=sessions。不会 resume 冷会话。 |
-| super_session_request | 把消息发给一个或多个 worker。mode=queue 或 steer；content 支持 text/image/file；带 taskId 时 executor 必须匹配。 |
+| super_session_request | 把消息发给一个或多个 worker。mode=queue 或 steer；content 支持 text/image/file；带 taskId 时 executor 必须匹配，并自动加防误发提示。 |
 | super_session_read | 读某个 Session 的近期消息。live 用 snapshotEvents，冷会话用持久化 events，不 resume。 |
 | super_session_approval | 列出正在等待审批的 worker（仅限有 active task 的 executor）。只读：不批准、不拒绝、不替 UI answerer 作答。 |
 | super_session_memory | read/remember/forget。写 stateDir/memory.md，0600，上限 4096 字节。 |
@@ -93,13 +93,16 @@ Super Session 入口标题右侧有一个“微信”chip。点开后可以扫�
 - 不做自动唤醒或推送：用户问进度、或 Super 主动检查时，才用这个工具查。
 - 用户要批准/拒绝时，仍需打开对应 worker 会话操作；Super 只能转告是哪个 worker、哪个工具、什么原因。
 
-Super 的系统 prompt 要求：需求不明确时先和用户澄清，再下发；不要凭猜测开工；任务要有验收标准；进度按需查询；经验按 case 集总结（需求、错误做法、正确做法），默认只在对话里输出，用户指定路径时才写文件；重启后先 read 再决定是否继续；不要重复新建会话的欢迎消息。
+Super 的系统 prompt 要求：需求不明确时先和用户澄清，再下发；不要凭猜测开工；任务要有验收标准；进度按需查询；经验按 case 集总结（需求、错误做法、正确做法），默认只在对话里输出，用户指定路径时才写文件；重启后先 read 再决定是否继续；不要重复新建会话的欢迎消息；任务派发会自动附防误发提示，不要自己再手写一遍。
 
 ## 任务与转述
 
 - task 是管理记录，不是 DSH 内置对象；保存在 super.json。
 - request 是真正的 Session 消息。发送前先写 pending delivery，prompt 被接受后删除；失败保留，重启或下次 ensure 时按原 requestId 重试。
 - request 的 worker 侧来源是普通的 user 消息，不伪装成系统消息，也不改 worker 的 tools。
+- 带 taskId 的任务派发，Host 会自动在消息最前面加一条「任务转交 · 防误发」文本：本会话空闲、刚建立或消息相关时正常执行；只有在做另一件明显不同的事或完全对不上时，才先向用户确认、不直接执行。
+- 这条提示是普通用户消息的一部分，不是 system role，也不改 worker 的 system prompt；插件无法强制 worker 一定遵守。
+- 不带 taskId 的 quick relay 不加提示，保持原文，适合“原话转发”和短消息。
 - 进度默认不自动推送；Super 需要时调 status/read，或用户让它查看。
 - Super 需要定时唤醒时，使用 DSH 官方 schedule_create；插件不实现调度循环。
 
@@ -143,7 +146,7 @@ DSH_HOME/state/super-session/
 npm test
 ~~~
 
-smoke 使用 mock ctx 覆盖 ensure、Workspace 挂载、6 个工具、request、status、read、memory、持久化，以及欢迎消息的五事件序列和第二次 ensure 不重复；wechat 测试覆盖 assistant 文本提取、入口事件过滤、微信入站去重/回显过滤、失败标记、reconnect skip 和状态视图；approvals 测试覆盖只记录活跃 executor、始终 next()、abort/超时/shutdown 清理和 lossless 输出。
+smoke 使用 mock ctx 覆盖 ensure、Workspace 挂载、6 个工具、request、task 派发防误发提示、quick relay 不加提示、status、read、memory、持久化，以及欢迎消息的五事件序列和第二次 ensure 不重复；wechat 测试覆盖 assistant 文本提取、入口事件过滤、微信入站去重/回显过滤、失败标记、reconnect skip 和状态视图；approvals 测试覆盖只记录活跃 executor、始终 next()、abort/超时/shutdown 清理和 lossless 输出。
 
 ## 限制
 
@@ -155,6 +158,7 @@ smoke 使用 mock ctx 覆盖 ensure、Workspace 挂载、6 个工具、request�
 - Super 依赖 PTC preset；standard 模式不会作为后备。
 - 额外创建一个 Super Session Workspace 是当前 DSH UI 的硬要求。
 - 欢迎消息使用合成的 turn 0 才能显示为 assistant 气泡，因此 UI 会把它计为“1 轮 1 步”并显示“已完成”。
+- 防误发提示依赖 worker 模型遵守，属于行为约束，不是硬拦截；worker 仍可能直接执行明显无关的消息。
 
 ## 安全
 

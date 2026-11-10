@@ -27,6 +27,7 @@ const superAgent = {
 
 const listeners = new Map()
 const effects = []
+const failPrompts = new Set()
 const workspaceAttachments = []
 const workspace = {
   id: 'workspace-super',
@@ -74,6 +75,7 @@ const ctx = {
     },
     async prompt(request) {
       prompts.push(request)
+      if (failPrompts.has(String(request.sessionId))) throw new Error('prompt failed')
       return { accepted: true }
     },
     async state() { return { cursor: 1, active: false, running: true, queue: 0, pendingInput: [] } },
@@ -132,6 +134,10 @@ const requestResult = await call('super_session_request', { targetSessionIds: ['
 assert.equal(requestResult.results[0].ok, true)
 assert.equal(prompts.at(-1).content[0].text, 'please fix')
 assert.equal(prompts.at(-1).requestId.startsWith('req_'), true)
+const quickRequest = await call('super_session_request', { targetSessionIds: ['session-worker'], message: 'just checking' })
+assert.equal(quickRequest.results[0].ok, true)
+assert.equal('taskId' in quickRequest.results[0], false)
+assertLossless(quickRequest)
 const status = await call('super_session_status', { scope: 'tasks' })
 assert.equal(status.tasks[0].status, 'working')
 assertLossless(status)
@@ -156,6 +162,14 @@ const state = JSON.parse(readFileSync(join(stateDir, 'super.json'), 'utf8'))
 assert.equal(state.superSessionId, superId)
 assert.equal(state.tasks[0].goal, 'fix tests')
 assert.equal(state.deliveries.length, 0)
+
+failPrompts.add('session-worker')
+const failedRequest = await call('super_session_request', { targetSessionIds: ['session-worker'], message: 'do not deliver' })
+assert.equal(failedRequest.results[0].ok, false)
+assert.equal('taskId' in failedRequest.results[0], false)
+assert.match(failedRequest.results[0].error, /prompt failed/)
+assertLossless(failedRequest)
+failPrompts.delete('session-worker')
 
 for (const dispose of effects) dispose()
 rmSync(stateDir, { recursive: true, force: true })

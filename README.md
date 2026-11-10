@@ -2,13 +2,13 @@
 
 一个 DSH Web 插件：全局只有一个 Super Session。它不直接承担实现工作，而是管理用户已有的顶层 Session：转述需求、跟踪进度、总结经验并分发。
 
-Super 自己是一个普通的顶层 DSH Session，运行 PTC preset，带管理者 prompt 和 5 个 super_session_* 工具。worker 侧不需要安装任何东西，收到的就是普通用户消息。
+Super 自己是一个普通的顶层 DSH Session，运行 PTC preset，带管理者 prompt 和 6 个 super_session_* 工具。worker 侧不需要安装任何东西，收到的就是普通用户消息。
 
 ![Super Session 入口打开后的会话界面](docs/ui-final.png)
 
 ## 当前状态
 
-- Phase 0–4 已实现：单例、PTC 创建、任务、转述、读取、memory、重启恢复、侧边栏入口，以及进程内微信和入口右侧的微信 chip。
+- Phase 0–5 已实现：单例、PTC 创建、任务、转述、读取、memory、重启恢复、侧边栏入口、进程内微信和入口右侧的微信 chip，以及 worker 审批可见性。
 - 已验证环境：DSH 0.2.2-rc.1，Node 26，真实 Web profile 的隔离副本。
 - 微信只支持文本；扫码登录需要在弹层里完成一次，之后 DSH 重启会自动复用凭据。
 
@@ -47,7 +47,7 @@ DSH_HOME/state/super-session
 
 DSH 的正常会话界面要求 Session 属于一个 Workspace。插件会为该目录创建一个标题为 Super Session 的专用 Workspace，并把 Super 挂进去。因此工作区列表里会多一个 Super Session，这是输入框可用的必要条件，不是可选的 UI 装饰。
 
-Super 运行 PTC 模式：模型直接看到 run_code 和生成的 SDK，5 个 super_session_* 工具通过 SDK 调用。创建时固定 agentPreset=ptc；如果 ptc preset/runtime 不可用，会明确报错，不会退回 standard。
+Super 运行 PTC 模式：模型直接看到 run_code 和生成的 SDK，6 个 super_session_* 工具通过 SDK 调用。创建时固定 agentPreset=ptc；如果 ptc preset/runtime 不可用，会明确报错，不会退回 standard。
 
 ## 微信
 
@@ -71,7 +71,16 @@ Super Session 入口标题右侧有一个“微信”chip。点开后可以扫�
 | super_session_status | 查看任务和可管理的顶层 Session。可带 scope=tasks 或 scope=sessions。不会 resume 冷会话。 |
 | super_session_request | 把消息发给一个或多个 worker。mode=queue 或 steer；content 支持 text/image/file；带 taskId 时 executor 必须匹配。 |
 | super_session_read | 读某个 Session 的近期消息。live 用 snapshotEvents，冷会话用持久化 events，不 resume。 |
+| super_session_approval | 列出正在等待审批的 worker（仅限有 active task 的 executor）。只读：不批准、不拒绝、不替 UI answerer 作答。 |
 | super_session_memory | read/remember/forget。写 stateDir/memory.md，0600，上限 4096 字节。 |
+
+### 审批可见性
+
+- 插件在根上下文监听 `approval/request`，只记录有 open/working task 的 executor 的待审批请求：worker session、task、工具、callId、原因、时间。
+- 记录后立即调用 `next()`，把决定权交回原有 UI answerer；插件从不改变审批结果。
+- `super_session_approval` 只返回当前 pending 列表。pending 在审批结束、AbortSignal 取消、15 分钟超时或 DSH 重启后清除。
+- 不做自动唤醒或推送：用户问进度、或 Super 主动检查时，才用这个工具查。
+- 用户要批准/拒绝时，仍需打开对应 worker 会话操作；Super 只能转告是哪个 worker、哪个工具、什么原因。
 
 Super 的系统 prompt 要求：需求不明确时先和用户澄清，再下发；不要凭猜测开工；任务要有验收标准；进度按需查询；经验按 case 集总结（需求、错误做法、正确做法），默认只在对话里输出，用户指定路径时才写文件；重启后先 read 再决定是否继续。
 
@@ -123,11 +132,12 @@ DSH_HOME/state/super-session/
 npm test
 ~~~
 
-smoke 使用 mock ctx 覆盖 ensure、Workspace 挂载、5 个工具、request、status、read、memory 和持久化；wechat 测试覆盖 assistant 文本提取、入口事件过滤、微信入站去重/回显过滤、失败标记、reconnect skip 和状态视图。
+smoke 使用 mock ctx 覆盖 ensure、Workspace 挂载、6 个工具、request、status、read、memory 和持久化；wechat 测试覆盖 assistant 文本提取、入口事件过滤、微信入站去重/回显过滤、失败标记、reconnect skip 和状态视图；approvals 测试覆盖只记录活跃 executor、始终 next()、abort/超时/shutdown 清理和 lossless 输出。
 
 ## 限制
 
 - 微信协议依赖「文件传输助手」网页版，只有文本；扫码登录和消息收发需要真实微信账号验证。
+- 审批目前只做可见性，不代批、不自动唤醒 Super；阶段二的临时 worker 权限调整尚未实现。
 - 不做 needs_input/failed 的即时自动唤醒；需要时用官方 schedule 或用户回来问。
 - 不做多实例防双开。
 - 澄清门禁是 prompt 行为，不是 Host 强制状态机。
@@ -140,4 +150,5 @@ smoke 使用 mock ctx 覆盖 ensure、Workspace 挂载、5 个工具、request�
 - 微信凭据只在本地 stateDir；没有额外的 loopback API，UI API 校验 DSH 同源。
 - 不自动上传、不遥测。
 - Super 可以读 Session、发消息、建任务；这些能力只在用户明确要求时使用。
+- `approval/request` 监听器只读：记录 pending 后调用 next()，从不返回审批结果。
 - 删除 Super 不会自动删除 task、memory 和 Workspace；需要时手动清理。

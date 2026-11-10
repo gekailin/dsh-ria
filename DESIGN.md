@@ -1,6 +1,6 @@
 # dsh-super-session 设计方案
 
-> 状态：v0.18（2026-11-10）
+> 状态：v0.19（2026-11-10）
 > 目标目录：/home/gkl/Desktop/vibe_proj/dsh-super-session
 > 本版按 m01270：Super Session 固定用 PTC preset（agentPreset=ptc）启动，模型只直接看到 run_code + SDK。本文只做方案，不含实现代码。
 
@@ -9,8 +9,8 @@
 Super Session 是全局唯一的普通顶层 DSH Session。
 
 - 使用 PTC preset（agentPreset=ptc），拥有完整工具集。
-- 模型只直接看到 run_code 和生成的 SDK；5 个 super_session_* 工具通过 SDK 在 run_code 内调用。
-- 在它的 Agent ctx 上额外注入管理者提示词和 5 个 super_session_* 工具。
+- 模型只直接看到 run_code 和生成的 SDK；6 个 super_session_* 工具通过 SDK 在 run_code 内调用。
+- 在它的 Agent ctx 上额外注入管理者提示词和 6 个 super_session_* 工具。
 - 不是 subagent，不是 Agent Team Lead。
 - 默认不替用户干活：把需求整理成 task，转交给 worker；用户明确要求时，也可以自己完成具体任务，不限于总结。
 - 用户可以像普通会话一样打开、对话、看历史。
@@ -20,7 +20,7 @@ Super Session 是全局唯一的普通顶层 DSH Session。
 - ensure 创建 Super 时固定传 agentPreset: 'ptc'。
 - PTC preset 需要 DSH 的 ptc runtime 和 tool-executor-ptc；缺失时 ensure 明确失败，不静默退回 standard。
 - 已有非 PTC 的 Super 不自动改 preset；提示用户重建或迁移，避免 SDK/工具状态不一致。
-- 5 个 super_session_* 工具必须在 run_code SDK 生成前注册；否则模型看不到它们。
+- 6 个 super_session_* 工具必须在 run_code SDK 生成前注册；否则模型看不到它们。
 - 提示词可以写“用 run_code 调用工具”，但真正的调用规则由 PTC executor 约束。
 
 ## 2. 边界
@@ -53,6 +53,7 @@ SuperSessionService
   |-- SuperStore（super.json）
   |-- MemoryFile（memory.md）
   |-- RequestGateway（普通消息 + 幂等）
+  |-- ApprovalObserver（approval/request 只读观察）
   |-- TaskRecovery（启动时继续未完成 task）
   |-- WechatService（进程内）
   |-- SuperHttpApi（ensure / 微信控制）
@@ -65,7 +66,7 @@ SuperSessionService
 普通顶层 Worker Sessions（Preset/tools 不变）
 ~~~
 
-没有 observer，没有独立 bridge 进程。
+没有后台轮询 observer，没有独立 bridge 进程；只有 approval/request 的只读观察器，记录后立即 next()。
 
 ## 4. Task
 
@@ -98,6 +99,7 @@ task 是 Super 的管理单位；一个 task 只对应一个 executor。
 | super_session_status | 查 task，或列可用顶层会话 | scope: tasks/sessions, sessionId? |
 | super_session_request | 以普通用户消息发送内容 | targetSessionIds, message, taskId?, mode? |
 | super_session_read | 读会话最近消息 | sessionId, limit? |
+| super_session_approval | 列出等待审批的 worker | action: list |
 | super_session_memory | 读写 memory.md | action: read/remember/forget, text?, key? |
 
 共同规则：
@@ -108,6 +110,15 @@ task 是 Super 的管理单位；一个 task 只对应一个 executor。
 - 不伪造用户消息之外的身份，不改 worker 的 prompt/tools。
 - taskId 只用于关联状态，不是发送门禁。
 - broadcast 或 steer 前先向用户确认。
+
+### 审批可见性（阶段一）
+
+- 根 ctx 监听 `approval/request`，只记录 executor 有 open/working task 的 worker；Super 自身、subagent、无活跃 task 的会话不记。
+- 记录 approvalId、workerSessionId、taskId、toolName、callId、reason、createdAt、expiresAt、AbortSignal；随即 `next()`，不接管、不代批。
+- `super_session_approval` 只返回 pending 列表；无参数时需要 action=list。
+- 清理：审批结束或 next() 抛错时 finally 清除；AbortSignal abort、15 分钟 TTL、插件 shutdown、DSH 重启都清除。
+- 该观察器不改变审批结果；没有 UI answerer 时仍由 DSH 返回 unavailable。
+- 不做自动唤醒、推送或审批决策；用户必须打开对应 worker 会话批准/拒绝。
 
 ## 6. Request
 
@@ -284,9 +295,9 @@ super.json 和 memory.md 都不存 transcript。
 
 ## 15. 阶段
 
-Phase 0：验证 PTC preset 创建（agentPreset=ptc）、run_code SDK 暴露 5 个 super_session_*、user-rpc、sidebar launcher、schedule、微信扫码/收发。
+Phase 0：验证 PTC preset 创建（agentPreset=ptc）、run_code SDK 暴露 6 个 super_session_*、user-rpc、sidebar launcher、schedule、微信扫码/收发。
 
-Phase 1：单例、ensure、task、5 个工具、request、read、pending request 重试、入口。
+Phase 1：单例、ensure、task、6 个工具、request、read、pending request 重试、入口。
 
 Phase 2：启动恢复、continuation、recoveryCount。
 
@@ -294,10 +305,12 @@ Phase 3：memory.md、remember/forget、冷启动注入、case 集输出与按�
 
 Phase 4：微信进程内服务、回复同步、积压 skip、入口 chip。
 
+Phase 5：审批可见性 observer、super_session_approval list、清理与 TTL。
+
 ## 16. 验收
 
 1. 点击入口只创建一个 Super。
-2. Super 以 agentPreset=ptc 创建；模型只直接看到 run_code，5 个 super_session_* 通过 SDK 可用。
+2. Super 以 agentPreset=ptc 创建；模型只直接看到 run_code，6 个 super_session_* 通过 SDK 可用。
 3. 没有 attach/detach。
 4. request 在 worker 中显示为普通用户消息，支持 DSH 支持的消息类型。
 5. 一个 task 只有一个 executor；self 可做用户明确要求的任务，session 做分派任务。
@@ -308,6 +321,7 @@ Phase 4：微信进程内服务、回复同步、积压 skip、入口 chip。
 10. 微信进程内运行，无 bridge 端口/socket；消息进 Super，回复回微信。
 11. 微信积压超过 10 条时只发最后 10 条并提示。
 12. 微信 chip 在 Super 入口右侧，宽侧边栏显示。
+13. 审批 observer 只记录活跃 task executor，记录后调用 next()，从不改变审批结果；abort/超时/重启后不残留 pending。
 
 ## 17. 已确认
 
@@ -324,7 +338,7 @@ Phase 4：微信进程内服务、回复同步、积压 skip、入口 chip。
 |---|---|
 | PTC preset/runtime 不可用 | Super 无法创建或工具不可见 | ensure 明确报错；不静默退回 standard |
 | 已有 Super 不是 PTC | preset 不一致 | 提示重建/迁移，不自动改 |
-| PTC SDK 未包含自定义工具 | Super 无法调用 5 个工具 | Phase 0 验证注册时序；必要时延迟 SDK 生成 |
+| PTC SDK 未包含自定义工具 | Super 无法调用 6 个工具 | Phase 0 验证注册时序；必要时延迟 SDK 生成 |
 | task 状态依赖 Super 维护 | 重启先 read；用户可纠正 |
 | 自动恢复误判 | 先 read；最多 3 次 |
 | memory 过期/膨胀 | 当前消息优先；4KB 上限；用户可删 |
@@ -334,23 +348,26 @@ Phase 4：微信进程内服务、回复同步、积压 skip、入口 chip。
 
 ## 19. 总结
 
-全局一个 Super Session，PTC preset（agentPreset=ptc）+ 管理者 prompt、memory.md 和 5 个工具；模型通过 run_code SDK 调用工具；用 task 管理谁做什么，request 就是普通会话消息；重启按 task 继续；微信客户端进程内运行。
+全局一个 Super Session，PTC preset（agentPreset=ptc）+ 管理者 prompt、memory.md 和 6 个工具；模型通过 run_code SDK 调用工具；用 task 管理谁做什么，request 就是普通会话消息；重启按 task 继续；微信客户端进程内运行。
 
 ## 20. 实现状态
 
 截至当前版本：
 
-- Phase 0–4 已实现并通过隔离环境的真实 DSH 验证。
+- Phase 0–5 已实现；Phase 0–4 通过隔离环境的真实 DSH 验证，Phase 5 由单元测试和 smoke 覆盖。
+- Phase 2 临时 worker 权限调整未实现，等待用户确认后再做。
 
 文件：
 
-- lib/index.js：Host、SuperStore、5 个工具、manager prompt、启动恢复、HTTP API，以及微信服务接线。
+- lib/index.js：Host、SuperStore、6 个工具、manager prompt、启动恢复、HTTP API、approval observer 接线，以及微信服务接线。
+- lib/approvals.mjs：approval/request 只读观察器、pending 列表、TTL/abort/shutdown 清理。
 - lib/client.js：侧边栏入口、瞬时 launcher、入口右侧微信 chip 和登录弹层。
 - lib/wechat/wxweb.mjs、login.mjs、outbound.mjs：复用的文件传输助手协议、扫码登录和串行发送。
 - lib/wechat/service.mjs：进程内连接、assistant 文本回传、入站去重、Super 投递、重连积压处理。
 - cordis.patch.yml：插件 patch。
 - test/smoke.mjs：Host 流程 smoke。
 - test/wechat.mjs：微信服务单元测试。
+- test/approvals.mjs：审批观察器单元测试。
 
 已验证：
 
@@ -361,11 +378,14 @@ Phase 4：微信进程内服务、回复同步、积压 skip、入口 chip。
 - GET /health、POST /ensure、GET /state 正常。
 - GET /wechat/status 返回 idle；POST /wechat/login 返回 data:image/jpeg 二维码；弹层显示 190×190 二维码。
 - 宽侧边栏中 chip 位于 Super Session 标题右侧；折叠侧边栏不插入。
-- smoke 覆盖 Workspace 挂载、工具注册、request 投递、status、read、memory 和持久化；wechat 测试覆盖文本提取、事件过滤、入站去重/回显过滤、失败标记、reconnect skip 和状态视图。
+- smoke 覆盖 Workspace 挂载、6 个工具注册、request 投递、status、read、memory 和持久化；wechat 测试覆盖文本提取、事件过滤、入站去重/回显过滤、失败标记、reconnect skip 和状态视图；approvals 测试覆盖活跃 executor 过滤、始终 next()、abort/TTL/shutdown 清理和 lossless 输出。
 - 没有浏览器 runtime error。
+- 审批观察器没有在真实 UI 中触发过；只做了单元测试和 smoke。首次实际审批时需确认 pending 列表和清理行为。
 
 已知限制：
 
 - 工作区列表会多一个 Super Session Workspace。
 - 隔离测试 profile 没有配置模型，界面显示“请选择模型”；真实 profile 使用用户当前默认模型。
 - 真实 ~/.dsh/profiles/web 尚未安装本插件；安装后需要重启 dsh web。
+- 阶段一不代批、不推送、不自动唤醒；审批仍需在 worker 会话里完成。
+- 阶段二临时权限调整未实现。

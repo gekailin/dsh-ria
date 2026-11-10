@@ -14,7 +14,7 @@
   "type": "module",
   "main": "lib/index.js",
   "scripts": {
-    "test": "node test/smoke.mjs && node test/wechat.mjs"
+    "test": "node test/smoke.mjs && node test/wechat.mjs && node test/approvals.mjs"
   },
   "exports": {
     ".": "./lib/index.js",
@@ -25,6 +25,7 @@
   "files": [
     "lib/index.js",
     "lib/client.js",
+    "lib/approvals.mjs",
     "lib/wechat",
     "cordis.patch.yml",
     "DESIGN.md",

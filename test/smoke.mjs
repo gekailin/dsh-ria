@@ -16,13 +16,17 @@ const worker = {
   ctx: { tools: { register: () => () => {} }, systemPrompt: { section: () => () => {} } },
   session: { snapshotEvents: () => [{ type: 'assistant/message', seq: 2, data: { message: { content: [{ type: 'text', text: 'worker says done' }] } } }] },
 }
+const superEvents = []
 const superAgent = {
   id: superId,
   ctx: {
     tools: { register(definition) { installed.set(definition.name, definition); return () => {} } },
     systemPrompt: { section(section) { installed.set('prompt:' + section.name, section); return () => {} } },
   },
-  session: { snapshotEvents: () => [] },
+  session: {
+    snapshotEvents: () => [],
+    append(type, data, options) { superEvents.push({ type, data, options }); return { seq: superEvents.length - 1, time: 1 } },
+  },
 }
 
 const listeners = new Map()
@@ -120,6 +124,21 @@ assert.equal(ensured.status, 200)
 assert.equal(ensured.body.sessionId, superId)
 assert.equal(created, true)
 assert.deepEqual(workspaceAttachments, [superId])
+assert.deepEqual(superEvents.map(event => event.type), ['turn/start', 'step/start', 'assistant/message', 'step/end', 'turn/end'])
+assert.equal(superEvents[0].data.turn, 0)
+assert.equal(superEvents[2].data.turn, 0)
+assert.equal(superEvents[2].data.step, 0)
+assert.equal(superEvents[2].data.message.role, 'assistant')
+assert.equal(superEvents[2].data.message.source.kind, 'model')
+assert.equal(superEvents[2].options.surfaceOp, 'append')
+assert.match(superEvents[2].data.message.content[0].text, /选择模型/)
+assert.match(superEvents[2].data.message.content[0].text, /danger-full-access/)
+assert.match(superEvents[2].data.message.content[0].text, /权限设置/)
+assert.equal(superEvents[4].data.reason.kind, 'completed')
+const reopened = await request('POST', '/plugins/dsh-super-session/api/ensure')
+assert.equal(reopened.body.created, false)
+assert.equal(superEvents.length, 5)
+assert.deepEqual(workspaceAttachments, [superId, superId])
 assert.ok(installed.has('super_session_task'))
 assert.ok(installed.has('super_session_status'))
 assert.ok(installed.has('super_session_request'))
@@ -179,6 +198,7 @@ assert.match(installed.get('super_session_status').description, /never waits/)
 assert.match(installed.get('super_session_request').description, /ends the current turn/)
 assert.match(installed.get('super_session_approval').description, /never approves or denies/)
 assert.match(promptText, /super_session_approval/)
+assert.match(promptText, /host-generated assistant welcome/)
 
 const state = JSON.parse(readFileSync(join(stateDir, 'super.json'), 'utf8'))
 assert.equal(state.superSessionId, superId)

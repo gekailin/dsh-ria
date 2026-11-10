@@ -282,6 +282,8 @@ super.json 和 memory.md 都不存 transcript。
 - 点击后瞬时 launcher -> ensure -> openSession。
 - DSH 的正常会话界面要求 Session 属于一个 Workspace。ensure 在 stateDir 创建/复用标题为 Super Session 的专用 Workspace，并用 workspaceId 创建 Session；旧 Super 通过 attachSession 补挂。工作区列表会多这一项，这是输入框可用的必要条件。
 - 不做常驻看板。
+- 新建 Super 时追加一条欢迎消息：提示选模型、设置权限（建议 danger-full-access + 审批策略）、直接说目标。
+- 欢迎消息是一个合成的完整 turn（turn/start、step/start、assistant/message、step/end、turn/end），只在新创建路径写一次；已存在/重启不重复，不占用户消息位，不调用模型。
 - 微信 chip 在 Super 入口标题右侧，点击打开微信弹层。
 
 ## 14. 安全
@@ -307,6 +309,8 @@ Phase 4：微信进程内服务、回复同步、积压 skip、入口 chip。
 
 Phase 5：审批可见性 observer、super_session_approval list、清理与 TTL。
 
+Phase 6：新建 Super 的一次性欢迎消息（合成 assistant turn，不调用模型）。
+
 ## 16. 验收
 
 1. 点击入口只创建一个 Super。
@@ -322,6 +326,7 @@ Phase 5：审批可见性 observer、super_session_approval list、清理与 TTL
 11. 微信积压超过 10 条时只发最后 10 条并提示。
 12. 微信 chip 在 Super 入口右侧，宽侧边栏显示。
 13. 审批 observer 只记录活跃 task executor，记录后调用 next()，从不改变审批结果；abort/超时/重启后不残留 pending。
+14. 新建 Super 显示一次欢迎消息；已存在/重启不重复；不占用户消息位；不调用模型；Web UI 显示为正常 assistant 消息。
 
 ## 17. 已确认
 
@@ -345,21 +350,22 @@ Phase 5：审批可见性 observer、super_session_approval list、清理与 TTL
 | 微信全量同步 | 已接受；后续可做 turn 关联 |
 | 微信长连接绑 DSH 进程 | 重启加载 creds 重连，通常不扫码 |
 | 入口 chip 是 DOM 注入 | MutationObserver；宽侧边栏才显示 |
+| 欢迎消息伪造 turn 0 | 已用真实 UI 验证正常显示；UI 会计 1 轮 1 步并显示已完成，属可接受的外观副作用 |
 
 ## 19. 总结
 
-全局一个 Super Session，PTC preset（agentPreset=ptc）+ 管理者 prompt、memory.md 和 6 个工具；模型通过 run_code SDK 调用工具；用 task 管理谁做什么，request 就是普通会话消息；重启按 task 继续；微信客户端进程内运行。
+全局一个 Super Session，PTC preset（agentPreset=ptc）+ 管理者 prompt、memory.md 和 6 个工具；模型通过 run_code SDK 调用工具；用 task 管理谁做什么，request 就是普通会话消息；重启按 task 继续；微信客户端进程内运行；新建会话有一条不调用模型的一次性欢迎消息。
 
 ## 20. 实现状态
 
 截至当前版本：
 
-- Phase 0–5 已实现；Phase 0–4 通过隔离环境的真实 DSH 验证，Phase 5 由单元测试和 smoke 覆盖。
+- Phase 0–6 已实现；Phase 0–4 和 Phase 6 通过隔离环境的真实 DSH 验证，Phase 5 由单元测试和 smoke 覆盖。
 - Phase 2 临时 worker 权限调整未实现，等待用户确认后再做。
 
 文件：
 
-- lib/index.js：Host、SuperStore、6 个工具、manager prompt、启动恢复、HTTP API、approval observer 接线，以及微信服务接线。
+- lib/index.js：Host、SuperStore、6 个工具、manager prompt、启动恢复、HTTP API、approval observer 接线、微信服务接线，以及新建 Super 的 welcome 合成 turn。
 - lib/approvals.mjs：approval/request 只读观察器、pending 列表、TTL/abort/shutdown 清理。
 - lib/client.js：侧边栏入口、瞬时 launcher、入口右侧微信 chip 和登录弹层。
 - lib/wechat/wxweb.mjs、login.mjs、outbound.mjs：复用的文件传输助手协议、扫码登录和串行发送。
@@ -378,9 +384,10 @@ Phase 5：审批可见性 observer、super_session_approval list、清理与 TTL
 - GET /health、POST /ensure、GET /state 正常。
 - GET /wechat/status 返回 idle；POST /wechat/login 返回 data:image/jpeg 二维码；弹层显示 190×190 二维码。
 - 宽侧边栏中 chip 位于 Super Session 标题右侧；折叠侧边栏不插入。
-- smoke 覆盖 Workspace 挂载、6 个工具注册、request 投递、status、read、memory 和持久化；wechat 测试覆盖文本提取、事件过滤、入站去重/回显过滤、失败标记、reconnect skip 和状态视图；approvals 测试覆盖活跃 executor 过滤、始终 next()、abort/TTL/shutdown 清理和 lossless 输出。
-- 没有浏览器 runtime error。
+- smoke 覆盖 Workspace 挂载、6 个工具注册、request 投递、status、read、memory、持久化，以及 welcome 五事件序列和第二次 ensure 不重复；wechat 测试覆盖文本提取、事件过滤、入站去重/回显过滤、失败标记、reconnect skip 和状态视图；approvals 测试覆盖活跃 executor 过滤、始终 next()、abort/TTL/shutdown 清理和 lossless 输出。
+- 新建 Super 后真实 Web UI 显示欢迎消息；会话界面显示“已完成，用时 1 秒”和“1 轮 1 步”，输入框正常；没有浏览器 runtime error。
 - 审批观察器没有在真实 UI 中触发过；只做了单元测试和 smoke。首次实际审批时需确认 pending 列表和清理行为。
+- welcome 的合成 turn 会被 UI 计入“1 轮 1 步”，并显示“已完成”；这是 assistant 气泡可正常渲染的代价。
 
 已知限制：
 

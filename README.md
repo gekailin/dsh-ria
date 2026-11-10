@@ -8,7 +8,7 @@ Super 自己是一个普通的顶层 DSH Session，运行 PTC preset，带管理
 
 ## 当前状态
 
-- Phase 0–5 已实现：单例、PTC 创建、任务、转述、读取、memory、重启恢复、侧边栏入口、进程内微信和入口右侧的微信 chip，以及 worker 审批可见性。
+- Phase 0–6 已实现：单例、PTC 创建、任务、转述、读取、memory、重启恢复、侧边栏入口、进程内微信和入口右侧的微信 chip、worker 审批可见性，以及新会话欢迎消息。
 - 已验证环境：DSH 0.2.2-rc.1，Node 26，真实 Web profile 的隔离副本。
 - 微信只支持文本；扫码登录需要在弹层里完成一次，之后 DSH 重启会自动复用凭据。
 
@@ -49,6 +49,17 @@ DSH 的正常会话界面要求 Session 属于一个 Workspace。插件会为该
 
 Super 运行 PTC 模式：模型直接看到 run_code 和生成的 SDK，6 个 super_session_* 工具通过 SDK 调用。创建时固定 agentPreset=ptc；如果 ptc preset/runtime 不可用，会明确报错，不会退回 standard。
 
+## 欢迎消息
+
+新建 Super 后第一次打开，会看到一条 assistant 侧的欢迎消息：提示先选模型、设置权限（建议 danger-full-access + 审批策略），然后直接说想做什么。
+
+![新建 Super 的欢迎消息](docs/ui-welcome.png)
+
+- 只在 `created=true` 的新建路径追加一次；已存在或重启后的 Super 不会重复。
+- 通过 Session.append 写入一个合成的完整 turn（turn/start、step/start、assistant/message、step/end、turn/end），因此显示为正常的 assistant 消息，不占用户消息位，也不调用模型。
+- 欢迎消息失败只记 warn，不影响 Super 创建。
+- 模型会看到这条消息；manager prompt 要求把它当作已经说过的话，不要重复。
+
 ## 微信
 
 Super Session 入口标题右侧有一个“微信”chip。点开后可以扫码登录微信「文件传输助手」网页版、查看连接状态和退出登录。
@@ -82,7 +93,7 @@ Super Session 入口标题右侧有一个“微信”chip。点开后可以扫�
 - 不做自动唤醒或推送：用户问进度、或 Super 主动检查时，才用这个工具查。
 - 用户要批准/拒绝时，仍需打开对应 worker 会话操作；Super 只能转告是哪个 worker、哪个工具、什么原因。
 
-Super 的系统 prompt 要求：需求不明确时先和用户澄清，再下发；不要凭猜测开工；任务要有验收标准；进度按需查询；经验按 case 集总结（需求、错误做法、正确做法），默认只在对话里输出，用户指定路径时才写文件；重启后先 read 再决定是否继续。
+Super 的系统 prompt 要求：需求不明确时先和用户澄清，再下发；不要凭猜测开工；任务要有验收标准；进度按需查询；经验按 case 集总结（需求、错误做法、正确做法），默认只在对话里输出，用户指定路径时才写文件；重启后先 read 再决定是否继续；不要重复新建会话的欢迎消息。
 
 ## 任务与转述
 
@@ -132,7 +143,7 @@ DSH_HOME/state/super-session/
 npm test
 ~~~
 
-smoke 使用 mock ctx 覆盖 ensure、Workspace 挂载、6 个工具、request、status、read、memory 和持久化；wechat 测试覆盖 assistant 文本提取、入口事件过滤、微信入站去重/回显过滤、失败标记、reconnect skip 和状态视图；approvals 测试覆盖只记录活跃 executor、始终 next()、abort/超时/shutdown 清理和 lossless 输出。
+smoke 使用 mock ctx 覆盖 ensure、Workspace 挂载、6 个工具、request、status、read、memory、持久化，以及欢迎消息的五事件序列和第二次 ensure 不重复；wechat 测试覆盖 assistant 文本提取、入口事件过滤、微信入站去重/回显过滤、失败标记、reconnect skip 和状态视图；approvals 测试覆盖只记录活跃 executor、始终 next()、abort/超时/shutdown 清理和 lossless 输出。
 
 ## 限制
 
@@ -143,6 +154,7 @@ smoke 使用 mock ctx 覆盖 ensure、Workspace 挂载、6 个工具、request�
 - 澄清门禁是 prompt 行为，不是 Host 强制状态机。
 - Super 依赖 PTC preset；standard 模式不会作为后备。
 - 额外创建一个 Super Session Workspace 是当前 DSH UI 的硬要求。
+- 欢迎消息使用合成的 turn 0 才能显示为 assistant 气泡，因此 UI 会把它计为“1 轮 1 步”并显示“已完成”。
 
 ## 安全
 

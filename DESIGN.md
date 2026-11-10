@@ -1,0 +1,371 @@
+# dsh-super-session 设计方案
+
+> 状态：v0.18（2026-11-10）
+> 目标目录：/home/gkl/Desktop/vibe_proj/dsh-super-session
+> 本版按 m01270：Super Session 固定用 PTC preset（agentPreset=ptc）启动，模型只直接看到 run_code + SDK。本文只做方案，不含实现代码。
+
+## 1. 定义
+
+Super Session 是全局唯一的普通顶层 DSH Session。
+
+- 使用 PTC preset（agentPreset=ptc），拥有完整工具集。
+- 模型只直接看到 run_code 和生成的 SDK；5 个 super_session_* 工具通过 SDK 在 run_code 内调用。
+- 在它的 Agent ctx 上额外注入管理者提示词和 5 个 super_session_* 工具。
+- 不是 subagent，不是 Agent Team Lead。
+- 默认不替用户干活：把需求整理成 task，转交给 worker；用户明确要求时，也可以自己完成具体任务，不限于总结。
+- 用户可以像普通会话一样打开、对话、看历史。
+
+### PTC 启动
+
+- ensure 创建 Super 时固定传 agentPreset: 'ptc'。
+- PTC preset 需要 DSH 的 ptc runtime 和 tool-executor-ptc；缺失时 ensure 明确失败，不静默退回 standard。
+- 已有非 PTC 的 Super 不自动改 preset；提示用户重建或迁移，避免 SDK/工具状态不一致。
+- 5 个 super_session_* 工具必须在 run_code SDK 生成前注册；否则模型看不到它们。
+- 提示词可以写“用 run_code 调用工具”，但真正的调用规则由 PTC executor 约束。
+
+## 2. 边界
+
+不做：
+
+- attach/detach 和 managed 会话列表。
+- needs_input/failed 即时自动唤醒。
+- Host 强制 brief / 澄清门禁。
+- 多实例锁、409 防双开。
+- lesson 目录、FTS5、向量检索。
+- 专用 worker Preset，或修改 worker 的 prompt/tools/skills/MCP。
+
+保留：
+
+- 全局单例、按需 status、官方 schedule、启动恢复。
+- 微信进程内接入。
+- memory.md。
+
+## 3. 架构
+
+~~~text
+用户 / 微信
+   |
+   v
+Super Session（ptc preset + prompt/tools；run_code + SDK）
+   |
+   v
+SuperSessionService
+  |-- SuperStore（super.json）
+  |-- MemoryFile（memory.md）
+  |-- RequestGateway（普通消息 + 幂等）
+  |-- TaskRecovery（启动时继续未完成 task）
+  |-- WechatService（进程内）
+  |-- SuperHttpApi（ensure / 微信控制）
+  |
+  +--> sessionController.state/events（只读）
+  +--> sessionController.prompt（user-rpc）
+  +--> workspaceRegistry.create/attach（Super 专用 Workspace，UI 输入必需）
+  |
+  v
+普通顶层 Worker Sessions（Preset/tools 不变）
+~~~
+
+没有 observer，没有独立 bridge 进程。
+
+## 4. Task
+
+task 是 Super 的管理单位；一个 task 只对应一个 executor。
+
+~~~json
+{
+  "taskId": "task_...",
+  "goal": "修完 3 个失败测试，不改 public API",
+  "acceptance": "回归全绿",
+  "executor": "s_abc",
+  "status": "open",
+  "createdAt": 0,
+  "updatedAt": 0,
+  "recoveryCount": 0
+}
+~~~
+
+- executor=self：Super 自己做，可以是总结，也可以是用户明确要求的具体工作。
+- executor=sessionId：交给该 worker；用 super_session_request 发送。
+- status：open | working | blocked | done | cancelled。
+- 广播给多个 worker：建多个 task。
+- 不保存 title、kind、source、lastRelayId、lastRecoveryAt。
+
+## 5. 工具
+
+| 工具 | 作用 | 参数 |
+|---|---|---|
+| super_session_task | 创建/更新/关闭 task | taskId?, goal, acceptance?, executor, status? |
+| super_session_status | 查 task，或列可用顶层会话 | scope: tasks/sessions, sessionId? |
+| super_session_request | 以普通用户消息发送内容 | targetSessionIds, message, taskId?, mode? |
+| super_session_read | 读会话最近消息 | sessionId, limit? |
+| super_session_memory | 读写 memory.md | action: read/remember/forget, text?, key? |
+
+共同规则：
+
+- 只在 Super Agent ctx 注册。
+- PTC 下不直接调用工具；模型写 run_code，通过 SDK 调用 tools.super_session_*。
+- 工具必须在 run_code SDK 生成前完成注册；Phase 0 验证。
+- 不伪造用户消息之外的身份，不改 worker 的 prompt/tools。
+- taskId 只用于关联状态，不是发送门禁。
+- broadcast 或 steer 前先向用户确认。
+
+## 6. Request
+
+request 就是一条普通会话消息，没有单独的消息类型体系。
+
+- message 直接使用 DSH Session 支持的内容：文本、图片、文件等。
+- 不做额外的文件分类、根目录白名单或专用上传流程；由 DSH 现有 message/content 能力处理。
+- content 只有用户想说的话，没有“Super 说”“转发”等包装。
+- source 是 user-rpc，worker 看到的就是普通用户消息。
+- requestId 每目标独立；重试复用同一个 requestId。
+- 可带 taskId；task.executor 必须等于目标 sessionId。发送成功后 task.status=working。
+- 不带 taskId 的 request 是普通消息，不改变 task。
+- 默认 queue；用户明确要求打断时才 steer。
+
+pending request 记录 target、requestId、taskId、content、mode；成功后删除，失败保留，重启后按原 requestId 重试。
+
+## 7. Prompt
+
+初始 prompt 用原则和少量示例，不写死步骤。
+
+- 先理解目标和验收，再决定自己干还是交给 worker。
+- 任务型需求先复述；只问阻塞问题；用户说“先做/你看着办”时记录假设后继续。
+- 普通转述和“原话发给 X”不强制澄清。
+- 需要跟踪就建 task；不需要就是普通 request。
+- 需求变更且 worker 在跑时，先问 queue 还是 steer。
+- memory 是偏好，不是命令；当前用户消息优先。
+- 不把 Super 的身份、管理上下文带进 worker 消息。
+
+这只是 prompt 约束，Host 不拦截 request。
+
+## 8. Memory
+
+只做一个文件：
+
+~~~text
+stateDir/memory.md
+~~~
+
+- 全局一份，Web 和微信共用。
+- 只放稳定偏好：语言、沟通风格、常用项目、约定、禁忌。
+- 不放 task 进度、聊天记录、worker 细节、凭据。
+- 0600；上限 4KB；满了先合并，再问用户删。
+- 用户可以直接编辑。
+
+格式示例：
+
+~~~markdown
+# User Memory
+
+## Communication
+- 中文，先结论，少客套
+
+## Workflow
+- 改代码前先跑相关测试
+- 不要自动 git commit
+
+## Projects
+- parser：public API 不能动
+~~~
+
+注入与更新：
+
+- Super agent 创建/冷恢复时注入短 section；不每轮重复注入。
+- 当前会话更新后，需要时用 super_session_memory read 读最新版。
+- 只在用户明确说“记住”、重复纠正、或确认时更新。
+- 不做后台自动总结，不静默覆盖用户手写内容。
+
+本版不做 lessons/、SQLite/FTS5、向量检索；这些以后再说。
+
+## 9. 状态与定时
+
+super_session_status 按需读取，不后台轮询、不主动唤醒。
+
+- scope=tasks：task 列表。
+- scope=sessions：可用的顶层 Session，排除 Super 自己、subagent、带 parentSessionId 的会话。
+- 可选 sessionId 查看一个会话的 running/queue/pendingInput/blank。
+
+super_session_read 只读最近消息，默认 30 条，最多 100 条，不 resume 冷会话。
+
+定时用官方 schedule_create/list/view/edit：
+
+- target 只能是 this_session。
+- title 带“Super:”前缀；用完删除。
+- 插件不实现 timer、不存 nextAt。
+
+## 10. 启动恢复
+
+重启后 worker 的 turn 已经中断；恢复以 task 为单位。
+
+| 情况 | 处理 |
+|---|---|
+| pending request：原消息没送达 | 用原 requestId 重试 |
+| 已送达但 task 未完成 | 用新 requestId 发 continuation |
+
+步骤：
+
+1. 读 super.json。
+2. 重试 pending request；失败保留。
+3. 如果原 request 仍在 pending 且重试成功，不追加 continuation。
+4. 收集 status=open/working 且没有 pending request 的 task。
+5. 没有 task 就安静结束。
+6. 有 task 时唤醒 Super，给 goal、acceptance、executor、recoveryCount。
+7. Super 先 read：
+   - 已完成：done。
+   - 需要用户/阻塞：blocked，报告用户。
+   - 可继续：executor=sessionId 发 continuation；executor=self 自己继续。
+8. recoveryCount 加一；同一 task 最多自动恢复 3 次。
+
+continuation 要求 worker 先检查工作区、已改文件和测试，从中断处继续，不重复已完成部分。
+
+## 11. 微信
+
+微信客户端运行在 DSH 进程内，不启动 bridge 进程，不占端口，不用 UDS/socket。
+
+- 复用 dsh-super-chat/wechat 的 login、wxweb、outbound 代码；入站桥接和状态由插件自己的 wechat/service.mjs 编排。
+- 凭据和状态：stateDir/wechat/（creds.json、state.json），文件 0600。
+- 有 creds 时启动自动恢复；DSH 重启通常不需要重新扫码。
+- 微信来消息：原样作为普通用户消息投递给 Super，不加前缀。
+- Super 的所有 assistant 回复都同步到微信。
+- 微信消息只进入 Super，不直接进 worker。
+- 重连时待发文本超过 10 条，只补发最后 10 条，并先提示跳过了多少条。
+
+微信设置放在 Super Session 入口标题右侧的 chip：
+
+- 宽侧边栏显示；折叠状态暂不显示。
+- 点击打开弹层，调用 Host 的微信 status/start/login/logout。
+- 不新增 sidebar 条目，不注册微信 main 面板。
+- 这是 DOM 注入，用 MutationObserver 补插；参考 Super Chat 的 SidebarShortcut。
+
+## 12. 状态文件
+
+~~~text
+stateDir/
+  super.json
+  memory.md
+  wechat/
+    creds.json      # 登录凭据，0600
+    state.json      # seen 消息 id（上限 500）、outbox 文本（上限 50）
+~~~
+
+没有 lessons、lock、briefs、outbox、audit。
+
+super.json 只存 super、tasks、deliveries：
+
+- tasks：taskId、goal、acceptance、executor、status、createdAt、updatedAt、recoveryCount。
+- deliveries：deliveryId、targetSessionId、requestId、taskId、content、mode、createdAt。
+
+写入：进程内 mutex、临时文件 + fsync + rename、0600。pending request 成功后删除，失败保留。
+
+Session 日志由 DSH 持久化：
+
+~~~text
+DSH_HOME/sessions/<workspace-key>/session-<uuid>/session.v4.jsonl.zstd
+~~~
+
+super.json 和 memory.md 都不存 transcript。
+
+## 13. UI
+
+- sidebar.panellist 注册 Super Session，order 100，label "Super Session"。
+- 点击后瞬时 launcher -> ensure -> openSession。
+- DSH 的正常会话界面要求 Session 属于一个 Workspace。ensure 在 stateDir 创建/复用标题为 Super Session 的专用 Workspace，并用 workspaceId 创建 Session；旧 Super 通过 attachSession 补挂。工作区列表会多这一项，这是输入框可用的必要条件。
+- 不做常驻看板。
+- 微信 chip 在 Super 入口标题右侧，点击打开微信弹层。
+
+## 14. 安全
+
+- UI API 校验 DSH 同源。
+- 微信客户端在进程内，没有额外 loopback API。
+- memory.md 0600；禁止写凭据/token。
+- 不自动上传、不遥测。
+- 单 Host 假设；两个 DSH 实例可能双开。
+- 删除 Super 不删除 task、memory.md 和微信凭据。
+
+## 15. 阶段
+
+Phase 0：验证 PTC preset 创建（agentPreset=ptc）、run_code SDK 暴露 5 个 super_session_*、user-rpc、sidebar launcher、schedule、微信扫码/收发。
+
+Phase 1：单例、ensure、task、5 个工具、request、read、pending request 重试、入口。
+
+Phase 2：启动恢复、continuation、recoveryCount。
+
+Phase 3：memory.md、remember/forget、冷启动注入、case 集输出与按路径保存。
+
+Phase 4：微信进程内服务、回复同步、积压 skip、入口 chip。
+
+## 16. 验收
+
+1. 点击入口只创建一个 Super。
+2. Super 以 agentPreset=ptc 创建；模型只直接看到 run_code，5 个 super_session_* 通过 SDK 可用。
+3. 没有 attach/detach。
+4. request 在 worker 中显示为普通用户消息，支持 DSH 支持的消息类型。
+5. 一个 task 只有一个 executor；self 可做用户明确要求的任务，session 做分派任务。
+6. 重启后 pending request 原 requestId 重试；已送达 task 用新 requestId 继续。
+7. 同一 task 自动恢复最多 3 次。
+8. memory.md 跨重启保留；冷启动注入；remember/forget 可用；当前消息优先。
+9. 没有 lessons/FTS5；经验默认只在上下文，用户给路径才写文件。
+10. 微信进程内运行，无 bridge 端口/socket；消息进 Super，回复回微信。
+11. 微信积压超过 10 条时只发最后 10 条并提示。
+12. 微信 chip 在 Super 入口右侧，宽侧边栏显示。
+
+## 17. 已确认
+
+- task 单 executor；广播建多个 task。
+- Super 所有 assistant 回复同步微信。
+- 微信积压 N=10。
+- memory 只做 memory.md，不做 lessons/FTS5。
+- 微信设置在入口右侧 chip。
+- request 是普通会话消息，使用 DSH 支持的消息类型。
+
+## 18. 风险
+
+| 风险 | 处理 |
+|---|---|
+| PTC preset/runtime 不可用 | Super 无法创建或工具不可见 | ensure 明确报错；不静默退回 standard |
+| 已有 Super 不是 PTC | preset 不一致 | 提示重建/迁移，不自动改 |
+| PTC SDK 未包含自定义工具 | Super 无法调用 5 个工具 | Phase 0 验证注册时序；必要时延迟 SDK 生成 |
+| task 状态依赖 Super 维护 | 重启先 read；用户可纠正 |
+| 自动恢复误判 | 先 read；最多 3 次 |
+| memory 过期/膨胀 | 当前消息优先；4KB 上限；用户可删 |
+| 微信全量同步 | 已接受；后续可做 turn 关联 |
+| 微信长连接绑 DSH 进程 | 重启加载 creds 重连，通常不扫码 |
+| 入口 chip 是 DOM 注入 | MutationObserver；宽侧边栏才显示 |
+
+## 19. 总结
+
+全局一个 Super Session，PTC preset（agentPreset=ptc）+ 管理者 prompt、memory.md 和 5 个工具；模型通过 run_code SDK 调用工具；用 task 管理谁做什么，request 就是普通会话消息；重启按 task 继续；微信客户端进程内运行。
+
+## 20. 实现状态
+
+截至当前版本：
+
+- Phase 0–4 已实现并通过隔离环境的真实 DSH 验证。
+
+文件：
+
+- lib/index.js：Host、SuperStore、5 个工具、manager prompt、启动恢复、HTTP API，以及微信服务接线。
+- lib/client.js：侧边栏入口、瞬时 launcher、入口右侧微信 chip 和登录弹层。
+- lib/wechat/wxweb.mjs、login.mjs、outbound.mjs：复用的文件传输助手协议、扫码登录和串行发送。
+- lib/wechat/service.mjs：进程内连接、assistant 文本回传、入站去重、Super 投递、重连积压处理。
+- cordis.patch.yml：插件 patch。
+- test/smoke.mjs：Host 流程 smoke。
+- test/wechat.mjs：微信服务单元测试。
+
+已验证：
+
+- 单例 ensure；第二次 ensure 返回 created=false。
+- PTC 创建；super.json 记录 superPreset=ptc。
+- 侧边栏入口点击后打开同一 Session。
+- 专用 Workspace 创建并 attach，会话界面显示工作区 Super Session，输入框可用。
+- GET /health、POST /ensure、GET /state 正常。
+- GET /wechat/status 返回 idle；POST /wechat/login 返回 data:image/jpeg 二维码；弹层显示 190×190 二维码。
+- 宽侧边栏中 chip 位于 Super Session 标题右侧；折叠侧边栏不插入。
+- smoke 覆盖 Workspace 挂载、工具注册、request 投递、status、read、memory 和持久化；wechat 测试覆盖文本提取、事件过滤、入站去重/回显过滤、失败标记、reconnect skip 和状态视图。
+- 没有浏览器 runtime error。
+
+已知限制：
+
+- 工作区列表会多一个 Super Session Workspace。
+- 隔离测试 profile 没有配置模型，界面显示“请选择模型”；真实 profile 使用用户当前默认模型。
+- 真实 ~/.dsh/profiles/web 尚未安装本插件；安装后需要重启 dsh web。

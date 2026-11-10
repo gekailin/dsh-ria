@@ -1,0 +1,143 @@
+# dsh-super-session
+
+一个 DSH Web 插件：全局只有一个 Super Session。它不直接承担实现工作，而是管理用户已有的顶层 Session：转述需求、跟踪进度、总结经验并分发。
+
+Super 自己是一个普通的顶层 DSH Session，运行 PTC preset，带管理者 prompt 和 5 个 super_session_* 工具。worker 侧不需要安装任何东西，收到的就是普通用户消息。
+
+![Super Session 入口打开后的会话界面](docs/ui-final.png)
+
+## 当前状态
+
+- Phase 0–4 已实现：单例、PTC 创建、任务、转述、读取、memory、重启恢复、侧边栏入口，以及进程内微信和入口右侧的微信 chip。
+- 已验证环境：DSH 0.2.2-rc.1，Node 26，真实 Web profile 的隔离副本。
+- 微信只支持文本；扫码登录需要在弹层里完成一次，之后 DSH 重启会自动复用凭据。
+
+## 安装
+
+在项目目录执行：
+
+~~~bash
+dsh plugin --profile web add file:/home/gkl/Desktop/vibe_proj/dsh-super-session
+~~~
+
+然后重启 dsh web，让 Host 和 client bundle 重新加载。
+
+如果 pnpm 的全局 store 不在可写范围，可以进入 profile 目录手动安装：
+
+~~~bash
+cd ~/.dsh/profiles/web
+pnpm add --ignore-scripts file:/home/gkl/Desktop/vibe_proj/dsh-super-session
+~~~
+
+开发时也可以不改 profile，直接用 patch 叠加：
+
+~~~bash
+DSH_HOME=$PWD/.verify-home dsh --profile supertest --patch ./cordis.patch.yml --port 3099 --host 127.0.0.1 --no-open
+~~~
+
+## 使用
+
+左侧边栏出现 Super Session 入口。第一次点击会 ensure：创建唯一 Super，并把界面切到它；之后点击只是重新打开同一个 Session。
+
+Super 的 cwd 固定在：
+
+~~~text
+DSH_HOME/state/super-session
+~~~
+
+DSH 的正常会话界面要求 Session 属于一个 Workspace。插件会为该目录创建一个标题为 Super Session 的专用 Workspace，并把 Super 挂进去。因此工作区列表里会多一个 Super Session，这是输入框可用的必要条件，不是可选的 UI 装饰。
+
+Super 运行 PTC 模式：模型直接看到 run_code 和生成的 SDK，5 个 super_session_* 工具通过 SDK 调用。创建时固定 agentPreset=ptc；如果 ptc preset/runtime 不可用，会明确报错，不会退回 standard。
+
+## 微信
+
+Super Session 入口标题右侧有一个“微信”chip。点开后可以扫码登录微信「文件传输助手」网页版、查看连接状态和退出登录。
+
+![微信连接弹层](docs/ui-wechat.png)
+
+- 微信客户端运行在 DSH 进程内，不启动 bridge 进程，不占端口。
+- 凭据和去重/待发状态在 `DSH_HOME/state/super-session/wechat/`，文件权限 0600。
+- 微信发来的文本原样作为普通用户消息进入 Super，不加前缀，也不直接进 worker。
+- Super 的每条 assistant 文本回复都会同步回微信。
+- 只处理文本；图片和文件仍建议直接在 Super Session 界面发送。
+- DSH 重启后如有 creds 会自动重连；待发文本超过 10 条时只补发最后 10 条，并先提示跳过了多少条。
+- chip 只在宽侧边栏显示；折叠侧边栏不插入。
+
+## 工具
+
+| 工具 | 作用 |
+|---|---|
+| super_session_task | 建/改任务。字段：goal、acceptance、executor（self 或一个顶层 worker sessionId）、status（open/working/blocked/done/cancelled）。一个任务只有一个 executor。 |
+| super_session_status | 查看任务和可管理的顶层 Session。可带 scope=tasks 或 scope=sessions。不会 resume 冷会话。 |
+| super_session_request | 把消息发给一个或多个 worker。mode=queue 或 steer；content 支持 text/image/file；带 taskId 时 executor 必须匹配。 |
+| super_session_read | 读某个 Session 的近期消息。live 用 snapshotEvents，冷会话用持久化 events，不 resume。 |
+| super_session_memory | read/remember/forget。写 stateDir/memory.md，0600，上限 4096 字节。 |
+
+Super 的系统 prompt 要求：需求不明确时先和用户澄清，再下发；不要凭猜测开工；任务要有验收标准；进度按需查询；经验按 case 集总结（需求、错误做法、正确做法），默认只在对话里输出，用户指定路径时才写文件；重启后先 read 再决定是否继续。
+
+## 任务与转述
+
+- task 是管理记录，不是 DSH 内置对象；保存在 super.json。
+- request 是真正的 Session 消息。发送前先写 pending delivery，prompt 被接受后删除；失败保留，重启或下次 ensure 时按原 requestId 重试。
+- request 的 worker 侧来源是普通的 user 消息，不伪装成系统消息，也不改 worker 的 tools。
+- 进度默认不自动推送；Super 需要时调 status/read，或用户让它查看。
+- Super 需要定时唤醒时，使用 DSH 官方 schedule_create；插件不实现调度循环。
+
+## 重启恢复
+
+Host 启动后延迟 1.5 秒：
+
+- 没有 active task：只重试 pending delivery，不创建 Super。
+- 有 open/working task：ensure Super，重试 pending delivery，并给 Super 发一条恢复消息，列出 taskId、executor、goal、acceptance。
+- 同一 task 自动恢复最多 3 次。
+
+## 状态文件
+
+~~~text
+DSH_HOME/state/super-session/
+  super.json      # superSessionId、superPreset、tasks、pending deliveries
+  memory.md       # 用户偏好和长期记忆
+  wechat/creds.json  # 微信登录凭据，0600
+  wechat/state.json  # 已处理的微信消息 id、待发文本
+~~~
+
+不保存聊天 transcript。Super 的原始 Session 日志仍由 DSH 写在 DSH_HOME/sessions 下。
+
+## HTTP API
+
+前缀：/plugins/dsh-super-session/api
+
+- POST /ensure：创建或打开唯一 Super。
+- GET /state：superSessionId、tasks、pendingDeliveries。
+- GET /health：健康检查。
+- GET /wechat/status：微信登录和连接状态。
+- POST /wechat/login：获取登录二维码。
+- POST /wechat/logout：退出微信登录。
+- POST /wechat/start：用已有凭据重连。
+
+所有请求校验 DSH 同源；没有额外的 loopback 端口。
+
+## 测试
+
+~~~bash
+npm test
+~~~
+
+smoke 使用 mock ctx 覆盖 ensure、Workspace 挂载、5 个工具、request、status、read、memory 和持久化；wechat 测试覆盖 assistant 文本提取、入口事件过滤、微信入站去重/回显过滤、失败标记、reconnect skip 和状态视图。
+
+## 限制
+
+- 微信协议依赖「文件传输助手」网页版，只有文本；扫码登录和消息收发需要真实微信账号验证。
+- 不做 needs_input/failed 的即时自动唤醒；需要时用官方 schedule 或用户回来问。
+- 不做多实例防双开。
+- 澄清门禁是 prompt 行为，不是 Host 强制状态机。
+- Super 依赖 PTC preset；standard 模式不会作为后备。
+- 额外创建一个 Super Session Workspace 是当前 DSH UI 的硬要求。
+
+## 安全
+
+- memory.md 和微信 creds/state 权限 0600；memory.md 禁止写凭据/token。
+- 微信凭据只在本地 stateDir；没有额外的 loopback API，UI API 校验 DSH 同源。
+- 不自动上传、不遥测。
+- Super 可以读 Session、发消息、建任务；这些能力只在用户明确要求时使用。
+- 删除 Super 不会自动删除 task、memory 和 Workspace；需要时手动清理。

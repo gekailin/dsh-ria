@@ -1,0 +1,9 @@
+# dsh-super-session bundle layer: inserts the host plugin. The profile can
+# override the state directory with:
+#
+#   - id: super-session
+#     config:
+#       stateDir: /absolute/path/to/state/super-session
+- insert:
+    - id: super-session
+      name: dsh-super-session

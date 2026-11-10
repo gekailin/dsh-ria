@@ -1,0 +1,7 @@
+node_modules/
+.verify-home/
+.chrome-home/
+.chrome-profile/
+.npm-cache/
+*.tgz
+.DS_Store

@@ -1,16 +1,16 @@
 # dsh-super-session 设计方案
 
-> 状态：v0.19（2026-11-10）
+> 状态：v0.20（2026-11-11）
 > 目标目录：/home/gkl/Desktop/vibe_proj/dsh-super-session
-> 本版按 m01270：Super Session 固定用 PTC preset（agentPreset=ptc）启动，模型只直接看到 run_code + SDK。本文只做方案，不含实现代码。
+> Super Session 固定用 PTC preset（agentPreset=ptc）启动，模型只直接看到 run_code + SDK。本文是设计说明；实现状态见第 20 节。
 
 ## 1. 定义
 
 Super Session 是全局唯一的普通顶层 DSH Session。
 
 - 使用 PTC preset（agentPreset=ptc），拥有完整工具集。
-- 模型只直接看到 run_code 和生成的 SDK；6 个 super_session_* 工具通过 SDK 在 run_code 内调用。
-- 在它的 Agent ctx 上额外注入管理者提示词和 6 个 super_session_* 工具。
+- 模型只直接看到 run_code 和生成的 SDK；7 个 super_session_* 工具通过 SDK 在 run_code 内调用。
+- 在它的 Agent ctx 上额外注入管理者提示词和 7 个 super_session_* 工具。
 - 不是 subagent，不是 Agent Team Lead。
 - 默认不替用户干活：把需求整理成 task，转交给 worker；用户明确要求时，也可以自己完成具体任务，不限于总结。
 - 用户可以像普通会话一样打开、对话、看历史。
@@ -20,7 +20,7 @@ Super Session 是全局唯一的普通顶层 DSH Session。
 - ensure 创建 Super 时固定传 agentPreset: 'ptc'。
 - PTC preset 需要 DSH 的 ptc runtime 和 tool-executor-ptc；缺失时 ensure 明确失败，不静默退回 standard。
 - 已有非 PTC 的 Super 不自动改 preset；提示用户重建或迁移，避免 SDK/工具状态不一致。
-- 6 个 super_session_* 工具必须在 run_code SDK 生成前注册；否则模型看不到它们。
+- 7 个 super_session_* 工具必须在 run_code SDK 生成前注册；否则模型看不到它们。
 - 提示词可以写“用 run_code 调用工具”，但真正的调用规则由 PTC executor 约束。
 
 ## 2. 边界
@@ -100,6 +100,7 @@ task 是 Super 的管理单位；一个 task 只对应一个 executor。
 | super_session_request | 以普通用户消息发送内容 | targetSessionIds, message, taskId?, mode? |
 | super_session_read | 读会话最近消息 | sessionId, limit? |
 | super_session_approval | 列出等待审批的 worker | action: list |
+| super_session_grant | 临时调整 worker 的 sandbox/审批策略，并记录原值 | action: set/list/reset, sessionId?, taskId?, sandboxMode?, approvalPolicy?, ttlSeconds?, reason?, grantId?, userConfirmed? |
 | super_session_memory | 读写 memory.md | action: read/remember/forget, text?, key? |
 
 共同规则：
@@ -119,6 +120,19 @@ task 是 Super 的管理单位；一个 task 只对应一个 executor。
 - 清理：审批结束或 next() 抛错时 finally 清除；AbortSignal abort、15 分钟 TTL、插件 shutdown、DSH 重启都清除。
 - 该观察器不改变审批结果；没有 UI answerer 时仍由 DSH 返回 unavailable。
 - 不做自动唤醒、推送或审批决策；用户必须打开对应 worker 会话批准/拒绝。
+
+### 临时 worker 权限（审批阶段二）
+
+- 只在用户明确要求时调用 `super_session_grant`；`set` 必须带 `userConfirmed=true`。Super 不得因为 task blocked、审批卡住或自己的判断自动提权。
+- `set` 一次只改一个顶层 worker，至少指定 `sandboxMode` 或 `approvalPolicy`，可关联一个未关闭且 executor 匹配的 task。一个 worker 同时只能有一个有效 grant。
+- 修改前记录 effective sandbox mode、sandbox override、effective approval policy、approval override；sandbox 通过 `session.append('sandbox/mode')` 写入，approval 通过 `ctx.approval.setPolicy(agent, policy)` 写入。
+- `approvalPolicy=never` 表示需要审批的动作会被拒绝，不是自动允许；不要把它当作“放开权限”。
+- 默认 TTL 30 分钟，允许 60 秒到 24 小时。
+- 恢复时机：关联 task 变成 done/cancelled、显式 `reset`、TTL 到期、下次启动 reconcile。恢复前比较当前 override；若用户已经手工改过，不覆盖，记入 skipped。
+- 恢复失败标记 `restore_failed` 并 60 秒后重试；启动时先 reconcile 再做其他恢复。
+- 审计追加到 `stateDir/audit.jsonl`（0600）：grant/set、grant/active、grant/apply_failed、grant/restore_failed、grant/restored。
+- 不改 worker tools、prompt 或 preset；只改 DSH 已有的权限 override。
+- 已知限制：DSH 没有“清除 sandbox override”的 API，恢复时只能写回原 effective mode，可能留下一个同值的 override；effective 行为一致。
 
 ## 6. Request
 
@@ -256,17 +270,19 @@ continuation 要求 worker 先检查工作区、已改文件和测试，从中�
 stateDir/
   super.json
   memory.md
+  audit.jsonl      # 临时权限审计，0600
   wechat/
     creds.json      # 登录凭据，0600
     state.json      # seen 消息 id（上限 500）、outbox 文本（上限 50）
 ~~~
 
-没有 lessons、lock、briefs、outbox、audit。
+没有 lessons、lock、briefs、outbox。
 
-super.json 只存 super、tasks、deliveries：
+super.json 只存 super、tasks、deliveries、grants：
 
 - tasks：taskId、goal、acceptance、executor、status、createdAt、updatedAt、recoveryCount。
 - deliveries：deliveryId、targetSessionId、requestId、taskId、content、mode、createdAt。
+- grants：grantId、sessionId、taskId、status、createdAt、expiresAt、before、after、reason、lastError。
 
 写入：进程内 mutex、临时文件 + fsync + rename、0600。pending request 成功后删除，失败保留。
 
@@ -299,9 +315,9 @@ super.json 和 memory.md 都不存 transcript。
 
 ## 15. 阶段
 
-Phase 0：验证 PTC preset 创建（agentPreset=ptc）、run_code SDK 暴露 6 个 super_session_*、user-rpc、sidebar launcher、schedule、微信扫码/收发。
+Phase 0：验证 PTC preset 创建（agentPreset=ptc）、run_code SDK 暴露 7 个 super_session_*、user-rpc、sidebar launcher、schedule、微信扫码/收发。
 
-Phase 1：单例、ensure、task、6 个工具、request、read、pending request 重试、入口。
+Phase 1：单例、ensure、task、7 个工具、request、read、pending request 重试、入口。
 
 Phase 2：启动恢复、continuation、recoveryCount。
 
@@ -315,10 +331,12 @@ Phase 6：新建 Super 的一次性欢迎消息（合成 assistant turn，不调
 
 Phase 7：任务派发防误发提示（仅带 taskId 的 request，固定 text part，quick relay 不加）。
 
+Phase 8：临时 worker 权限 grant（set/list/reset、原值记录、task 关闭/过期/启动恢复、审计）。
+
 ## 16. 验收
 
 1. 点击入口只创建一个 Super。
-2. Super 以 agentPreset=ptc 创建；模型只直接看到 run_code，6 个 super_session_* 通过 SDK 可用。
+2. Super 以 agentPreset=ptc 创建；模型只直接看到 run_code，7 个 super_session_* 通过 SDK 可用。
 3. 没有 attach/detach。
 4. request 在 worker 中显示为普通用户消息，支持 DSH 支持的消息类型；task 派发带可见防误发提示，quick relay 原样。
 5. 一个 task 只有一个 executor；self 可做用户明确要求的任务，session 做分派任务。
@@ -332,6 +350,7 @@ Phase 7：任务派发防误发提示（仅带 taskId 的 request，固定 text 
 13. 审批 observer 只记录活跃 task executor，记录后调用 next()，从不改变审批结果；abort/超时/重启后不残留 pending。
 14. 新建 Super 显示一次欢迎消息；已存在/重启不重复；不占用户消息位；不调用模型；Web UI 显示为正常 assistant 消息。
 15. 任务派发提示要求 worker 对明显无关的消息先确认、相关消息正常执行；不改 worker tools/system prompt；quick relay 不加提示。
+16. 临时权限只能由用户明确指令触发；set 需要 userConfirmed=true；记录原值；task close/reset/expiry/startup 恢复；手工改动跳过；审计可查。
 
 ## 17. 已确认
 
@@ -348,7 +367,7 @@ Phase 7：任务派发防误发提示（仅带 taskId 的 request，固定 text 
 |---|---|
 | PTC preset/runtime 不可用 | Super 无法创建或工具不可见 | ensure 明确报错；不静默退回 standard |
 | 已有 Super 不是 PTC | preset 不一致 | 提示重建/迁移，不自动改 |
-| PTC SDK 未包含自定义工具 | Super 无法调用 6 个工具 | Phase 0 验证注册时序；必要时延迟 SDK 生成 |
+| PTC SDK 未包含自定义工具 | Super 无法调用 7 个工具 | Phase 0 验证注册时序；必要时延迟 SDK 生成 |
 | task 状态依赖 Super 维护 | 重启先 read；用户可纠正 |
 | 自动恢复误判 | 先 read；最多 3 次 |
 | memory 过期/膨胀 | 当前消息优先；4KB 上限；用户可删 |
@@ -356,22 +375,26 @@ Phase 7：任务派发防误发提示（仅带 taskId 的 request，固定 text 
 | 微信长连接绑 DSH 进程 | 重启加载 creds 重连，通常不扫码 |
 | 入口 chip 是 DOM 注入 | MutationObserver；宽侧边栏才显示 |
 | 欢迎消息伪造 turn 0 | 已用真实 UI 验证正常显示；UI 会计 1 轮 1 步并显示已完成，属可接受的外观副作用 |
+| 临时权限被滥用 | 只能用户明确指令 + userConfirmed；单 worker、单 grant、TTL 上限 24h；task close/启动恢复；审计 |
+| 恢复时覆盖用户手工改动 | 比较当前 override，不一致则跳过并记录 |
+| sandbox override 无法清除 | 写回原 effective mode，行为一致但可能保留同值 override |
 
 ## 19. 总结
 
-全局一个 Super Session，PTC preset（agentPreset=ptc）+ 管理者 prompt、memory.md 和 6 个工具；模型通过 run_code SDK 调用工具；用 task 管理谁做什么，request 就是普通会话消息；带 taskId 的派发自动附一条中性的防误发提示；重启按 task 继续；微信客户端进程内运行；新建会话有一条不调用模型的一次性欢迎消息。
+全局一个 Super Session，PTC preset（agentPreset=ptc）+ 管理者 prompt、memory.md 和 7 个工具；模型通过 run_code SDK 调用工具；用 task 管理谁做什么，request 就是普通会话消息；带 taskId 的派发自动附一条中性的防误发提示；重启按 task 继续；微信客户端进程内运行；新建会话有一条不调用模型的一次性欢迎消息。
 
 ## 20. 实现状态
 
 截至当前版本：
 
-- Phase 0–7 已实现；Phase 0–4 和 Phase 6 通过隔离环境的真实 DSH 验证，Phase 5 和 Phase 7 由单元测试和 smoke 覆盖。
-- Phase 2 临时 worker 权限调整未实现，等待用户确认后再做。
+- Phase 0–8 已实现；Phase 0–4 和 Phase 6 通过隔离环境的真实 DSH 验证，Phase 5、Phase 7 和 Phase 8 由单元测试和 smoke 覆盖。
+- 临时 worker 权限（审批阶段二）已实现，等待用户在真实会话里首次验证。
 
 文件：
 
-- lib/index.js：Host、SuperStore、6 个工具、manager prompt、启动恢复、HTTP API、approval observer 接线、微信服务接线，以及新建 Super 的 welcome 合成 turn。
+- lib/index.js：Host、SuperStore、7 个工具、manager prompt、启动恢复、HTTP API、approval observer 接线、grant 接线、微信服务接线，以及新建 Super 的 welcome 合成 turn。
 - lib/approvals.mjs：approval/request 只读观察器、pending 列表、TTL/abort/shutdown 清理。
+- lib/grants.mjs：临时权限 set/list/reset、原值记录、task close/expiry/startup 恢复、审计、失败重试。
 - lib/client.js：侧边栏入口、瞬时 launcher、入口右侧微信 chip 和登录弹层。
 - lib/wechat/wxweb.mjs、login.mjs、outbound.mjs：复用的文件传输助手协议、扫码登录和串行发送。
 - lib/wechat/service.mjs：进程内连接、assistant 文本回传、入站去重、Super 投递、重连积压处理。
@@ -379,6 +402,7 @@ Phase 7：任务派发防误发提示（仅带 taskId 的 request，固定 text 
 - test/smoke.mjs：Host 流程 smoke。
 - test/wechat.mjs：微信服务单元测试。
 - test/approvals.mjs：审批观察器单元测试。
+- test/grants.mjs：临时权限单元测试（过期、startup、漂移跳过、恢复失败、审计）。
 
 已验证：
 
@@ -389,7 +413,7 @@ Phase 7：任务派发防误发提示（仅带 taskId 的 request，固定 text 
 - GET /health、POST /ensure、GET /state 正常。
 - GET /wechat/status 返回 idle；POST /wechat/login 返回 data:image/jpeg 二维码；弹层显示 190×190 二维码。
 - 宽侧边栏中 chip 位于 Super Session 标题右侧；折叠侧边栏不插入。
-- smoke 覆盖 Workspace 挂载、6 个工具注册、request 投递、task 派发防误发提示、quick relay 不加提示、status、read、memory、持久化，以及 welcome 五事件序列和第二次 ensure 不重复；wechat 测试覆盖文本提取、事件过滤、入站去重/回显过滤、失败标记、reconnect skip 和状态视图；approvals 测试覆盖活跃 executor 过滤、始终 next()、abort/TTL/shutdown 清理和 lossless 输出。
+- smoke 覆盖 Workspace 挂载、7 个工具注册、request 投递、task 派发防误发提示、quick relay 不加提示、status、read、memory、持久化，以及 welcome 五事件序列和第二次 ensure 不重复；wechat 测试覆盖文本提取、事件过滤、入站去重/回显过滤、失败标记、reconnect skip 和状态视图；approvals 测试覆盖活跃 executor 过滤、始终 next()、abort/TTL/shutdown 清理和 lossless 输出；grants 测试覆盖授权门槛、原值记录、task done 自动恢复、显式 reset、过期、startup、漂移跳过、恢复失败和审计。
 - 新建 Super 后真实 Web UI 显示欢迎消息；会话界面显示“已完成，用时 1 秒”和“1 轮 1 步”，输入框正常；没有浏览器 runtime error。
 - 审批观察器没有在真实 UI 中触发过；只做了单元测试和 smoke。首次实际审批时需确认 pending 列表和清理行为。
 - welcome 的合成 turn 会被 UI 计入“1 轮 1 步”，并显示“已完成”；这是 assistant 气泡可正常渲染的代价。
@@ -401,4 +425,5 @@ Phase 7：任务派发防误发提示（仅带 taskId 的 request，固定 text 
 - 真实 ~/.dsh/profiles/web 尚未安装本插件；安装后需要重启 dsh web。
 - 阶段一不代批、不推送、不自动唤醒；审批仍需在 worker 会话里完成。
 - 防误发提示依赖 worker 模型遵守；插件无法强制或验证，worker 仍可能直接执行。
-- 阶段二临时权限调整未实现。
+- 临时权限没有在真实会话里触发过；只做了单元测试和 smoke，首次 grant 时需确认 DSH 事件投影和恢复行为。
+- sandbox override 无法清除；恢复写回原 effective mode，可能留下同值 override。

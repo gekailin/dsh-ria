@@ -11,10 +11,24 @@ const prompts = []
 let created = false
 let superId = 'session-super'
 
+const workerEvents = []
+const permissions = {
+  sandboxMode: 'workspace-write',
+  sandboxOverride: undefined,
+  approvalPolicy: 'ask',
+  approvalOverride: undefined,
+}
 const worker = {
   id: 'session-worker',
   ctx: { tools: { register: () => () => {} }, systemPrompt: { section: () => () => {} } },
-  session: { snapshotEvents: () => [{ type: 'assistant/message', seq: 2, data: { message: { content: [{ type: 'text', text: 'worker says done' }] } } }] },
+  session: {
+    snapshotEvents: () => [{ type: 'assistant/message', seq: 2, data: { message: { content: [{ type: 'text', text: 'worker says done' }] } } }],
+    append(type, data) {
+      workerEvents.push({ type, data })
+      if (type === 'sandbox/mode') permissions.sandboxOverride = data.mode
+      return { seq: workerEvents.length, time: 1 }
+    },
+  },
 }
 const superEvents = []
 const superAgent = {
@@ -50,6 +64,31 @@ const ctx = {
       assert.equal(path, stateDir)
       assert.equal(title, 'Super Session')
       return workspace
+    },
+  },
+  sandboxPolicy: {
+    resolve(request) {
+      assert.equal(request.session, worker.session)
+      return { mode: permissions.sandboxOverride ?? permissions.sandboxMode }
+    },
+    overrideOf(session) {
+      assert.equal(session, worker.session)
+      return permissions.sandboxOverride
+    },
+  },
+  approval: {
+    effectivePolicy(session) {
+      assert.equal(session, worker.session)
+      return permissions.approvalOverride ?? permissions.approvalPolicy
+    },
+    overrideOf(session) {
+      assert.equal(session, worker.session)
+      return permissions.approvalOverride
+    },
+    setPolicy(agent, policy) {
+      assert.equal(agent, worker)
+      permissions.approvalOverride = policy
+      workerEvents.push({ type: 'approval/policy', data: { policy } })
     },
   },
   sessionController: {
@@ -145,6 +184,7 @@ assert.ok(installed.has('super_session_request'))
 assert.ok(installed.has('super_session_read'))
 assert.ok(installed.has('super_session_memory'))
 assert.ok(installed.has('super_session_approval'))
+assert.ok(installed.has('super_session_grant'))
 assert.ok(installed.has('prompt:super-session-manager'))
 
 let concluded = 0
@@ -196,6 +236,65 @@ assert.equal(sessionStatus.session.sessionId, 'session-worker')
 assertLossless(sessionStatus)
 const read = await call('super_session_read', { sessionId: 'session-worker', limit: 10 })
 assert.equal(read.messages[0].text, 'worker says done')
+await assert.rejects(
+  () => call('super_session_grant', { action: 'set', sessionId: 'session-worker', sandboxMode: 'danger-full-access' }),
+  /userConfirmed=true/,
+)
+const grant = await call('super_session_grant', {
+  action: 'set',
+  sessionId: 'session-worker',
+  taskId: task.task.taskId,
+  sandboxMode: 'danger-full-access',
+  approvalPolicy: 'never',
+  ttlSeconds: 600,
+  reason: 'test grant',
+  userConfirmed: true,
+})
+assert.equal(grant.grant.sessionId, 'session-worker')
+assert.equal(grant.grant.before.sandboxMode, 'workspace-write')
+assert.equal(grant.grant.before.sandboxOverride, null)
+assert.equal(grant.grant.before.approvalPolicy, 'ask')
+assert.equal(grant.grant.after.sandboxMode, 'danger-full-access')
+assert.equal(grant.grant.after.approvalPolicy, 'never')
+assert.equal(permissions.sandboxOverride, 'danger-full-access')
+assert.equal(permissions.approvalOverride, 'never')
+assertLossless(grant)
+const activeGrants = await call('super_session_grant', { action: 'list' })
+assert.equal(activeGrants.count, 1)
+assert.equal(activeGrants.grants[0].grantId, grant.grant.grantId)
+assertLossless(activeGrants)
+const httpState = await request('GET', '/plugins/dsh-super-session/api/state')
+assert.equal(httpState.status, 200)
+assert.equal(httpState.body.grants.length, 1)
+assert.equal(httpState.body.grants[0].grantId, grant.grant.grantId)
+const closedTask = await call('super_session_task', { taskId: task.task.taskId, status: 'done' })
+assert.equal(closedTask.task.status, 'done')
+assert.equal(permissions.sandboxOverride, 'workspace-write')
+assert.equal(permissions.approvalOverride, 'ask')
+const restoredGrants = await call('super_session_grant', { action: 'list' })
+assert.equal(restoredGrants.count, 0)
+assertLossless(restoredGrants)
+const secondGrant = await call('super_session_grant', {
+  action: 'set',
+  sessionId: 'session-worker',
+  approvalPolicy: 'never',
+  ttlSeconds: 600,
+  userConfirmed: true,
+})
+assert.equal(permissions.approvalOverride, 'never')
+const reset = await call('super_session_grant', { action: 'reset', grantId: secondGrant.grant.grantId })
+assert.equal(reset.restored, true)
+assert.deepEqual(reset.restoredFields, ['approvalPolicy'])
+assert.equal(permissions.approvalOverride, 'ask')
+assertLossless(reset)
+await assert.rejects(
+  () => call('super_session_grant', { action: 'reset', grantId: secondGrant.grant.grantId }),
+  /grant not found/,
+)
+const audit = readFileSync(join(stateDir, 'audit.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line))
+assert.ok(audit.some(item => item.event === 'grant/set' && item.grantId === grant.grant.grantId))
+assert.ok(audit.some(item => item.event === 'grant/restored' && item.trigger === 'task-done'))
+assert.ok(audit.some(item => item.event === 'grant/restored' && item.trigger === 'explicit-reset'))
 await call('super_session_memory', { action: 'remember', key: 'language', text: 'Chinese' })
 const memory = await call('super_session_memory', { action: 'read' })
 assert.match(memory.text, /language/)
@@ -209,12 +308,15 @@ assert.match(installed.get('super_session_request').description, /anti-misdelive
 assert.match(installed.get('super_session_approval').description, /never approves or denies/)
 assert.match(promptText, /防误发/)
 assert.match(promptText, /super_session_approval/)
+assert.match(promptText, /super_session_grant/)
+assert.match(installed.get('super_session_grant').description, /explicitly asks/)
 assert.match(promptText, /host-generated assistant welcome/)
 
 const state = JSON.parse(readFileSync(join(stateDir, 'super.json'), 'utf8'))
 assert.equal(state.superSessionId, superId)
 assert.equal(state.tasks[0].goal, 'fix tests')
 assert.equal(state.deliveries.length, 0)
+assert.equal(state.grants.length, 0)
 
 failPrompts.add('session-worker')
 concluded = 0

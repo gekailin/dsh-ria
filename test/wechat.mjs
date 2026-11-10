@@ -7,15 +7,17 @@ import { InboundBridge, WechatService, assistantText } from '../lib/wechat/servi
 function fakeCtx() {
   const handlers = new Map()
   const prompts = []
+  const signals = []
   return {
     handlers,
     prompts,
+    signals,
     on(name, handler) {
       handlers.set(name, handler)
       return () => handlers.delete(name)
     },
     sessionController: {
-      async prompt(request) { prompts.push(request); return { accepted: true } },
+      async prompt(request, signal) { prompts.push(request); signals.push(signal); return { accepted: true } },
     },
   }
 }
@@ -77,6 +79,8 @@ try {
     assert.equal(ctx.prompts[0].sessionId, 'super-1')
     assert.equal(ctx.prompts[0].mode, 'queue')
     assert.deepEqual(ctx.prompts[0].content, [{ type: 'text', text: ' raw text ' }])
+    assert.equal(ctx.signals[0] instanceof AbortSignal, true)
+    assert.equal(ctx.signals[0].aborted, false)
     assert.match(ctx.prompts[0].requestId, /^req_/)
 
     await bridge.handle({ id: 'msg-2', to: 'filehelper', type: 1, text: ' raw text ' })
@@ -89,7 +93,10 @@ try {
 
   {
     const ctx = fakeCtx()
-    ctx.sessionController.prompt = async () => { throw new Error('worker unavailable') }
+    ctx.sessionController.prompt = async (_request, signal) => {
+      assert.equal(signal instanceof AbortSignal, true)
+      throw new Error('worker unavailable')
+    }
     const service = makeService(ctx, dir)
     service.session = { client: { sentIds: new Set() } }
     const bridge = new InboundBridge(service)

@@ -127,17 +127,30 @@ assert.ok(installed.has('super_session_read'))
 assert.ok(installed.has('super_session_memory'))
 assert.ok(installed.has('prompt:super-session-manager'))
 
-const call = async (name, args) => installed.get(name).execute(args, { signal: new AbortController().signal })
+let concluded = 0
+const call = async (name, args) => installed.get(name).execute(args, {
+  signal: new AbortController().signal,
+  concludeTurn() { concluded += 1 },
+})
 const task = await call('super_session_task', { goal: 'fix tests', acceptance: 'green', executor: 'session-worker' })
 assert.equal(task.task.taskId.startsWith('task_'), true)
+concluded = 0
 const requestResult = await call('super_session_request', { targetSessionIds: ['session-worker'], message: 'please fix', taskId: task.task.taskId })
 assert.equal(requestResult.results[0].ok, true)
+assert.equal(concluded, 1)
 assert.equal(prompts.at(-1).content[0].text, 'please fix')
 assert.equal(prompts.at(-1).requestId.startsWith('req_'), true)
+concluded = 0
 const quickRequest = await call('super_session_request', { targetSessionIds: ['session-worker'], message: 'just checking' })
 assert.equal(quickRequest.results[0].ok, true)
 assert.equal('taskId' in quickRequest.results[0], false)
+assert.equal(concluded, 1)
 assertLossless(quickRequest)
+concluded = 0
+const partialRequest = await call('super_session_request', { targetSessionIds: ['session-worker', 'session-child'], message: 'partial' })
+assert.equal(partialRequest.results.filter(item => item.ok).length, 1)
+assert.equal(concluded, 0)
+assertLossless(partialRequest)
 const status = await call('super_session_status', { scope: 'tasks' })
 assert.equal(status.tasks[0].status, 'working')
 assertLossless(status)
@@ -157,6 +170,9 @@ assert.match(memory.text, /language/)
 const promptText = installed.get('prompt:super-session-manager').text()
 assert.match(promptText, /Chinese/)
 assert.match(promptText, /Super Session id/)
+assert.match(promptText, /End the current turn immediately/)
+assert.match(installed.get('super_session_status').description, /never waits/)
+assert.match(installed.get('super_session_request').description, /ends the current turn/)
 
 const state = JSON.parse(readFileSync(join(stateDir, 'super.json'), 'utf8'))
 assert.equal(state.superSessionId, superId)
@@ -164,10 +180,12 @@ assert.equal(state.tasks[0].goal, 'fix tests')
 assert.equal(state.deliveries.length, 0)
 
 failPrompts.add('session-worker')
+concluded = 0
 const failedRequest = await call('super_session_request', { targetSessionIds: ['session-worker'], message: 'do not deliver' })
 assert.equal(failedRequest.results[0].ok, false)
 assert.equal('taskId' in failedRequest.results[0], false)
 assert.match(failedRequest.results[0].error, /prompt failed/)
+assert.equal(concluded, 0)
 assertLossless(failedRequest)
 failPrompts.delete('session-worker')
 

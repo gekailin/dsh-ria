@@ -348,7 +348,10 @@ assert.equal(snapshotFailure.results[0].ok, true)
 assert.equal(concluded, 1)
 assert.equal(riaEvents.length, eventsBeforeSnapshotFailure)
 const notesAfterSnapshotFailure = await request('GET', '/plugins/dsh-ria/api/dispatch-notes?sessionId=' + encodeURIComponent(riaId))
-assert.equal(notesAfterSnapshotFailure.body.notes.length, notesBeforeSnapshotFailure)
+assert.equal(notesAfterSnapshotFailure.body.notes.length, notesBeforeSnapshotFailure + 1)
+const recordedAnyway = notesAfterSnapshotFailure.body.notes.find(item => item.note === '展示失败也要继续派发。')
+assert.equal(recordedAnyway.turn, riaTurn)
+assert.equal(recordedAnyway.ticketId, ticket.ticket.ticketId)
 assert.deepEqual(wechatNotes[1], { note: '展示失败也要继续派发。', options: { isTask: true } })
 assertLossless(snapshotFailure)
 const originalSendDispatchNote = service.wechat.sendDispatchNote
@@ -358,7 +361,15 @@ const wechatFailure = await call('ria_request', { targetSessionIds: ['session-wo
 assert.equal(wechatFailure.results[0].ok, true)
 assert.equal(concluded, 1)
 await new Promise(resolve => setImmediate(resolve))
+if (service.pumping) await service.pumping
+const pendingWechatNote = service.outbox.all().find(item => item.kind === 'wechat_dispatch_note' && item.payload.note === '微信发送失败也要继续派发。' && item.status === 'pending')
+assert.equal(pendingWechatNote.attempts, 1)
+assert.equal(pendingWechatNote.lastError, 'wechat unavailable')
 service.wechat.sendDispatchNote = originalSendDispatchNote
+pendingWechatNote.due = 0
+await service.pumpOutbox('smoke retry')
+assert.deepEqual(wechatNotes[2], { note: '微信发送失败也要继续派发。', options: { isTask: true } })
+assert.equal(service.outbox.entry(pendingWechatNote.id).status, 'delivered')
 assertLossless(wechatFailure)
 concluded = 0
 const partialRequest = await call('ria_request', { targetSessionIds: ['session-worker', 'session-child'], message: 'partial', ticketId: ticket.ticket.ticketId, note: '部分目标不会收到。' })

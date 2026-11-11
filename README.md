@@ -23,7 +23,7 @@ Ria 自己是一个普通的顶层 DSH Session，运行 PTC preset，带管理�
 
 ## 当前状态
 
-- Phase 0–18 已实现：单例、PTC 创建、完整任务模型（用户消息自动登记 intake、8 态状态机、ria_resolve 定性、合并、归档、重启恢复）、转述、读取、memory、重启恢复（task 与 Ria 自己未完成 turn 都能续上，含恢复上限可见性）、侧边栏入口、进程内微信和入口右侧的微信 chip、worker 审批可见性、new-session 欢迎卡片、系统 prompt 防误发提示与设置页开关、临时 worker 权限调整、微信长回复/复杂 Markdown 自动转 .md 文件，worker 结束 turn 后自动唤醒 Ria，微信推送的暂停/恢复，以及暂停状态和手动开关的 UI，带 ticketId 派发的 note 硬约束与可见的 turn-tail 派发卡片，以及同步到微信的派发确认文本；微信出站图片已实现（assistant 回复里的本机图片会作为微信图片发出），入站图片仍预留。
+- Phase 0–23 已实现：单例、PTC 创建、完整任务模型（用户消息自动登记 intake、8 态状态机、ria_resolve 定性、合并、归档、重启恢复）、转述、读取、memory、重启恢复（task 与 Ria 自己未完成 turn 都能续上，含恢复上限可见性）、侧边栏入口、进程内微信和入口右侧的微信 chip、worker 审批可见性、new-session 欢迎卡片、系统 prompt 防误发提示与设置页开关、临时 worker 权限调整、微信长回复/复杂 Markdown 自动转 .md 文件，worker 结束 turn 后自动唤醒 Ria，微信推送的暂停/恢复，以及暂停状态和手动开关的 UI，带 ticketId 派发的 note 硬约束与可见的 turn-tail 派发卡片、同步到微信的派发确认文本，以及保证这些副作用不丢的持久化 outbox；blocked+waitingOn=user 的 ticket 可带结构化 attention；微信出站图片已实现（assistant 回复里的本机图片会作为微信图片发出），入站图片仍预留。
 - 已验证环境：DSH 0.2.2-rc.1，Node 26，真实 Web profile 的隔离副本。
 - 微信入站目前只投递文本（入站图片仍预留）；出站可发文本、.md 文件与本机图片，见“图片（出站）”。扫码登录需要在弹层里完成一次，之后 DSH 重启会自动复用凭据。
 
@@ -99,7 +99,7 @@ Ria 入口标题右侧有一个“微信”chip。点开后可以扫码登录微
 - 自动：Web/手机等非微信用户消息进入 Ria 时自动暂停（`pausedBy=channel`）；微信入站自动恢复，包括恢复手动暂停。
 - 合成消息（`host_` 开头的启动恢复、启动失败、worker idle 唤醒）和官方 schedule 提醒不触发切换。
 - 手动暂停优先：非微信消息的自动暂停不会覆盖 `pausedBy=manual`；手动恢复后，下一条非微信消息会再次暂停，这是预期行为。
-- 正在发送的那一条会发完；还没开始发送的排队文本/文件丢弃。暂停期间不写 outbox，恢复后按重连积压策略补发。
+- 正在发送的那一条会发完；还没开始发送的排队文本/文件丢弃。暂停期间不写微信内部 Outbound 队列，恢复后按重连积压策略补发。
 - 丢弃会记 warn 日志：`dropped outbound while paused: {"at":...,"riaSessionId":...,"to":"filehelper","kind":"assistant|system|text|file","pausedBy":...,"reason":...}`，文本带 chars/preview，文件带 name/bytes。暂停和恢复各有一条 `pause:` / `resume:` info/warn 日志。
 
 ### 长回复转 .md 文件
@@ -157,9 +157,9 @@ Ria 入口标题右侧有一个“微信”chip。点开后可以扫码登录微
 | 工具 | 作用 |
 |---|---|
 | ria_ticket | 建/改/关/合并 ticket。字段：ticketId、goal、acceptance、executor（self 或一个顶层 worker sessionId）、status（intake/open/working/blocked/forked/done/failed/cancelled）、blockedReason、waitingOn、attention。当 status=blocked 且 waitingOn=user 时，attention 用 {kind:'question'|'approval'|'decision', question, options?, askedBy?, ref?} 记录“在等用户回答什么”；旧票只有 blockedReason 也能正常读取。一个 ticket 只有一个 executor；状态只能经状态机转移。每次更新都会把 recovery.count 归零。action=merge 把 sourceTicketId 并进 targetTicketId：source 以 done + resolution.kind=merged 收敛，子 ticket 与待投递消息改挂 target，合并不可逆。 |
-| ria_status | 查看 ticket 和可管理的顶层 Session。可带 scope=tickets、scope=sessions、scope=recent 或 scope=history；带 ticketId 可精确查一条（归档的也能查）。scope=tickets 只列热存储（所有非终态 + 最近 24h 或最新 50 条终态）；scope=history 从归档日志按 closedAt 倒序读，默认 50 条、limit 最大 200。scope=sessions 带 title、cwd、updatedAt、lastUsedAt；scope=recent 返回最近 7 天成功派发过的最多 5 个顶层 worker，按 lastUsedAt 倒序，带 sessionId、title、cwd、lastUsedAt、lastTicketGoal、lastTicketStatus。不会 resume 冷会话。所有 ticket 响应附带 attentionOverview：waitingOnUser 计数与 items（ticketId、goal、question、kind、options、legacy）。 |
+| ria_status | 查看 ticket 和可管理的顶层 Session。可带 scope=tickets、scope=sessions、scope=recent 或 scope=history；带 ticketId 可精确查一条（归档的也能查）。scope=tickets 只列热存储（所有非终态 + 最近 24h 或最新 50 条终态）；scope=history 从归档日志按 closedAt 倒序读，默认 50 条、limit 最大 200。scope=sessions 带 title、cwd、updatedAt、lastUsedAt；scope=recent 返回最近 7 天成功派发过的最多 5 个顶层 worker，按 lastUsedAt 倒序，带 sessionId、title、cwd、lastUsedAt、lastTicketGoal、lastTicketStatus。不会 resume 冷会话。所有 ticket 响应附带 attentionOverview：waitingOnUser 计数与 items（ticketId、goal、question、kind、options、legacy）。所有 ticket 响应也附带 outbox：pending、failed、delivered、total 与 items（未投递条目，含 kind、attempts、due、ticketId、lastError、note）；带 ticketId 查询时只统计该票的条目。 |
 | ria_spawn | 新建一个顶层 worker 会话。cwd 必须是存在且可读的绝对目录；agentPreset 可选；title 可选（创建后用 title 服务重命名，失败只返回 titleError，不影响创建）。失败码：workspace_missing、preset_not_found、spawn_failed。新会话作为 top-level worker 出现在 ria_status scope=sessions，不会被当成 subagent。 |
-| ria_request | 把 ticket 的消息发给一个或多个 worker。ticketId 与 note 均必填；mode=queue 或 steer；content 支持 text/image/file；attachments 支持最多 20 个图片绝对路径（png/jpeg/webp/gif），与 content 一起作为 text + image parts 投递，交给宿主 attachment 服务统一校验和存储。目标 executor 必须等于 ticket.executor。Host 把 note 记录到 ria.json，由插件 client 在 Ria 会话当前轮次末尾显示成可见卡片，不进入模型上下文；同时把 note 作为“📌 任务已派发：<note>”推送到微信。缺 note、空白或超长会直接报错且不投递。附件预检失败码：attachment_missing、attachment_invalid、model_no_image；预检失败不投递、不写 recentWorkers、不动 ticket。Host 不加消息前缀；防误发提示由 agent system prompt section 提供。 |
+| ria_request | 把 ticket 的消息发给一个或多个 worker。ticketId 与 note 均必填；mode=queue 或 steer；content 支持 text/image/file；attachments 支持最多 20 个图片绝对路径（png/jpeg/webp/gif），与 content 一起作为 text + image parts 投递，交给宿主 attachment 服务统一校验和存储。目标 executor 必须等于 ticket.executor。Host 先把 note 和微信镜像写入副作用 outbox，有活跃 turn 时立即记录到 ria.json，由插件 client 在 Ria 会话当前轮次末尾显示成可见卡片，不进入模型上下文；没有活跃 turn 时留待下一次 turn/start、startup 或 30 秒 tick 补投。同时把 note 作为“📌 任务已派发：<note>”推送到微信；发送失败由 outbox 退避重试，不阻断派发。缺 note、空白或超长会直接报错且不投递。附件预检失败码：attachment_missing、attachment_invalid、model_no_image；预检失败不投递、不写 recentWorkers、不动 ticket。Host 不加消息前缀；防误发提示由 agent system prompt section 提供。 |
 | ria_read | 读某个 Session 的近期消息。live 用 snapshotEvents，冷会话用持久化 events，不 resume。 |
 | ria_approval | 列出正在等待审批的 worker（仅限有 active ticket 的 executor）。只读：不批准、不拒绝、不替 UI answerer 作答。 |
 | ria_grant | 临时调整一个 worker 的 sandbox mode 和/或 approval policy。action=set/list/reset；set 必须带 userConfirmed=true，并记录原值、到期时间、审计，任务结束或 reset 时恢复。 |
@@ -212,12 +212,12 @@ Ria 的系统 prompt 要求：每条真实用户消息都要用 `ria_resolve` �
 - 8 个状态：`intake`、`open`、`working`、`blocked`、`forked`、`done`、`failed`、`cancelled`。`answered`、`merged`、`control` 是 `done.resolution.kind`。只有 `RiaStore.transitionTicket` 能改状态，非法转移返回错误而不是静默改写。
 - request 是真正的 Session 消息。发送前先写 pending delivery，prompt 被接受后删除；失败保留，重启或下次 ensure 时按原 requestId 重试。
 - `ria_request` 必须带 `ticketId` 和 `note`；ticket 的 executor 必须等于目标 sessionId。消息内容原样发送，不加任何前缀。防误发提示由 Host 注册在每个 agent 上的 system prompt section 提供：只有在做另一件明显不同的事或完全对不上时，才先向用户确认、不直接执行。
-- note 最多 500 字。Host 在投递成功后把 note 写入 `ria.json`（最多保留 100 条），插件 client 通过 `GET /plugins/dsh-ria/api/dispatch-notes?sessionId=...&turn=...` 读取，并在 `conversation.chat.turnTail` slot 渲染成当前轮次末尾的卡片。
-- 卡片不属于 turn process，不会被完成后的流程折叠隐藏；它不进入模型上下文，也不依赖 session log；重启后仍能从 ria.json 读到。
-- note 缺失、纯空白或超过 500 字时，工具直接报错，消息不投递、不 concludeTurn。展示 note 失败只记 warn，不阻断已经成功的派发。
-- 同一个 note 也会在派发成功后进入微信 outbound 队列，发送“📌 任务已派发：<note>”。
+- note 最多 500 字。派发成功后，Host 把卡片和微信镜像都先写进副作用 outbox（`stateDir/outbox.json`）。有活跃 turn 时立即把 note 写入 `ria.json`（最多保留 100 条），插件 client 通过 `GET /plugins/dsh-ria/api/dispatch-notes?sessionId=...&turn=...` 读取，并在 `conversation.chat.turnTail` slot 渲染成当前轮次末尾的卡片；没有活跃 turn 时条目留在 outbox，下一次 turn/start、startup 或 30 秒 tick 补投，不会静默丢失。
+- 卡片不属于 turn process，不会被完成后的流程折叠隐藏；它不进入模型上下文，也不依赖 session log；已经写入的卡片在重启后仍能从 ria.json 读到。
+- note 缺失、纯空白或超过 500 字时，工具直接报错，消息不投递、不 concludeTurn。卡片写入失败会按 outbox 退避重试；6 次仍失败则标 failed 并保留原因，`ria_status` 可查，不阻断已经成功的派发。
+- 同一个 note 也会在派发成功后进入副作用 outbox，再由微信内部 Outbound 队列发送“📌 任务已派发：<note>”。
 - 微信文本会带前缀后再走现有 markdown/长度判定（阈值按包含前缀的完整文本计算）；note 最多 500 字，默认 800 字阈值下不会转成 .md，若配置了更低阈值则按同一规则处理。
-- 暂停时按现有规则丢弃并记日志（kind=dispatch-note）；微信未登录时跳过并记 info；发送失败只 warn，不影响派发，也不影响 concludeTurn。
+- 微信发送失败（未登录、暂停、网络异常）由 outbox 按 10s/1m/5m/15m/1h 退避重试，最多 6 次；暂停期间不外发，恢复后若仍未超过重试窗口会补发。失败不影响派发，也不影响 concludeTurn。
 - 早期实现用 `command/run` + `command/done`，但 DSH 把 turn 内 command 节点当作 process member，turn 完成后默认折叠，真实 UI 看不到。现已移除该路径。
 - 该 section 是静态通用文本，对所有 agent 生效，内容不针对具体消息，因此对普通会话无害；它不修改 worker 的消息历史、tools 或 preset。设置页可以关闭它，关闭后 section 文本为空，DSH 会直接丢弃空 section。
 - worker 的 turn 结束时 Host 会自动通知 Ria（见下节）；其余进度不轮询、不自动推送，Ria 需要时调 status/read。
@@ -228,6 +228,18 @@ Ria 的系统 prompt 要求：每条真实用户消息都要用 `ria_resolve` �
 ![Ria 会话中任务派发后的 turn-tail 卡片](docs/ui-dispatch-note.png)
 
 网页端在 Ria 当前轮次末尾显示“任务已派发 / 消息已转交”卡片；微信端同时收到一条以同样标题开头的文本。两处共用同一个 note 原文，措辞一致；网页看到卡片、微信收到文本是预期行为，不是重复发送。
+
+### 副作用 outbox
+
+派发卡片、微信镜像，以及恢复/blocked 时发给 Ria 的提示，都是“消息已经派发成功之后”的副作用。插件不再直接 fire-and-forget，而是先写入 `stateDir/outbox.json`，再由投递器执行；进程在写入后崩溃也能在下次启动补投。
+
+- 至少一次：条目在成功投递后才标 `delivered`；中途崩溃会重试。因此极端情况下微信可能收到重复文本；卡片按 `noteId` 去重，不会重复插入同一条 dispatch note。
+- 幂等键由 kind、ticketId、note 文本与 turn 生成；重复入队返回已有条目，不重复发送。卡片与微信镜像共用同一个 noteId，卡片写入 ria.json 时再按 noteId 去重。
+- 有活跃 turn 时立即投递卡片；没有活跃 turn 时不丢弃，留到下一次 turn/start、startup 或 30 秒 tick 补投。微信镜像不依赖 turn，入队后即可投递。
+- 失败按 10 秒、1 分钟、5 分钟、15 分钟、1 小时退避，最多 6 次；超过后标 `failed` 并保留 `lastError`，不会静默消失。
+- `delivered` 条目保留 24 小时用于去重，之后清理；队列上限 500 条，超限先清最旧的 `delivered`，再清最旧的 `failed`，`pending` 不清理。
+- `ria_status` 的任意 ticket 响应带 `outbox` 汇总与未投递条目；带 `ticketId` 时只看该票。
+- 微信服务自己的 `Outbound` 队列负责文本/文件/图片的串行发送与去重；副作用 outbox 负责“这条派发确认有没有送达”。两者层次不同，不要混用。
 
 ## 任务转交提示与设置页
 
@@ -250,7 +262,8 @@ Ria 的系统 prompt 要求：每条真实用户消息都要用 `ria_resolve` �
 
 Host 启动后延迟 1.5 秒：
 
-- 没有未收敛 ticket、也没有 pending delivery：什么都不做，不创建 Ria。
+- 先补投副作用 outbox 里到期的条目（无需 Ria 在线也能发微信镜像）；补投不会创建 Ria。
+- 没有未收敛 ticket、也没有 pending delivery：不再做其他事。
 - 恢复单位是 ticket：`intake`（还没有归宿）、`open`（尚未派发）、`working`（worker 可能已中断）。`forked` 父容器只递归 `childTicketIds`，父本身不单独恢复；`blocked`、`failed`、`done`、`cancelled` 不自动恢复。
 - 有 pending delivery 先重试；重试成功会把对应 ticket 拉回 `working` 并重置恢复计数。
 - 所有候选 ticket 合并成一条恢复 prompt，逐条列出 ticketId、status、executor、goal、acceptance、原消息、开始时间、最近动作与 `recovery=n/3`。intake 要求先 `ria_read` 自己的会话再 `ria_resolve`；working 要求先读 worker 与工作区、检查已改文件和测试，再判断继续/done/failed/blocked；open 要求先检查 executor，再派发或标 blocked。
@@ -290,10 +303,11 @@ Host 启动后延迟 1.5 秒：
 ~~~text
 DSH_HOME/state/ria/
   ria.json       # riaSessionId、riaPreset、tickets、pending deliveries、grants、settings、dispatchNotes
+  outbox.json    # 副作用待投递/失败记录（dispatch note、微信镜像），0600
   memory.md       # 用户偏好和长期记忆
   audit.jsonl     # 临时权限审计，0600
   wechat/creds.json  # 微信登录凭据，0600
-  wechat/state.json  # 已处理消息 id、outbox、暂停状态与时间
+  wechat/state.json  # 已处理消息 id、Outbound 队列、暂停状态与时间
 ~~~
 
 不保存聊天 transcript。Ria 的原始 Session 日志仍由 DSH 写在 DSH_HOME/sessions 下。
@@ -321,7 +335,7 @@ DSH_HOME/state/ria/
 npm test
 ~~~
 
-smoke 使用 mock ctx 覆盖 ensure、Workspace 挂载、9 个工具、request、ticket 派发都不加前缀、dispatch guard section 安装到 worker 和 Ria、GET/POST /settings 与 GET /state 的 settings、status、read、memory、持久化、grant 的 set/list/reset 与 ticket 关闭恢复，以及新建 Ria 不写任何 session 事件和第二次 ensure 不重复；近期 worker 覆盖空列表、ticket 派发后候选的 title/cwd/lastUsedAt/lastTicketGoal/lastTicketStatus、失败请求不更新、scope=sessions 字段、ria.json 持久化和 lossless；dispatch-guard 测试覆盖 installAll、agent/created 与 disposed、重复安装、开关关闭时 text 为空、注册失败只 warn 和 shutdown；wechat 测试覆盖 assistant 文本提取、入口事件过滤、微信入站去重/回显过滤、失败标记、reconnect skip、状态视图，以及图片入站预留；wechat-image 测试覆盖图片上传/发送字段与去重、成功发送、暂停、本机相对路径图片提取、缺失/非图片回退、围栏代码跳过和 outbound 关闭；wechat-file 测试覆盖阈值/代码块/表格/标题/链接判定、配置/env 覆盖、文件名、短消息不变、长消息发 .md、失败回退文本，以及上传 multipart 和 appmsg 的字段/签名/去重；approvals 测试覆盖只记录活跃 executor、始终 next()、abort/超时/shutdown 清理和 lossless 输出；grants 测试覆盖过期、startup、ticket 缺失/关闭、漂移跳过、恢复失败和审计；startup 测试覆盖达到恢复上限后的通知与 blocked 状态、更新/成功派发清零、以及启动异常通知；worker-idle 测试覆盖正常触发、排除 Ria、非 working ticket/running 状态不触发、按 ticket 节流、开关关闭，以及提示文本要求 read/不假设完成/等用户输入时标 blocked；wechat-pause 测试覆盖手动开关与持久化、非微信消息自动暂停、微信入站自动恢复、host_/schedule 合成消息不触发、manual 优先级、暂停时不出站且丢日志、排队丢弃而在途完成、重启保持，以及恢复后补发 outbox；smoke 还验证 pause/unpause 往返后 pausedAt、resumedAt、pausedBy 和重复读取 status 的字段一致；以及 dispatch-notes 按 session/turn 过滤、错误 session 返回空列表、note 持久化、无 note 的请求不记录、snapshot 读取失败不影响派发和 concludeTurn；wechat 和 smoke 还覆盖派发 note 的微信镜像：ticket 格式、暂停时丢弃并记日志、恢复后发送、未登录跳过、发送异常不影响派发与 concludeTurn；spawn 测试覆盖新建顶层 worker 的参数、title、失败码与 ria_status 可见性；attachments 测试覆盖图片 content 投递、attachment_missing/attachment_invalid/model_no_image、多目标部分成功，以及失败不投递、不写 recentWorkers、不动 ticket。
+smoke 使用 mock ctx 覆盖 ensure、Workspace 挂载、9 个工具、request、ticket 派发都不加前缀、dispatch guard section 安装到 worker 和 Ria、GET/POST /settings 与 GET /state 的 settings、status、read、memory、持久化、grant 的 set/list/reset 与 ticket 关闭恢复，以及新建 Ria 不写任何 session 事件和第二次 ensure 不重复；近期 worker 覆盖空列表、ticket 派发后候选的 title/cwd/lastUsedAt/lastTicketGoal/lastTicketStatus、失败请求不更新、scope=sessions 字段、ria.json 持久化和 lossless；dispatch-guard 测试覆盖 installAll、agent/created 与 disposed、重复安装、开关关闭时 text 为空、注册失败只 warn 和 shutdown；wechat 测试覆盖 assistant 文本提取、入口事件过滤、微信入站去重/回显过滤、失败标记、reconnect skip、状态视图，以及图片入站预留；wechat-image 测试覆盖图片上传/发送字段与去重、成功发送、暂停、本机相对路径图片提取、缺失/非图片回退、围栏代码跳过和 outbound 关闭；wechat-file 测试覆盖阈值/代码块/表格/标题/链接判定、配置/env 覆盖、文件名、短消息不变、长消息发 .md、失败回退文本，以及上传 multipart 和 appmsg 的字段/签名/去重；approvals 测试覆盖只记录活跃 executor、始终 next()、abort/超时/shutdown 清理和 lossless 输出；grants 测试覆盖过期、startup、ticket 缺失/关闭、漂移跳过、恢复失败和审计；startup 测试覆盖达到恢复上限后的通知与 blocked 状态、更新/成功派发清零、以及启动异常通知；worker-idle 测试覆盖正常触发、排除 Ria、非 working ticket/running 状态不触发、按 ticket 节流、开关关闭，以及提示文本要求 read/不假设完成/等用户输入时标 blocked；wechat-pause 测试覆盖手动开关与持久化、非微信消息自动暂停、微信入站自动恢复、host_/schedule 合成消息不触发、manual 优先级、暂停时不出站且丢日志、排队丢弃而在途完成、重启保持，以及恢复后补发 outbox；smoke 还验证 pause/unpause 往返后 pausedAt、resumedAt、pausedBy 和重复读取 status 的字段一致；以及 dispatch-notes 按 session/turn 过滤、错误 session 返回空列表、note 持久化、无 note 的请求不记录、snapshot 读取失败仍派发并记录 note；wechat 和 smoke 还覆盖派发 note 的微信镜像：ticket 格式、未登录/暂停/发送异常都不影响派发与 concludeTurn，失败条目留在 outbox 并可按退避补投；spawn 测试覆盖新建顶层 worker 的参数、title、失败码与 ria_status 可见性；attachments 测试覆盖图片 content 投递、attachment_missing/attachment_invalid/model_no_image、多目标部分成功，以及失败不投递、不写 recentWorkers、不动 ticket；attention 测试覆盖结构化问题的设置/读取/清空、旧 blockedReason 票和 ria_status 输出；outbox 测试覆盖幂等入队、重载、退避与 6 次上限、delivered 清理、坏文件恢复、无活跃 turn 排队、turn 开始后补投、失败原因可见和 startup 补投。
 
 ## 限制
 

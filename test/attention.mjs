@@ -87,6 +87,10 @@ function blockedTicket(store, overrides = {}) {
       askedBy: 'ria',
     }])
 
+    const missing = await fixture.call('ria_status', { ticketId: 'ticket-missing' })
+    assert.equal(missing.found, false)
+    assert.equal(missing.attentionOverview.waitingOnUser, 1)
+
     const legacy = blockedTicket(store, { goal: 'legacy question', blockedReason: '旧票只写了原因' })
     assert.equal(legacy.attention, null)
     const overview = (await fixture.call('ria_status', { scope: 'tickets' })).attentionOverview

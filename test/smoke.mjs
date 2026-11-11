@@ -132,8 +132,9 @@ const ctx = {
     async list() {
       return { items: [
         { sessionId: superId, running: false, blank: false, updatedAt: 1, cwd: stateDir },
-        { sessionId: 'session-worker', running: true, blank: false, updatedAt: 2 },
+        { sessionId: 'session-worker', running: true, blank: false, updatedAt: 2, cwd: '/work/worker', projections: { values: { title: 'Worker One' } } },
         { sessionId: 'session-child', running: false, blank: false, updatedAt: 3, cwd: '/tmp', parentSessionId: 'session-worker', origin: 'subagent' },
+        { sessionId: 'session-worker-2', running: false, blank: true, updatedAt: 4, projections: { values: { title: 'Worker Two' } } },
       ] }
     },
     async prompt(request) {
@@ -236,6 +237,12 @@ const call = async (name, args) => installed.get(name).execute(args, {
   signal: new AbortController().signal,
   concludeTurn() { concluded += 1 },
 })
+const recentEmpty = await call('super_session_status', { scope: 'recent' })
+assert.deepEqual(recentEmpty.workers, [])
+assert.equal(recentEmpty.windowDays, 7)
+assert.equal(recentEmpty.limit, 5)
+assertLossless(recentEmpty)
+
 const task = await call('super_session_task', { goal: 'fix tests', acceptance: 'green', executor: 'session-worker' })
 assert.equal(task.task.taskId.startsWith('task_'), true)
 concluded = 0
@@ -245,6 +252,17 @@ assert.equal(concluded, 1)
 assert.equal(prompts.at(-1).content.length, 1)
 assert.equal(prompts.at(-1).content[0].text, 'please fix')
 assert.equal(prompts.at(-1).requestId.startsWith('req_'), true)
+const recentAfterTask = await call('super_session_status', { scope: 'recent' })
+assert.equal(recentAfterTask.workers.length, 1)
+assert.equal(recentAfterTask.workers[0].sessionId, 'session-worker')
+assert.equal(recentAfterTask.workers[0].title, 'Worker One')
+assert.equal(recentAfterTask.workers[0].cwd, '/work/worker')
+assert.equal(recentAfterTask.workers[0].lastTaskId, task.task.taskId)
+assert.equal(recentAfterTask.workers[0].lastTaskGoal, 'fix tests')
+assert.equal(recentAfterTask.workers[0].lastTaskStatus, 'working')
+assert.equal(typeof recentAfterTask.workers[0].lastUsedAt, 'number')
+assertLossless(recentAfterTask)
+const lastUsedBeforeQuick = recentAfterTask.workers[0].lastUsedAt
 concluded = 0
 const quickRequest = await call('super_session_request', { targetSessionIds: ['session-worker'], message: 'just checking' })
 assert.equal(quickRequest.results[0].ok, true)
@@ -253,6 +271,11 @@ assert.equal(concluded, 1)
 assert.equal(prompts.at(-1).content.length, 1)
 assert.equal(prompts.at(-1).content[0].text, 'just checking')
 assertLossless(quickRequest)
+const recentAfterQuick = await call('super_session_status', { scope: 'recent' })
+assert.equal(recentAfterQuick.workers.length, 1)
+assert.equal(recentAfterQuick.workers[0].lastUsedAt >= lastUsedBeforeQuick, true)
+assert.equal(recentAfterQuick.workers[0].lastTaskId, task.task.taskId)
+assertLossless(recentAfterQuick)
 concluded = 0
 const partialRequest = await call('super_session_request', { targetSessionIds: ['session-worker', 'session-child'], message: 'partial' })
 assert.equal(partialRequest.results.filter(item => item.ok).length, 1)
@@ -265,10 +288,15 @@ const status = await call('super_session_status', { scope: 'tasks' })
 assert.equal(status.tasks[0].status, 'working')
 assertLossless(status)
 const sessions = await call('super_session_status', { scope: 'sessions' })
-assert.deepEqual(sessions.sessions.map(item => item.sessionId), [superId, 'session-worker'].filter(id => id !== superId))
+assert.deepEqual(sessions.sessions.map(item => item.sessionId), ['session-worker', 'session-worker-2'])
 assertLossless(sessions)
 assert.equal('parentSessionId' in sessions.sessions[0], false)
-assert.equal('cwd' in sessions.sessions[0], false)
+assert.equal(sessions.sessions[0].title, 'Worker One')
+assert.equal(sessions.sessions[0].cwd, '/work/worker')
+assert.equal(typeof sessions.sessions[0].lastUsedAt, 'number')
+assert.equal(sessions.sessions[1].title, 'Worker Two')
+assert.equal('cwd' in sessions.sessions[1], false)
+assert.equal('lastUsedAt' in sessions.sessions[1], false)
 const sessionStatus = await call('super_session_status', { scope: 'sessions', sessionId: 'session-worker' })
 assert.equal(sessionStatus.session.sessionId, 'session-worker')
 assertLossless(sessionStatus)
@@ -359,6 +387,9 @@ assert.match(promptText, /who received the task/)
 assert.match(promptText, /what the user will see next/)
 assert.match(promptText, /Never send only the tool call/)
 assert.match(installed.get('super_session_status').description, /never waits/)
+assert.match(installed.get('super_session_status').description, /scope=recent/)
+assert.match(installed.get('super_session_status').description, /lastUsedAt/)
+assert.match(installed.get('super_session_status').description, /lastTaskGoal/)
 assert.match(installed.get('super_session_request').description, /ends the current turn/)
 assert.match(installed.get('super_session_request').description, /anti-misdelivery constraint/)
 assert.match(installed.get('super_session_request').description, /adds no message prefix/)
@@ -374,13 +405,22 @@ assert.match(promptText, /super_session_approval/)
 assert.match(promptText, /super_session_grant/)
 assert.match(installed.get('super_session_grant').description, /explicitly asks/)
 assert.match(promptText, /host-generated assistant welcome/)
+assert.match(promptText, /scope="recent"/)
+assert.match(promptText, /up to 5 workers/)
+assert.match(promptText, /last 7 days/)
+assert.match(promptText, /ask the user which session/)
+assert.match(promptText, /Creating or updating a task does not count/)
 
 const state = JSON.parse(readFileSync(join(stateDir, 'super.json'), 'utf8'))
 assert.equal(state.superSessionId, superId)
 assert.equal(state.tasks[0].goal, 'fix tests')
 assert.equal(state.deliveries.length, 0)
 assert.equal(state.grants.length, 0)
+assert.equal(typeof state.recentWorkers['session-worker'].lastUsedAt, 'number')
+assert.equal(state.recentWorkers['session-worker'].lastTaskId, task.task.taskId)
+assert.equal('session-worker-2' in state.recentWorkers, false)
 
+const beforeFailedUse = (await call('super_session_status', { scope: 'recent' })).workers[0].lastUsedAt
 failPrompts.add('session-worker')
 concluded = 0
 const failedRequest = await call('super_session_request', { targetSessionIds: ['session-worker'], message: 'do not deliver' })
@@ -389,6 +429,9 @@ assert.equal('taskId' in failedRequest.results[0], false)
 assert.match(failedRequest.results[0].error, /prompt failed/)
 assert.equal(concluded, 0)
 assertLossless(failedRequest)
+const afterFailedUse = await call('super_session_status', { scope: 'recent' })
+assert.equal(afterFailedUse.workers[0].lastUsedAt, beforeFailedUse)
+assertLossless(afterFailedUse)
 failPrompts.delete('session-worker')
 
 for (const dispose of effects) dispose()

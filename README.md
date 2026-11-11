@@ -122,12 +122,23 @@ Super Session 入口标题右侧有一个“微信”chip。点开后可以扫�
 | 工具 | 作用 |
 |---|---|
 | super_session_task | 建/改任务。字段：goal、acceptance、executor（self 或一个顶层 worker sessionId）、status（open/working/blocked/done/cancelled）、blockedReason。一个任务只有一个 executor。每次更新都会把 recoveryCount 归零。 |
-| super_session_status | 查看任务和可管理的顶层 Session。可带 scope=tasks 或 scope=sessions。不会 resume 冷会话。 |
+| super_session_status | 查看任务和可管理的顶层 Session。可带 scope=tasks、scope=sessions 或 scope=recent。scope=sessions 带 title、cwd、updatedAt、lastUsedAt；scope=recent 返回最近 7 天成功派发过的最多 5 个顶层 worker，按 lastUsedAt 倒序，带 sessionId、title、cwd、lastUsedAt、lastTaskGoal、lastTaskStatus。不会 resume 冷会话。 |
 | super_session_request | 把消息发给一个或多个 worker。mode=queue 或 steer；content 支持 text/image/file；带 taskId 时 executor 必须匹配。Host 不加消息前缀；防误发提示由 agent system prompt section 提供。 |
 | super_session_read | 读某个 Session 的近期消息。live 用 snapshotEvents，冷会话用持久化 events，不 resume。 |
 | super_session_approval | 列出正在等待审批的 worker（仅限有 active task 的 executor）。只读：不批准、不拒绝、不替 UI answerer 作答。 |
 | super_session_grant | 临时调整一个 worker 的 sandbox mode 和/或 approval policy。action=set/list/reset；set 必须带 userConfirmed=true，并记录原值、到期时间、审计，任务结束或 reset 时恢复。 |
 | super_session_memory | read/remember/forget。写 stateDir/memory.md，0600，上限 4096 字节。 |
+
+### 近期 worker 与默认选择
+
+用户派任务但没有指定 worker 时，manager prompt 要求 Super 只从“近期用过”的顶层 worker 里选，不遍历全部会话，也不凭空挑一个没用过的。规则由 Host 的字段支撑，不把完整会话列表塞进 prompt。
+
+- **近期用过的定义**：Host 成功接受过一次 super_session_request 的顶层 worker。带 taskId 的任务派发和不带 taskId 的 quick relay 都算；只创建或更新 task 不算。
+- 时间窗口 7 天，最多返回 5 个，按 lastUsedAt 倒序。记录保存在 super.json 的 recentWorkers，只保留最近 30 天，避免无限增长。
+- super_session_status 的 scope=recent 返回 sessionId、title、cwd、lastUsedAt、lastTaskId、lastTaskGoal、lastTaskStatus，以及 running/blank；缺失字段直接省略，保证输出是 lossless JSON。
+- scope=sessions 也带 title 和 lastUsedAt，方便用户明确点名某个会话时核对；但默认挑选只要求看 scope=recent。
+- 近期列表为空、没有一个明显合适、或 Super 自己判断不清时，先问用户选哪个会话，不猜，也不退回“遍历全部会话”。
+- title 来自 DSH 的 title projection；没有标题、没有 cwd 或不是近期用过的 worker，对应字段不输出。
 
 ### 审批可见性
 
@@ -150,7 +161,7 @@ Super Session 入口标题右侧有一个“微信”chip。点开后可以扫�
 - 恢复失败会标记 `restore_failed`，60 秒后重试；审计里能看到失败原因。
 - 不改 worker 的 tools、prompt 或 preset。
 
-Super 的系统 prompt 要求：需求不明确时先和用户澄清，再下发；不要凭猜测开工；任务要有验收标准；进度按需查询；经验按 case 集总结（需求、错误做法、正确做法），默认只在对话里输出，用户指定路径时才写文件；重启后先 read 再决定是否继续；收到 `[Worker idle]` 时先 read，确认完成才关任务，等用户输入就标 blocked；不要重复新建会话的欢迎消息；防误发提示由 agent system prompt section 提供，任务消息本身不加前缀；带 taskId 派发前必须在同一条 assistant 消息里先写一两句给用户看的话（派给谁、做什么、接下来会看到什么），禁止只调工具；只有用户明确要求时才使用 super_session_grant，绝不自行放宽 worker 权限。
+Super 的系统 prompt 要求：需求不明确时先和用户澄清，再下发；不要凭猜测开工；任务要有验收标准；进度按需查询；经验按 case 集总结（需求、错误做法、正确做法），默认只在对话里输出，用户指定路径时才写文件；重启后先 read 再决定是否继续；收到 `[Worker idle]` 时先 read，确认完成才关任务，等用户输入就标 blocked；不要重复新建会话的欢迎消息；防误发提示由 agent system prompt section 提供，任务消息本身不加前缀；带 taskId 派发前必须在同一条 assistant 消息里先写一两句给用户看的话（派给谁、做什么、接下来会看到什么），禁止只调工具；只有用户明确要求时才使用 super_session_grant，绝不自行放宽 worker 权限；用户没指定 worker 时只从 scope=recent 的近期 worker 里挑，近期没有合适的就先问用户，不遍历全部会话、不凭空挑。
 
 ## 任务与转述
 
@@ -245,7 +256,7 @@ DSH_HOME/state/super-session/
 npm test
 ~~~
 
-smoke 使用 mock ctx 覆盖 ensure、Workspace 挂载、7 个工具、request、task 派发与 quick relay 都不加前缀、dispatch guard section 安装到 worker 和 Super、GET/POST /settings 与 GET /state 的 settings、status、read、memory、持久化、grant 的 set/list/reset 与 task 关闭恢复，以及欢迎消息的五事件序列和第二次 ensure 不重复；dispatch-guard 测试覆盖 installAll、agent/created 与 disposed、重复安装、开关关闭时 text 为空、注册失败只 warn 和 shutdown；wechat 测试覆盖 assistant 文本提取、入口事件过滤、微信入站去重/回显过滤、失败标记、reconnect skip 和状态视图；wechat-file 测试覆盖阈值/代码块/表格/标题/链接判定、配置/env 覆盖、文件名、短消息不变、长消息发 .md、失败回退文本，以及上传 multipart 和 appmsg 的字段/签名/去重；approvals 测试覆盖只记录活跃 executor、始终 next()、abort/超时/shutdown 清理和 lossless 输出；grants 测试覆盖过期、startup、task 缺失/关闭、漂移跳过、恢复失败和审计；startup 测试覆盖达到恢复上限后的通知与 blocked 状态、更新/成功派发清零、以及启动异常通知；worker-idle 测试覆盖正常触发、排除 Super、非 working task/running 状态不触发、按 task 节流、开关关闭，以及提示文本要求 read/不假设完成/等用户输入时标 blocked；wechat-pause 测试覆盖手动开关与持久化、非微信消息自动暂停、微信入站自动恢复、host_/schedule 合成消息不触发、manual 优先级、暂停时不出站且丢日志、排队丢弃而在途完成、重启保持，以及恢复后补发 outbox。
+smoke 使用 mock ctx 覆盖 ensure、Workspace 挂载、7 个工具、request、task 派发与 quick relay 都不加前缀、dispatch guard section 安装到 worker 和 Super、GET/POST /settings 与 GET /state 的 settings、status、read、memory、持久化、grant 的 set/list/reset 与 task 关闭恢复，以及欢迎消息的五事件序列和第二次 ensure 不重复；近期 worker 覆盖空列表、task 派发后候选的 title/cwd/lastUsedAt/lastTaskGoal/lastTaskStatus、quick relay 只更新时间、失败请求不更新、scope=sessions 字段、super.json 持久化和 lossless；dispatch-guard 测试覆盖 installAll、agent/created 与 disposed、重复安装、开关关闭时 text 为空、注册失败只 warn 和 shutdown；wechat 测试覆盖 assistant 文本提取、入口事件过滤、微信入站去重/回显过滤、失败标记、reconnect skip 和状态视图；wechat-file 测试覆盖阈值/代码块/表格/标题/链接判定、配置/env 覆盖、文件名、短消息不变、长消息发 .md、失败回退文本，以及上传 multipart 和 appmsg 的字段/签名/去重；approvals 测试覆盖只记录活跃 executor、始终 next()、abort/超时/shutdown 清理和 lossless 输出；grants 测试覆盖过期、startup、task 缺失/关闭、漂移跳过、恢复失败和审计；startup 测试覆盖达到恢复上限后的通知与 blocked 状态、更新/成功派发清零、以及启动异常通知；worker-idle 测试覆盖正常触发、排除 Super、非 working task/running 状态不触发、按 task 节流、开关关闭，以及提示文本要求 read/不假设完成/等用户输入时标 blocked；wechat-pause 测试覆盖手动开关与持久化、非微信消息自动暂停、微信入站自动恢复、host_/schedule 合成消息不触发、manual 优先级、暂停时不出站且丢日志、排队丢弃而在途完成、重启保持，以及恢复后补发 outbox。
 
 ## 限制
 
@@ -266,6 +277,7 @@ smoke 使用 mock ctx 覆盖 ensure、Workspace 挂载、7 个工具、request�
 - 欢迎消息使用合成的 turn 0 才能显示为 assistant 气泡，因此 UI 会把它计为“1 轮 1 步”并显示“已完成”。
 - 防误发提示是 agent system prompt 的行为约束，不是硬拦截；worker 仍可能直接执行明显无关的消息。设置页只开关该 section，不能保证模型遵守。
 - 临时权限只在单元测试和 smoke 中验证过，还没有在真实 worker 会话里触发；首次使用时需要确认 DSH 的 sandbox/approval 事件投影和恢复行为。
+- “近期 worker”只记录 Super 成功派发过的会话；用户手工在其他会话里做的使用不会计入。挑选本身是 prompt 行为约束，不是 Host 强制，模型仍可能违背；尚未用真实模型验证。
 - DSH 的 sandbox override 无法清除；恢复会写回原 effective mode，因此可能留下一个同值 override。
 
 ## 安全

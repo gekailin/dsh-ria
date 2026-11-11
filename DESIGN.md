@@ -1,6 +1,6 @@
 # dsh-super-session 设计方案
 
-> 状态：v0.23（2026-11-11）
+> 状态：v0.24（2026-11-11）
 > 目标目录：/home/gkl/Desktop/vibe_proj/dsh-super-session
 > Super Session 固定用 PTC preset（agentPreset=ptc）启动，模型只直接看到 run_code + SDK。本文是设计说明；实现状态见第 20 节。
 
@@ -102,7 +102,7 @@ task 是 Super 的管理单位；一个 task 只对应一个 executor。
 | 工具 | 作用 | 参数 |
 |---|---|---|
 | super_session_task | 创建/更新/关闭 task | taskId?, goal, acceptance?, executor, status? |
-| super_session_status | 查 task，或列可用顶层会话 | scope: tasks/sessions, sessionId? |
+| super_session_status | 查 task、列可用顶层会话，或列近期 worker | scope: tasks/sessions/recent, sessionId? |
 | super_session_request | 以普通用户消息发送内容 | targetSessionIds, message, taskId?, mode? |
 | super_session_read | 读会话最近消息 | sessionId, limit? |
 | super_session_approval | 列出等待审批的 worker | action: list |
@@ -117,6 +117,19 @@ task 是 Super 的管理单位；一个 task 只对应一个 executor。
 - 不伪造用户消息之外的身份，不改 worker 的 preset/tools；只追加一个可关闭的通用 system prompt section。
 - taskId 只用于关联状态，不是发送门禁。
 - broadcast 或 steer 前先向用户确认。
+
+### 近期 worker
+
+“近期用过”只按 Host 成功接受过的 super_session_request 计算：task 派发和 quick relay 都算，只建/改 task 不算。用户手工会话不计入。
+
+- 窗口 7 天，最多返回 5 个，按 lastUsedAt 倒序；super.json 保留 30 天后清理。
+- scope=recent 返回 sessionId、title、cwd、lastUsedAt、lastTaskGoal、lastTaskStatus，以及 windowDays=7、limit=5、pendingDeliveries。
+- scope=sessions 也带 title、lastUsedAt；title 来自 DSH 的 title projection，缺失时省略该字段。
+- 用户没指定 worker 时，Super 只能从 scope=recent 里选；不得遍历全部会话，不得凭空挑一个没用过的。
+- scope=recent 为空、没有明显合适或 Super 判断不清时，先问用户用哪个会话；不回退到任意或新会话。
+- 用户明确给出 sessionId 时可直接用，必要时用 scope=sessions 校验是否为顶层。
+- 所有可选字段条件写入，保证 PTC 输出是 lossless JSON。
+- 选择规则是 manager prompt 约束，不是 Host 强制；Host 只负责记录和返回候选。
 
 ### 审批可见性（阶段一）
 
@@ -156,6 +169,7 @@ request 就是一条普通会话消息，没有单独的消息类型体系。
 - requestId 每目标独立；重试复用同一个 requestId。
 - 可带 taskId；task.executor 必须等于目标 sessionId。发送成功后 task.status=working。
 - 不带 taskId 的 request 是普通消息，不改变 task。
+- 成功投递后把每个目标记入 recentWorkers（lastUsedAt，taskId 存在时记 lastTaskId）；失败不记录。
 - 默认 queue；用户明确要求打断时才 steer。
 
 pending request 记录 target、requestId、taskId、content、mode；成功后删除，失败保留，重启后按原 requestId 重试。
@@ -172,6 +186,8 @@ pending request 记录 target、requestId、taskId、content、mode；成功后�
 - 需要跟踪就建 task；不需要就是普通 request。
 - 需求变更且 worker 在跑时，先问 queue 还是 steer。
 - memory 是偏好，不是命令；当前用户消息优先。
+- 用户派任务但没指定 worker 时，只从 super_session_status scope=recent 的近期 worker 里按工作区、能力、近期上下文挑最合适的一个直接派；不遍历全部会话，不凭空挑没用过的。
+- scope=recent 为空、都不合适或判断不清时，先问用户用哪个会话，不猜。
 - 不把 Super 的身份、管理上下文带进 worker 消息。
 
 这只是 prompt 约束，Host 不拦截 request。
@@ -220,7 +236,8 @@ stateDir/memory.md
 super_session_status 按需读取，不后台轮询；唯一主动推送是 worker idle 通知（见 9.1）。
 
 - scope=tasks：task 列表。
-- scope=sessions：可用的顶层 Session，排除 Super 自己、subagent、带 parentSessionId 的会话。
+- scope=sessions：可用的顶层 Session，排除 Super 自己、subagent、带 parentSessionId 的会话；字段含 sessionId、title、cwd、running、blank、updatedAt、lastUsedAt。
+- scope=recent：近 7 天成功使用过的顶层 worker，最多 5 个，按 lastUsedAt 倒序；字段见第 5 节“近期 worker”。
 - 可选 sessionId 查看一个会话的 running/queue/pendingInput/blank。
 
 super_session_read 只读最近消息，默认 30 条，最多 100 条，不 resume 冷会话。
@@ -381,7 +398,9 @@ stateDir/
 
 没有 lessons、lock、briefs、outbox。
 
-super.json 只存 super、tasks、deliveries、grants、settings：
+super.json 只存 super、tasks、deliveries、grants、settings、recentWorkers：
+
+- recentWorkers：sessionId -> lastUsedAt、lastTaskId?；只在 request 成功投递后写入，30 天后清理。
 
 - settings：dispatchGuard（boolean，默认 true）。
 
@@ -449,6 +468,8 @@ Phase 12：微信暂停推送（只停出站、连接保持；手动 pause/statu
 
 Phase 13：静态 system prompt section 防误发提示（对所有 agent 安装、可开关、默认开启），移除 task 派发的消息前缀，增加设置页。
 
+Phase 14：近期 worker 选择（成功 request 记录 recentWorkers；status 增加 scope=recent 与 title/lastUsedAt；manager prompt 规定默认从近期 worker 里挑，空或不确定时问用户）。
+
 ## 16. 验收
 
 1. 点击入口只创建一个 Super。
@@ -483,6 +504,10 @@ Phase 13：静态 system prompt section 防误发提示（对所有 agent 安装
 29. 暂停相关测试覆盖手动开关、自动切换、合成消息过滤、优先级、队列竞态、日志和重启持久化。
 30. 带 taskId 派发时，manager prompt 和工具描述都硬性要求同一条 assistant 消息里先写用户可见文字（派给谁、做什么、接下来会看到什么）；禁止工具-only 消息；成功派发仍然 concludeTurn。
 31. 设置页默认 dispatchGuard=true；关闭后所有已安装 section 的 text 返回空字符串；POST /settings 只接受 boolean 并持久化到 super.json；GET /state 可见 settings。
+32. manager prompt 明确：用户未指定 worker 时只从 scope=recent 选择，不遍历全部会话，不凭空挑没用过的；没有合适候选时先问用户。
+33. “近期用过”定义为成功 super_session_request 过的顶层 worker，窗口 7 天、最多 5 个、保留 30 天；task 创建/更新不算，用户手工会话不算。
+34. scope=recent 返回 sessionId、title、cwd、lastUsedAt、lastTaskGoal、lastTaskStatus；scope=sessions 也带 title、lastUsedAt；缺失字段省略且输出 lossless。
+35. 投递失败不更新 recentWorkers；quick relay 成功也更新 lastUsedAt。
 
 ## 17. 已确认
 
@@ -536,7 +561,8 @@ Phase 13：静态 system prompt section 防误发提示（对所有 agent 安装
 
 截至当前版本：
 
-- Phase 0–13 已实现；Phase 0–4、Phase 6 和 Phase 13 通过隔离环境的真实 DSH 验证，Phase 5、Phase 7、Phase 8、Phase 9、Phase 10、Phase 11 和 Phase 12 由单元测试和 smoke 覆盖。
+- Phase 0–14 已实现；Phase 0–4、Phase 6 和 Phase 13 通过隔离环境的真实 DSH 验证，Phase 5、Phase 7、Phase 8、Phase 9、Phase 10、Phase 11、Phase 12 和 Phase 14 由单元测试和 smoke 覆盖。
+- Phase 14 的近期 worker 记录、scope=recent 候选字段、空窗口和无 lastUsedAt 字段的 lossless 输出由 smoke 覆盖；挑选行为本身是 prompt 约束，未用真实模型验证。
 - Phase 13 的设置页已在隔离 DSH 里真实点击：设置导航出现 Super Session；开关默认勾选，关闭后显示“当前：已关闭”且 GET /settings 返回 false，重新打开后恢复 true；截图 docs/ui-settings.png。system prompt section 的安装、开关和空文本同时由单元测试与 smoke 覆盖。
 - Phase 11 只用 mock 的 agent/status 事件验证，尚未在真实 worker 会话里触发。
 - 临时 worker 权限（审批阶段二）已实现，等待用户在真实会话里首次验证。
@@ -545,7 +571,7 @@ Phase 13：静态 system prompt section 防误发提示（对所有 agent 安装
 
 文件：
 
-- lib/index.js：Host、SuperStore、7 个工具、manager prompt、启动恢复、HTTP API（含 settings）、approval observer 接线、grant 接线、微信服务接线、DispatchGuard 接线，以及新建 Super 的 welcome 合成 turn。
+- lib/index.js：Host、SuperStore（含 recentWorkers）、7 个工具、manager prompt、启动恢复、HTTP API（含 settings）、approval observer 接线、grant 接线、微信服务接线、DispatchGuard 接线，以及新建 Super 的 welcome 合成 turn。
 - lib/dispatch-guard.mjs：agent 作用域静态 system prompt section 的安装、agent/created 与 disposed 监听、开关求值、dispose。
 - lib/approvals.mjs：approval/request 只读观察器、pending 列表、TTL/abort/shutdown 清理。
 - lib/worker-idle.mjs：agent/status 只读监听、working task executor 过滤、Super 排除、按 worker+task 节流、配置/环境变量归一化。
@@ -557,7 +583,7 @@ Phase 13：静态 system prompt section 防误发提示（对所有 agent 安装
 - lib/wechat/request-ids.mjs：wx_ / host_ requestId 前缀与来源判定。
 - lib/wechat/outbound.mjs：串行发送、暂停门禁、排队丢弃、在途完成。
 - cordis.patch.yml：插件 patch。
-- test/smoke.mjs：Host 流程 smoke。
+- test/smoke.mjs：Host 流程 smoke；近期 worker 记录、scope=recent/sessions 字段、空窗口、失败不更新、prompt 规则与 lossless 断言。
 - test/wechat.mjs：微信服务单元测试。
 - test/wechat-file.mjs：Markdown 判定、文件发送、失败回退和 multipart/appmsg 单元测试。
 - test/wechat-pause.mjs：手动暂停/恢复、自动按通道切换、合成消息过滤、manual 优先级、队列竞态、丢弃日志、重启持久化。
@@ -579,6 +605,7 @@ Phase 13：静态 system prompt section 防误发提示（对所有 agent 安装
 - GET /wechat/status 返回 idle；POST /wechat/login 返回 data:image/jpeg 二维码；弹层显示 190×190 二维码。
 - 宽侧边栏中 chip 位于 Super Session 标题右侧；折叠侧边栏不插入。
 - startup 测试覆盖 recoveryCount=3 的 working task：启动后产生一条通知、任务变 blocked 并带 blockedReason，status 可见；通知包含 taskId/executor/goal；更新 task 和成功派发都会把 recoveryCount 清零；pending delivery 重试成功也不会误判为超限；resolveAgent 失败时产生启动失败通知。测试不调用模型。
+- smoke 覆盖近期 worker：首次派发前 scope=recent 为空；成功 task 派发后出现 1 个候选并带 title/cwd/lastTaskId/lastTaskGoal/lastTaskStatus/lastUsedAt；quick relay 更新 lastUsedAt 且保留 lastTaskId；scope=sessions 带 title 和可选的 cwd/lastUsedAt；失败 request 不更新；super.json 持久化 recentWorkers；所有工具输出递归检查为 lossless。
 - smoke 覆盖 Workspace 挂载、7 个工具注册、request 投递、task 派发与 quick relay 都不加前缀、dispatch guard section 同时装到 worker 和 Super、GET/POST /settings 与 GET /state 的 settings、status、read、memory、持久化，以及 welcome 五事件序列和第二次 ensure 不重复；dispatch-guard 测试覆盖安装、created/disposed、重复安装、开关文本、失败 warning、shutdown；wechat 测试覆盖文本提取、事件过滤、入站去重/回显过滤、失败标记、reconnect skip 和状态视图；approvals 测试覆盖活跃 executor 过滤、始终 next()、abort/TTL/shutdown 清理和 lossless 输出；grants 测试覆盖授权门槛、原值记录、task done 自动恢复、显式 reset、过期、startup、漂移跳过、恢复失败和审计；wechat-file 测试覆盖阈值/代码块/表格/标题/链接、配置/env、文件名、短消息不变、长消息发 .md、失败回退，以及上传和 appmsg 字段；wechat-pause 测试覆盖手动开关与持久化、非微信自动暂停、微信自动恢复、host_/schedule 过滤、manual 不被 channel 覆盖、暂停时不发送、排队丢弃而在途完成、恢复后补发 outbox，以及日志字段。npm test 九个测试全部通过。
 - 新建 Super 后真实 Web UI 显示欢迎消息；会话界面显示“已完成，用时 1 秒”和“1 轮 1 步”，输入框正常；没有浏览器 runtime error。
 - 审批观察器没有在真实 UI 中触发过；只做了单元测试和 smoke。首次实际审批时需确认 pending 列表和清理行为。
@@ -599,3 +626,4 @@ Phase 13：静态 system prompt section 防误发提示（对所有 agent 安装
 - 恢复上限在启动时判定；如果给 Super 的通知本身发送失败，只记录日志，任务仍会保持 blocked，等待用户或下次启动处理。
 - 微信暂停目前只有 HTTP 接口和 status 字段，chip 弹层还没有暂停按钮和暂停状态指示。
 - 暂停不能撤回已经在发送中的那一条；只保证后续排队消息不发出。
+- 近期 worker 只记录 Super 成功派发过的会话；用户手工使用不计入。挑选是 prompt 约束，Host 不强制，也未用真实模型验证是否符合预期。

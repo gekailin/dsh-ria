@@ -153,7 +153,7 @@ Ria 入口标题右侧有一个“微信”chip。点开后可以扫码登录微
 | 工具 | 作用 |
 |---|---|
 | ria_task | 建/改/合并任务。字段：goal、acceptance、executor（self 或一个顶层 worker sessionId）、status（open/working/blocked/done/cancelled）、blockedReason。一个任务只有一个 executor。每次更新都会把 recoveryCount 归零。action=merge 把 sourceTaskId 并进 targetTaskId：source 以 done + resolution.kind=merged 收敛，子任务与待投递消息改挂 target，合并不可逆。 |
-| ria_status | 查看任务和可管理的顶层 Session。可带 scope=tasks、scope=sessions 或 scope=recent。scope=sessions 带 title、cwd、updatedAt、lastUsedAt；scope=recent 返回最近 7 天成功派发过的最多 5 个顶层 worker，按 lastUsedAt 倒序，带 sessionId、title、cwd、lastUsedAt、lastTaskGoal、lastTaskStatus。不会 resume 冷会话。 |
+| ria_status | 查看任务和可管理的顶层 Session。可带 scope=tasks、scope=sessions、scope=recent 或 scope=history；带 ticketId 可精确查一条（归档的也能查）。scope=tasks 只列热存储（所有非终态 + 最近 24h 或最新 50 条终态）；scope=history 从归档日志按 closedAt 倒序读，默认 50 条、limit 最大 200。scope=sessions 带 title、cwd、updatedAt、lastUsedAt；scope=recent 返回最近 7 天成功派发过的最多 5 个顶层 worker，按 lastUsedAt 倒序，带 sessionId、title、cwd、lastUsedAt、lastTaskGoal、lastTaskStatus。不会 resume 冷会话。 |
 | ria_spawn | 新建一个顶层 worker 会话。cwd 必须是存在且可读的绝对目录；agentPreset 可选；title 可选（创建后用 title 服务重命名，失败只返回 titleError，不影响创建）。失败码：workspace_missing、preset_not_found、spawn_failed。新会话作为 top-level worker 出现在 ria_status scope=sessions，不会被当成 subagent。 |
 | ria_request | 把消息发给一个或多个 worker。mode=queue 或 steer；content 支持 text/image/file；attachments 支持最多 20 个图片绝对路径（png/jpeg/webp/gif），与 content 一起作为 text + image parts 投递，交给宿主 attachment 服务统一校验和存储。带 taskId 时 executor 必须匹配，且必须传 note（一句话，最多 500 字）。Host 把 note 记录到 ria.json，由插件 client 在 Ria 会话当前轮次末尾显示成可见卡片，不进入模型上下文；同时把 note 作为“📌 任务已派发：<note>”推送到微信（quick relay 为“📌 消息已转交：<note>”）。缺 note、空白或超长会直接报错且不投递。附件预检失败码：attachment_missing、attachment_invalid、model_no_image；预检失败不投递、不写 recentWorkers、不动 task。Host 不加消息前缀；防误发提示由 agent system prompt section 提供。 |
 | ria_read | 读某个 Session 的近期消息。live 用 snapshotEvents，冷会话用持久化 events，不 resume。 |
@@ -230,6 +230,12 @@ Ria 的系统 prompt 要求：需求不明确时先和用户澄清，再下发�
 - 开关只影响后续 system prompt 的组装，不改 worker 已经收到的历史消息、tools 或 preset；也不会替模型做硬拦截。
 
 ![设置中的 Ria 开关](docs/ui-settings.png)
+
+## 任务归档
+
+终态 ticket 不会无限留在 ria.json。热文件保留所有非终态，加上最近 24 小时内关闭的终态和按 closedAt 倒序最新 50 条终态；超出的写进 `~/.dsh/state/ria/tasks.log.jsonl`，并按 closedAt 的 UTC 月份同时追加到 `tasks-YYYY-MM.jsonl`（保留最新 12 个月）。先写成功再从内存删除；写失败时 ticket 留在 ria.json，下次启动重试。
+
+`ria_status scope=history` 和 `ria_status ticketId=<id>` 会按需扫日志；`ria_task status=open` 与 `ria_resolve kind=control action=reopen/retry` 可以先把归档 ticket 捞回热存储再走正常转移，history/reopenCount 都会保留。
 
 ## 重启恢复
 

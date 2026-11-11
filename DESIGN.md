@@ -102,7 +102,7 @@ task 是 Ria 的管理单位；一个 task 只对应一个 executor。
 | 工具 | 作用 | 参数 |
 |---|---|---|
 | ria_task | 创建/更新/关闭/合并 task | taskId?, goal, acceptance?, executor, status?, action=merge + sourceTaskId/targetTaskId/note |
-| ria_status | 查 task、列可用顶层会话，或列近期 worker | scope: tasks/sessions/recent, sessionId? |
+| ria_status | 查 task、历史归档、单条 ticket、可用顶层会话，或列近期 worker | scope: tasks/sessions/recent/history, sessionId?, ticketId?, limit? |
 | ria_spawn | 在已存在的绝对目录中新建顶层 worker 会话；title 失败只返回 titleError | cwd, agentPreset?, title? |
 | ria_request | 以普通用户消息发送内容；attachments 为图片绝对路径，投递前检查文件、宿主限制与目标模型 | targetSessionIds, message, content?, attachments?, taskId?, note?, mode? |
 | ria_read | 读会话最近消息 | sessionId, limit? |

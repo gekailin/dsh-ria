@@ -150,7 +150,7 @@ Super Session 入口标题右侧有一个“微信”chip。点开后可以扫�
 - 恢复失败会标记 `restore_failed`，60 秒后重试；审计里能看到失败原因。
 - 不改 worker 的 tools、prompt 或 preset。
 
-Super 的系统 prompt 要求：需求不明确时先和用户澄清，再下发；不要凭猜测开工；任务要有验收标准；进度按需查询；经验按 case 集总结（需求、错误做法、正确做法），默认只在对话里输出，用户指定路径时才写文件；重启后先 read 再决定是否继续；收到 `[Worker idle]` 时先 read，确认完成才关任务，等用户输入就标 blocked；不要重复新建会话的欢迎消息；任务派发会自动附防误发提示，不要自己再手写一遍；只有用户明确要求时才使用 super_session_grant，绝不自行放宽 worker 权限。
+Super 的系统 prompt 要求：需求不明确时先和用户澄清，再下发；不要凭猜测开工；任务要有验收标准；进度按需查询；经验按 case 集总结（需求、错误做法、正确做法），默认只在对话里输出，用户指定路径时才写文件；重启后先 read 再决定是否继续；收到 `[Worker idle]` 时先 read，确认完成才关任务，等用户输入就标 blocked；不要重复新建会话的欢迎消息；任务派发会自动附防误发提示，不要自己再手写一遍；带 taskId 派发前必须在同一条 assistant 消息里先写一两句给用户看的话（派给谁、做什么、接下来会看到什么），禁止只调工具；只有用户明确要求时才使用 super_session_grant，绝不自行放宽 worker 权限。
 
 ## 任务与转述
 
@@ -158,6 +158,7 @@ Super 的系统 prompt 要求：需求不明确时先和用户澄清，再下发
 - request 是真正的 Session 消息。发送前先写 pending delivery，prompt 被接受后删除；失败保留，重启或下次 ensure 时按原 requestId 重试。
 - request 的 worker 侧来源是普通的 user 消息，不伪装成系统消息，也不改 worker 的 tools。
 - 带 taskId 的任务派发，Host 会自动在消息最前面加一条「任务转交 · 防误发」文本：本会话空闲、刚建立或消息相关时正常执行；只有在做另一件明显不同的事或完全对不上时，才先向用户确认、不直接执行。
+- 带 taskId 派发时，Super 必须在同一条 assistant 消息里、调用工具之前写一两句给用户看的话：派给了谁、让 worker 做什么、用户接下来会看到什么。成功派发会结束本轮，禁止只调用工具不写文字。
 - 这条提示是普通用户消息的一部分，不是 system role，也不改 worker 的 system prompt；插件无法强制 worker 一定遵守。
 - 不带 taskId 的 quick relay 不加提示，保持原文，适合“原话转发”和短消息。
 - worker 的 turn 结束时 Host 会自动通知 Super（见下节）；其余进度不轮询、不自动推送，Super 需要时调 status/read。

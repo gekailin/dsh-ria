@@ -1,6 +1,6 @@
 # dsh-super-session 设计方案
 
-> 状态：v0.21（2026-11-11）
+> 状态：v0.22（2026-11-11）
 > 目标目录：/home/gkl/Desktop/vibe_proj/dsh-super-session
 > Super Session 固定用 PTC preset（agentPreset=ptc）启动，模型只直接看到 run_code + SDK。本文是设计说明；实现状态见第 20 节。
 
@@ -144,6 +144,7 @@ request 就是一条普通会话消息，没有单独的消息类型体系。
 
 - message 直接使用 DSH Session 支持的内容：文本、图片、文件等。
 - 不做额外的文件分类、根目录白名单或专用上传流程；由 DSH 现有 message/content 能力处理。
+- 带 taskId 的任务派发，Super 必须在同一条 assistant 消息里、工具调用之前写一两句给用户看的话：派给谁、要 worker 做什么、用户接下来会看到什么；禁止只调用工具不输出文字。成功派发会 concludeTurn，工具-only 的消息会让用户收不到回复。这条是 prompt/工具描述约束，不是 Host 硬拦截。
 - 带 taskId 的任务派发：Host 在 content 最前面插入一个固定的 text part「任务转交 · 防误发」，说明这是另一个会话转交的任务；本会话空闲、刚建立或消息相关时正常执行，只有在做另一件明显不同的事或完全对不上时才先向用户确认、不直接执行。它是同一条 user message 的普通文本，不是 system role，也不改 worker 的 tools 或 system prompt。
 - 不带 taskId 的 quick relay 保持原文，不加提示；用于“原话转发”和短消息，不用于任务派发。
 - 防误发提示只是行为约束，不是硬拦截；Host 看不到 worker 的内部上下文，无法判断是否真的发错。
@@ -471,6 +472,7 @@ Phase 12：微信暂停推送（只停出站、连接保持；手动 pause/statu
 27. 手动暂停不被自动暂停覆盖；微信入站可以恢复手动暂停；手动恢复后下一条非微信消息再次暂停。
 28. 暂停期间在途消息发送完成，排队消息丢弃并记录日志；outbox 不发送，恢复后补发。
 29. 暂停相关测试覆盖手动开关、自动切换、合成消息过滤、优先级、队列竞态、日志和重启持久化。
+30. 带 taskId 派发时，manager prompt 和工具描述都硬性要求同一条 assistant 消息里先写用户可见文字（派给谁、做什么、接下来会看到什么）；禁止工具-only 消息；成功派发仍然 concludeTurn。
 
 ## 17. 已确认
 
@@ -509,6 +511,7 @@ Phase 12：微信暂停推送（只停出站、连接保持；手动 pause/statu
 | sandbox override 无法清除 | 写回原 effective mode，行为一致但可能保留同值 override |
 | 暂停与在途出站竞态 | 在途一条发完即止；排队丢弃并记日志；outbox 暂停期间不发送，恢复后补发 |
 | 自动暂停误判合成消息 | host_ 前缀 + source.kind=user 双重过滤；schedule 不参与 |
+| 派发只调工具不写回复 | prompt 和工具描述硬性要求先写一两句用户可见的话；成功即结束本轮，属行为约束而非 Host 拦截 |
 | 手动暂停被自动覆盖 | manual 优先；只有微信入站能清除 manual，并明确记录 resumedBy |
 
 ## 19. 总结

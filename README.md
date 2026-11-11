@@ -7,7 +7,7 @@
 
 一个 DSH Web 插件：全局只有一个 Ria。她不直接承担实现工作，而是管理用户已有的顶层 Session：转述需求、跟踪进度、总结经验并分发。
 
-Ria 自己是一个普通的顶层 DSH Session，运行 PTC preset，带管理者 prompt 和 7 个 ria_* 工具。worker 侧不需要安装任何东西，收到的就是普通用户消息；防误发提示由 agent 作用域的 system prompt section 提供，不修改消息内容。
+Ria 自己是一个普通的顶层 DSH Session，运行 PTC preset，带管理者 prompt 和 8 个 ria_* 工具。worker 侧不需要安装任何东西，收到的就是普通用户消息；防误发提示由 agent 作用域的 system prompt section 提供，不修改消息内容。
 
 ![Ria 入口打开后的会话界面](docs/ui-final.png)
 
@@ -62,7 +62,7 @@ DSH_HOME/state/ria
 
 DSH 的正常会话界面要求 Session 属于一个 Workspace。插件会为该目录创建一个标题为 Ria 的专用 Workspace，并把 Ria 挂进去。因此工作区列表里会多一个名为 Ria 的条目，这是输入框可用的必要条件，不是可选的 UI 装饰。
 
-Ria 运行 PTC 模式：模型直接看到 run_code 和生成的 SDK，7 个 ria_* 工具通过 SDK 调用。创建时固定 agentPreset=ptc；如果 ptc preset/runtime 不可用，会明确报错，不会退回 standard。
+Ria 运行 PTC 模式：模型直接看到 run_code 和生成的 SDK，8 个 ria_* 工具通过 SDK 调用。创建时固定 agentPreset=ptc；如果 ptc preset/runtime 不可用，会明确报错，不会退回 standard。
 
 ## 欢迎提示
 
@@ -154,7 +154,8 @@ Ria 入口标题右侧有一个“微信”chip。点开后可以扫码登录微
 |---|---|
 | ria_task | 建/改任务。字段：goal、acceptance、executor（self 或一个顶层 worker sessionId）、status（open/working/blocked/done/cancelled）、blockedReason。一个任务只有一个 executor。每次更新都会把 recoveryCount 归零。 |
 | ria_status | 查看任务和可管理的顶层 Session。可带 scope=tasks、scope=sessions 或 scope=recent。scope=sessions 带 title、cwd、updatedAt、lastUsedAt；scope=recent 返回最近 7 天成功派发过的最多 5 个顶层 worker，按 lastUsedAt 倒序，带 sessionId、title、cwd、lastUsedAt、lastTaskGoal、lastTaskStatus。不会 resume 冷会话。 |
-| ria_request | 把消息发给一个或多个 worker。mode=queue 或 steer；content 支持 text/image/file；带 taskId 时 executor 必须匹配，且必须传 note（一句话，最多 500 字）。Host 把 note 记录到 ria.json，由插件 client 在 Ria 会话当前轮次末尾显示成可见卡片，不进入模型上下文；同时把 note 作为“📌 任务已派发：<note>”推送到微信（quick relay 为“📌 消息已转交：<note>”）。缺 note、空白或超长会直接报错且不投递。Host 不加消息前缀；防误发提示由 agent system prompt section 提供。 |
+| ria_spawn | 新建一个顶层 worker 会话。cwd 必须是存在且可读的绝对目录；agentPreset 可选；title 可选（创建后用 title 服务重命名，失败只返回 titleError，不影响创建）。失败码：workspace_missing、preset_not_found、spawn_failed。新会话作为 top-level worker 出现在 ria_status scope=sessions，不会被当成 subagent。 |
+| ria_request | 把消息发给一个或多个 worker。mode=queue 或 steer；content 支持 text/image/file；attachments 支持最多 20 个图片绝对路径（png/jpeg/webp/gif），与 content 一起作为 text + image parts 投递，交给宿主 attachment 服务统一校验和存储。带 taskId 时 executor 必须匹配，且必须传 note（一句话，最多 500 字）。Host 把 note 记录到 ria.json，由插件 client 在 Ria 会话当前轮次末尾显示成可见卡片，不进入模型上下文；同时把 note 作为“📌 任务已派发：<note>”推送到微信（quick relay 为“📌 消息已转交：<note>”）。缺 note、空白或超长会直接报错且不投递。附件预检失败码：attachment_missing、attachment_invalid、model_no_image；预检失败不投递、不写 recentWorkers、不动 task。Host 不加消息前缀；防误发提示由 agent system prompt section 提供。 |
 | ria_read | 读某个 Session 的近期消息。live 用 snapshotEvents，冷会话用持久化 events，不 resume。 |
 | ria_approval | 列出正在等待审批的 worker（仅限有 active task 的 executor）。只读：不批准、不拒绝、不替 UI answerer 作答。 |
 | ria_grant | 临时调整一个 worker 的 sandbox mode 和/或 approval policy。action=set/list/reset；set 必须带 userConfirmed=true，并记录原值、到期时间、审计，任务结束或 reset 时恢复。 |
@@ -305,7 +306,7 @@ DSH_HOME/state/ria/
 npm test
 ~~~
 
-smoke 使用 mock ctx 覆盖 ensure、Workspace 挂载、7 个工具、request、task 派发与 quick relay 都不加前缀、dispatch guard section 安装到 worker 和 Ria、GET/POST /settings 与 GET /state 的 settings、status、read、memory、持久化、grant 的 set/list/reset 与 task 关闭恢复，以及新建 Ria 不写任何 session 事件和第二次 ensure 不重复；近期 worker 覆盖空列表、task 派发后候选的 title/cwd/lastUsedAt/lastTaskGoal/lastTaskStatus、quick relay 只更新时间、失败请求不更新、scope=sessions 字段、ria.json 持久化和 lossless；dispatch-guard 测试覆盖 installAll、agent/created 与 disposed、重复安装、开关关闭时 text 为空、注册失败只 warn 和 shutdown；wechat 测试覆盖 assistant 文本提取、入口事件过滤、微信入站去重/回显过滤、失败标记、reconnect skip、状态视图，以及图片接口预留：默认关闭不影响文本、开启后只走图片桩、图片内容块转换和出站图片接口均明确报未实现；wechat-file 测试覆盖阈值/代码块/表格/标题/链接判定、配置/env 覆盖、文件名、短消息不变、长消息发 .md、失败回退文本，以及上传 multipart 和 appmsg 的字段/签名/去重；approvals 测试覆盖只记录活跃 executor、始终 next()、abort/超时/shutdown 清理和 lossless 输出；grants 测试覆盖过期、startup、task 缺失/关闭、漂移跳过、恢复失败和审计；startup 测试覆盖达到恢复上限后的通知与 blocked 状态、更新/成功派发清零、以及启动异常通知；worker-idle 测试覆盖正常触发、排除 Ria、非 working task/running 状态不触发、按 task 节流、开关关闭，以及提示文本要求 read/不假设完成/等用户输入时标 blocked；wechat-pause 测试覆盖手动开关与持久化、非微信消息自动暂停、微信入站自动恢复、host_/schedule 合成消息不触发、manual 优先级、暂停时不出站且丢日志、排队丢弃而在途完成、重启保持，以及恢复后补发 outbox；smoke 还验证 pause/unpause 往返后 pausedAt、resumedAt、pausedBy 和重复读取 status 的字段一致；以及 dispatch-notes 按 session/turn 过滤、错误 session 返回空列表、note 持久化、无 note 的 quick relay 不记录、snapshot 读取失败不影响派发和 concludeTurn；wechat 和 smoke 还覆盖派发 note 的微信镜像：task/quick 格式、暂停时丢弃并记日志、恢复后发送、未登录跳过、发送异常不影响派发与 concludeTurn。
+smoke 使用 mock ctx 覆盖 ensure、Workspace 挂载、8 个工具、request、task 派发与 quick relay 都不加前缀、dispatch guard section 安装到 worker 和 Ria、GET/POST /settings 与 GET /state 的 settings、status、read、memory、持久化、grant 的 set/list/reset 与 task 关闭恢复，以及新建 Ria 不写任何 session 事件和第二次 ensure 不重复；近期 worker 覆盖空列表、task 派发后候选的 title/cwd/lastUsedAt/lastTaskGoal/lastTaskStatus、quick relay 只更新时间、失败请求不更新、scope=sessions 字段、ria.json 持久化和 lossless；dispatch-guard 测试覆盖 installAll、agent/created 与 disposed、重复安装、开关关闭时 text 为空、注册失败只 warn 和 shutdown；wechat 测试覆盖 assistant 文本提取、入口事件过滤、微信入站去重/回显过滤、失败标记、reconnect skip、状态视图，以及图片接口预留：默认关闭不影响文本、开启后只走图片桩、图片内容块转换和出站图片接口均明确报未实现；wechat-file 测试覆盖阈值/代码块/表格/标题/链接判定、配置/env 覆盖、文件名、短消息不变、长消息发 .md、失败回退文本，以及上传 multipart 和 appmsg 的字段/签名/去重；approvals 测试覆盖只记录活跃 executor、始终 next()、abort/超时/shutdown 清理和 lossless 输出；grants 测试覆盖过期、startup、task 缺失/关闭、漂移跳过、恢复失败和审计；startup 测试覆盖达到恢复上限后的通知与 blocked 状态、更新/成功派发清零、以及启动异常通知；worker-idle 测试覆盖正常触发、排除 Ria、非 working task/running 状态不触发、按 task 节流、开关关闭，以及提示文本要求 read/不假设完成/等用户输入时标 blocked；wechat-pause 测试覆盖手动开关与持久化、非微信消息自动暂停、微信入站自动恢复、host_/schedule 合成消息不触发、manual 优先级、暂停时不出站且丢日志、排队丢弃而在途完成、重启保持，以及恢复后补发 outbox；smoke 还验证 pause/unpause 往返后 pausedAt、resumedAt、pausedBy 和重复读取 status 的字段一致；以及 dispatch-notes 按 session/turn 过滤、错误 session 返回空列表、note 持久化、无 note 的 quick relay 不记录、snapshot 读取失败不影响派发和 concludeTurn；wechat 和 smoke 还覆盖派发 note 的微信镜像：task/quick 格式、暂停时丢弃并记日志、恢复后发送、未登录跳过、发送异常不影响派发与 concludeTurn；spawn 测试覆盖新建顶层 worker 的参数、title、失败码与 ria_status 可见性；attachments 测试覆盖图片 content 投递、attachment_missing/attachment_invalid/model_no_image、多目标部分成功，以及失败不投递、不写 recentWorkers、不动 task。
 
 ## 限制
 

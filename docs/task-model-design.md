@@ -1049,7 +1049,7 @@ function migrateV1(data, file) {
 
 1. `progress` 卡片开关（默认关）、stale 检测、每 task 限流。
 2. 客户端树形任务面板 + feedback 流；微信摘要合并。
-3. task/feedback 保留策略（例如终态 task 保留 500 条，feedback 保留 500 条）。
+3. task/feedback 保留策略：终态 task 按 §13 的窗口归档到 `tasks.log.jsonl`，feedback 保留 500 条；不再用单一 500 条上限硬截断。
 4. 指标：每条用户消息的 intake→终态时长、blocked 率、recovery 次数、无人认领 task 数。
 
 验收：
@@ -1098,6 +1098,252 @@ function migrateV1(data, file) {
 
 ---
 
-## 12. 一句话版本
+## 12. M2：task ↔ task merge
+
+### 12.1 为什么需要 merge
+
+用户会改主意、把两件事合并成一件、或者发现两个 task 其实是同一个诉求。没有 merge 时，Ria 只能把一个 task 标 done、再给另一个 task 派发，结果：
+
+- 两个 task 都留下 feedback，用户看到重复卡片；
+- 已派发的消息还挂在旧 executor 上，新 task 不知道旧进度；
+- 旧 task 的子任务没有归宿，父级聚合永远收敛不了。
+
+merge 是**收敛**操作，不是“删除”：source 以 `done + resolution.kind='merged'` 结束，target 获得 source 的历史、未完成子任务和待投递消息。所有 ID 永久保留，便于 `ria_status taskId` 与日志追溯。
+
+### 12.2 工具接口
+
+`ria_task` 新增 action：
+
+```json
+{
+  "action": "merge",
+  "sourceTaskId": "task_a",
+  "targetTaskId": "task_b",
+  "reason": "用户把两件事合并为一次排查",
+  "note": "可选，写进 target 的 history 与 feedback"
+}
+```
+
+约束与错误码（全部在 `RiaStore.mergeTask` 内校验，先校验后写入）：
+
+| code | 条件 | 用户可见文案要点 |
+|---|---|---|
+| `merge_self` | source === target | 不能把 task 合并到自己 |
+| `task_missing` | 任一 task 不存在 | 点名缺失的 taskId |
+| `source_closed` | source 已是 done/cancelled/failed | source 已收敛，不能再 merge |
+| `target_closed` | target 已是 done/cancelled/failed | 只能合并到未收敛的 task |
+| `merge_cycle` | target 是 source 的后代（沿 parentTaskId 上溯可到 source） | 合并会形成环 |
+| `merge_root_mismatch` | 两者都有 parentTaskId 但 rootTaskId 不同 | 跨树合并请先拆成独立 task |
+| `target_busy` | source 有活跃子任务，且 target 有 executor 或 target 不是容器 | 先把 target 变成容器（executor=null） |
+| `merge_irreversible` | 对已 merged 的 source 再次 merge/reopen | 只能操作 target 或新建 task |
+
+`ria_task` 的 merge 成功返回 `{ ok:true, source: {...}, target: {...}, movedChildren:[...], movedDeliveries:n }`；失败统一 `{ ok:false, code, message, error:message }`，不产生任何写入。
+
+### 12.3 数据模型增量
+
+task 顶层新增三个可选字段（旧 `ria.json` 没有时按空数组/undefined 处理）：
+
+```ts
+type TaskHistoryEntry = {
+  at: number
+  kind: 'created' | 'dispatched' | 'status' | 'merge' | 'reopen' | 'feedback'
+  actor: 'host' | 'ria' | 'user' | 'worker'
+  from?: string
+  to?: string
+  reason?: string
+  snapshot?: Record<string, unknown>
+}
+
+type TaskAttempt = {
+  at: number
+  executor: string
+  outcome: 'completed' | 'failed' | 'blocked' | 'cancelled' | 'aborted(user)'
+  reason?: string
+  turn?: number
+}
+
+type TaskResolution = {
+  kind: 'completed' | 'merged' | 'cancelled' | 'superseded'
+  at: number
+  mergedInto?: string
+  note?: string
+}
+
+type Task = {
+  // ...现有字段（taskId/goal/acceptance/executor/status/createdAt/updatedAt/
+  // recoveryCount/blockedReason/parentTaskId/rootTaskId/forkDepth/childTaskIds）
+  history: TaskHistoryEntry[]
+  attempts: TaskAttempt[]
+  resolution?: TaskResolution
+}
+```
+
+- `history` 只追加，不原地改；`merge` 记录必须带 `snapshot`（source 在合并前的 status/executor/attempts.length/childTaskIds）。
+- `attempts` 记录“一次派发/一轮执行”的结果；worker idle 的 turn/end、Ria 的恢复、用户取消都追加一条，而不是只改 `recoveryCount`。
+- `resolution` 只在终态出现；`failure` 与 `resolution` 互斥（失败用 `failure`，成功/合作用 `resolution`）。
+
+### 12.4 merge 的执行顺序
+
+`RiaStore.mergeTask(sourceId, targetId, { reason, note, actor })` 是唯一入口，顺序固定：
+
+1. 读取并校验 source/target（12.2 全部规则）。
+2. 给 source 拍快照：`{ goal, acceptance, executor, status, attempts, childTaskIds, resolution }`。
+3. 给 target 追加 history：`{ kind:'merge', from:sourceId, to:targetId, actor, reason, snapshot }`。
+4. 给 target 追加一条 attempt 摘要：`{ at, executor:source.executor ?? 'none', outcome:'blocked'|'completed', reason:'merged from '+sourceId }`；**不**把 source 的 attempts 逐条复制进 target，避免重复计数；完整 attempts 留在 source 与归档记录里。
+5. 子任务重挂（12.5）。
+6. 待投递消息改写（12.6）。
+7. `transitionTask(source, 'done', { resolution:{kind:'merged', mergedInto:targetId, at, note} })`；这一步触发 source 的终态 feedback、归档与父级聚合。
+8. target 状态：若 target 有活跃子任务且 `target.executor == null`，把 target 置为 `forked`；否则保持原状态。target 的 goal/acceptance 不改。
+9. 写盘一次（`save()`），返回 12.2 的结果。
+
+第 7 步必须走 `transitionTask`，不能直接 `updateTask({status:'done'})`；否则 source 的 feedback、`closedAt`、归档都不会发生。
+
+### 12.5 子任务重挂
+
+- source 的 `childTaskIds` 逐一并入 target：`child.parentTaskId = targetId`，`child.rootTaskId = target.rootTaskId`，`child.forkDepth = target.forkDepth + 1`。
+- 去重：target 已有同 id 子任务时只保留一份；source 的 `childTaskIds` 清空。
+- target 的 `childTaskIds` 排序稳定（按 createdAt, taskId），避免每次 save 抖动。
+- 若子任务已经在运行：不打断、不重发消息，只改归属；其 worker 的后续 turn/end 仍归到 target 的聚合。
+- 若 source 是 root 且 target 是另一个 root：允许，但要求两者都没有 parentTaskId（`merge_root_mismatch` 只拦“跨子树”）；合并后 source 的 root 身份消失，所有子任务改挂 target。
+- 若 target 是 source 的后代：拒绝（`merge_cycle`）。若 source 是 target 的后代：同样拒绝，避免把祖先并进后代后父子关系倒置。
+
+### 12.6 待投递消息与已投递消息
+
+- `store.deliveries` 中 `taskId === sourceId` 且尚未投递的记录：把 `taskId` 改为 `targetId`，`requestId` 不变；投递失败重试时仍按新 task 记账。
+- 已经 `sessionController.prompt` 成功、但 worker 还没回执的消息：无法撤回，保留在 source 的 history 里；target 的 history 记一条 `dispatched` 摘要（target 不重复发送同一内容）。
+- 如果 source 有 `working` 的 executor，merge 不取消它的 turn；turn 结束后 worker idle 看到 task 已 merged，只记录 attempt，不再自动续派。
+
+### 12.7 冲突规则汇总
+
+| 维度 | 规则 |
+|---|---|
+| executor | **保留 target 的 executor**；source 的 executor 只进 snapshot/resolution，不转移 |
+| goal / acceptance | 保留 target；需要合并目标时由用户显式 `ria_task action=update` 改 target，merge 不猜 |
+| status | target 原状态保留；有活跃子任务且 target 无 executor 时置 `forked` |
+| recoveryCount | target 不变；source 的恢复次数写入 snapshot，不叠加 |
+| blockedReason | source 的 blockedReason 进 snapshot；target 的 blockedReason 不变 |
+| feedback | target 收到一条 `merged` feedback；source 收到一条终态 `merged into <target>` feedback；不重复发派发卡片 |
+| 归档 | source 立即进入终态归档流程；target 继续留在活跃窗口 |
+| reopen | 已 merged 的 source 不能 reopen（`merge_irreversible`）；要恢复工作请 reopen target 或新建 task |
+
+### 12.8 测试点（新增 `test/merge.mjs`）
+
+1. 基本 merge：source done + `resolution.kind='merged'`、`mergedInto=target`、target history 有 merge 条目、source 不在默认 `ria_status tasks` 的活跃列表。
+2. 自合并、缺失、source/target 已终态、跨子树、祖先/后代：分别返回对应 code，且 store 无变化。
+3. 子任务重挂：source 两个子任务 → target；`parentTaskId/rootTaskId/forkDepth` 正确、`childTaskIds` 去重、target 变 `forked`。
+4. target 有 executor + source 有活跃子任务 → `target_busy`，不写入。
+5. 待投递消息：source 的 delivery 改挂 target，requestId 不变；已投递消息不重发。
+6. attempts/history：source 的 attempts 完整保留，target 只多一条 merge 摘要，不重复计数。
+7. 聚合：source 是父、target 是另一个父，合并后 target 的子任务全部完成后 target done，source 不再参与聚合。
+8. reopen source 被拒；reopen target 正常。
+
+---
+
+## 13. 终态日志归档
+
+### 13.1 目标与边界
+
+`ria.json` 是热状态文件，不能无限增长。终态 task（done/cancelled/failed，以及 merged 收敛后的 source）只保留一个短窗口；更早的记录追加到 state 目录的 JSONL 日志，按月滚动 12 个月。活跃 task、窗口内终态、grants、deliveries、settings 仍在 `ria.json`。
+
+归档是**追加写 + 后裁剪**：先把完整记录写进日志并 flush，再从 `ria.json` 删除；任何一步失败都不删热数据。日志允许重复行（崩溃在 append 与 prune 之间），读取时按 `(taskId, closedAt)` 去重，后写覆盖先写。
+
+### 13.2 文件布局
+
+```text
+<stateDir>/
+  ria.json                  # 热状态：非终态 + 最近 24h/50 条终态
+  tasks.log.jsonl           # 当月热日志，一行一个 task 归档记录
+  tasks-YYYY-MM.jsonl       # 已封存的月日志（UTC 月份），保留 12 个月
+```
+
+- 生产环境 `stateDir` 就是 `~/.dsh/state/ria`（测试可注入临时目录），所以热日志是 `~/.dsh/state/ria/tasks.log.jsonl`，月日志是 `~/.dsh/state/ria/tasks-YYYY-MM.jsonl`。
+- 当月新归档一律 append 到 `tasks.log.jsonl`。
+- 启动时、以及每次写日志前，如果 `tasks.log.jsonl` 的 mtime 月份早于当前 UTC 月份，执行 `rotateTaskLog()`：逐行解析、按记录 `closedAt` 的月份追加到对应 `tasks-YYYY-MM.jsonl`，成功后把热日志截断为空。跨月混合行也能正确分流。
+- `tasks-YYYY-MM.jsonl` 只追加，不重写；重复行由读取端去重。
+- 保留 12 个月：删除文件名月份早于 `currentMonth - 11` 的月日志；`tasks.log.jsonl` 不参与删除。
+
+### 13.3 归档记录格式
+
+一行一个 JSON 对象，字段固定（新增字段只能追加，不能改名）：
+
+```json
+{
+  "schema": 1,
+  "taskId": "task_mw...",
+  "goal": "排查无人车底商 GPU 方案",
+  "executor": "session-1213b363-...",
+  "status": "done",
+  "resolution": { "kind": "completed", "at": 1762... },
+  "failure": null,
+  "attempts": { "count": 3, "lastAt": 1762..., "lastOutcome": "completed", "lastReason": null },
+  "recoveryCount": 1,
+  "parentTaskId": null,
+  "rootTaskId": "task_mw...",
+  "forkDepth": 0,
+  "childTaskIds": [],
+  "createdAt": 1761...,
+  "updatedAt": 1762...,
+  "closedAt": 1762...,
+  "feedback": { "count": 2, "lastText": "已完成", "lastAt": 1762... },
+  "task": { "...": "完整 task 快照，供 reopen 原样恢复" }
+}
+```
+
+- `resolution` 与 `failure` 至多一个非 null；`status=done` 且无 failure 时 resolution 必填。
+- `attempts` 是摘要，完整 attempts 在 `task.attempts`；`feedback` 是摘要，完整 feedback 在 `task.feedback`（若 P0 尚未有 feedback 字段，则只写 `lastText/lastAt`）。
+- `task` 是归档时的完整对象（含 history/attempts/resolution/childTaskIds），保证 reopen 不需要拼接多行。
+- `goal` 可能很长，原样保存；列表接口返回 `goalPreview`（前 200 字符），精确查询返回全文。
+
+### 13.4 裁剪策略（`ria.json` 保留窗口）
+
+每次 `transitionTask` 进入终态后执行 `pruneClosedTasks(now)`：
+
+1. 活跃 task（intake/open/working/blocked/forked）= 全保留。
+2. 终态 task 计算 `keep`：`closedAt >= now - 24h` **或** 位于按 `closedAt` 倒序的前 50 条终态之内（两者取并集；24h 内爆发超过 50 条也不丢）。
+3. 不在 `keep` 的终态 task：逐条 `archiveTask(task)`；全部 append 成功后才从内存/`ria.json` 删除。
+4. 单次裁剪最多处理 200 条，剩下的下次 startup 继续，避免长时间阻塞事件循环。
+5. 归档失败（磁盘满、权限）：保留该 task，记 warn，下一次再试；绝不先删后写。
+
+`load()` 时也执行一次裁剪：旧版本 `ria.json` 里可能已经积累大量终态，启动时按同一规则迁移。
+
+### 13.5 查询与 `ria_status`
+
+- `ria_status { scope:'tasks' }`（默认）：活跃 + 13.4 窗口内终态；排序为活跃在前（按 updatedAt 倒序），终态在后（按 closedAt 倒序）。不读日志。
+- `ria_status { scope:'history', limit?, month? }`：返回归档摘要列表（不含完整 `task`），默认 `limit=50`，按 `closedAt` 倒序；`month='YYYY-MM'` 只读该月文件，不传则从当月向前合并最近 12 个月。
+- `ria_status { taskId }`：先查内存（活跃 + 窗口），未命中再查 `tasks.log.jsonl`，再查当月、上月月日志；仍未命中时从新到旧扫其余月日志（最多 12 个文件），命中即返回完整 task + `archived:true`。
+- `ria_task action=reopen` 使用同一 lookup；`reopen` 成功后把 task 插回 `ria.json`，状态置 `open`，清 `closedAt/resolution`（原 resolution 进 history），`reopenCount++`，`updatedAt=now`；旧日志行不删除，下次关闭时追加新行，读取端以 `closedAt` 最新者为准。
+- 默认列表永不返回归档 task，避免 `ria_status` 越用越长；需要历史必须显式 `scope=history` 或 `taskId`。
+
+### 13.6 与 merge、reopen 的关系
+
+- merged 的 source 走普通终态归档；target 仍在活跃窗口，`scope=taskId source` 返回 `resolution.mergedInto`，客户端可跳转 target。
+- `reopen` 一个已归档 task：从日志捞回完整 `task` 快照，保留原 `taskId/createdAt/history`，追加 `{kind:'reopen', actor, reason}`；`attempts` 不清空，`recoveryCount` 归零。
+- 已归档且 merged 的 source：`reopen` 返回 `merge_irreversible`，不捞回。
+
+### 13.7 兼容与迁移
+
+- 旧 `ria.json` 没有 `tasks.log.jsonl`：首次启动不创建空日志；第一次有 task 超窗时才创建。
+- 归档记录 `schema:1`；未来字段变更只追加，读取端对未知字段忽略。
+- `closedAt` 统一用毫秒时间戳（与现有 `createdAt/updatedAt` 一致），月份按 UTC 计算，避免本地时区跨月歧义。
+- 月日志读取按行 `JSON.parse`，单行损坏只跳过该行并 warn，不阻塞整个列表。
+
+### 13.8 测试点（新增 `test/archive.mjs`）
+
+1. 终态超过 24h 且不在前 50：写日志后从 `ria.json` 删除；日志行含 13.3 全部字段，`task` 快照可 reopen。
+2. 24h 内但第 51 条：仍保留在 `ria.json`（并集规则）。
+3. append 失败（mock 抛错）：`ria.json` 不删、task 仍在内存、warn 被记录。
+4. 月滚动：热日志含两个月记录，rotate 后分别落到两个 `tasks-YYYY-MM.jsonl`，热日志为空；重复行读取去重。
+5. 保留 12 个月：第 13 个月文件被删除，最近 12 个保留。
+6. 默认 `ria_status tasks` 不含归档；`scope=history` 含摘要且可按 month 过滤；`taskId` 能查当月/上月/更早。
+7. reopen 归档 task：插回活跃列表、`closedAt` 清除、`reopenCount=1`、history 有 reopen 条目；再次关闭追加新日志行。
+8. 旧 `ria.json`（无 history/attempts/resolution）启动迁移不报错，归档记录字段有默认值。
+
+### 13.9 术语说明：task → ticket
+
+后续阶段会把对外命名统一为 **ticket**：`ria_task` → `ria_ticket`、`taskId` → `ticketId`、`ria.json` 的 `tasks[]` → `tickets[]`、`taskFeedback` → `ticketFeedback`。本棒（M2/归档）**不改命名**，只保证数据层新增字段不依赖 `task` 前缀，迁移时可以做纯改名。现有 `dispatchNotes`、`deliveries.taskId` 等内部字段在改名时一并映射，旧客户端在一个版本内继续接受 `taskId` 别名。
+
+---
+
+## 14. 一句话版本
 
 **用户消息一进来就由 host 建 root task（intake），Ria 在同一 turn 内用 `ria_resolve` 定性；host 用 `turn-stopping` 保证没有未定性的消息；所有状态只走 `transitionTask`，非终态必须有 `waitingOn` 和 feedback；分叉用父 task + 子 task；重启只扫描未收敛 task，不再维护 `inFlight`。**

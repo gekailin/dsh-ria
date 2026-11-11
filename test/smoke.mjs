@@ -35,6 +35,7 @@ const worker = {
     },
   },
 }
+const archivedSessionIds = ['session-archived']
 const riaEvents = []
 let riaTurn = 7
 let failRiaSnapshot = false
@@ -89,6 +90,7 @@ const ctx = {
     register(route) { ctx.route = route; return () => {} },
   },
   workspaceRegistry: {
+    get archivedSessionIds() { return archivedSessionIds },
     async create(path, title) {
       assert.equal(path, stateDir)
       assert.equal(title, 'Ria')
@@ -140,9 +142,11 @@ const ctx = {
     async list() {
       return { items: [
         { sessionId: riaId, running: false, blank: false, updatedAt: 1, cwd: stateDir },
-        { sessionId: 'session-worker', running: true, blank: false, updatedAt: 2, cwd: '/work/worker', projections: { values: { title: 'Worker One' } } },
+        { sessionId: 'session-worker', running: true, blank: false, updatedAt: 2, cwd: stateDir, projections: { values: { title: 'Worker One' } } },
         { sessionId: 'session-child', running: false, blank: false, updatedAt: 3, cwd: '/tmp', parentSessionId: 'session-worker', origin: 'subagent' },
         { sessionId: 'session-worker-2', running: false, blank: true, updatedAt: 4, projections: { values: { title: 'Worker Two' } } },
+        { sessionId: 'session-archived', running: false, blank: false, updatedAt: 5, cwd: stateDir, projections: { values: { title: 'Archived One' } } },
+        { sessionId: 'session-no-workspace', running: false, blank: false, updatedAt: 6, cwd: '/work/worker-gone', projections: { values: { title: 'Gone One' } } },
       ] }
     },
     async prompt(request) {
@@ -301,7 +305,7 @@ const recentAfterTask = await call('ria_status', { scope: 'recent' })
 assert.equal(recentAfterTask.workers.length, 1)
 assert.equal(recentAfterTask.workers[0].sessionId, 'session-worker')
 assert.equal(recentAfterTask.workers[0].title, 'Worker One')
-assert.equal(recentAfterTask.workers[0].cwd, '/work/worker')
+assert.equal(recentAfterTask.workers[0].cwd, stateDir)
 assert.equal(recentAfterTask.workers[0].lastTaskId, task.task.taskId)
 assert.equal(recentAfterTask.workers[0].lastTaskGoal, 'fix tests')
 assert.equal(recentAfterTask.workers[0].lastTaskStatus, 'working')
@@ -374,11 +378,13 @@ const status = await call('ria_status', { scope: 'tasks' })
 assert.equal(status.tasks[0].status, 'working')
 assertLossless(status)
 const sessions = await call('ria_status', { scope: 'sessions' })
-assert.deepEqual(sessions.sessions.map(item => item.sessionId), ['session-worker', 'session-worker-2'])
+assert.deepEqual(sessions.sessions.map(item => item.sessionId), ['session-worker', 'session-worker-2', 'session-archived', 'session-no-workspace'])
 assertLossless(sessions)
 assert.equal('parentSessionId' in sessions.sessions[0], false)
 assert.equal(sessions.sessions[0].title, 'Worker One')
-assert.equal(sessions.sessions[0].cwd, '/work/worker')
+assert.equal(sessions.sessions[0].cwd, stateDir)
+assert.equal(sessions.sessions[0].archived, false)
+assert.equal(sessions.sessions[2].archived, true)
 assert.equal(typeof sessions.sessions[0].lastUsedAt, 'number')
 assert.equal(sessions.sessions[1].title, 'Worker Two')
 assert.equal('cwd' in sessions.sessions[1], false)
@@ -386,6 +392,55 @@ assert.equal('lastUsedAt' in sessions.sessions[1], false)
 const sessionStatus = await call('ria_status', { scope: 'sessions', sessionId: 'session-worker' })
 assert.equal(sessionStatus.session.sessionId, 'session-worker')
 assertLossless(sessionStatus)
+
+// Dispatch preflight: archived, missing-workspace, and missing-session targets
+// are rejected before delivery and leave task/recent-worker state untouched.
+concluded = 0
+const preflightPromptsBefore = prompts.length
+const archivedTask = await call('ria_task', { goal: 'archived target', acceptance: 'never runs', executor: 'session-archived' })
+const archivedDispatch = await call('ria_request', {
+  targetSessionIds: ['session-archived'],
+  message: 'should not arrive',
+  taskId: archivedTask.task.taskId,
+  note: '不会真的派发。',
+})
+assert.equal(archivedDispatch.results[0].ok, false)
+assert.equal(archivedDispatch.results[0].code, 'session_archived')
+assert.equal(archivedDispatch.results[0].taskId, archivedTask.task.taskId)
+assert.match(archivedDispatch.results[0].message, /session-archived/)
+assert.equal(prompts.length, preflightPromptsBefore)
+assert.equal(concluded, 0)
+assertLossless(archivedDispatch)
+const tasksAfterArchived = await call('ria_status', { scope: 'tasks' })
+assert.equal(tasksAfterArchived.tasks.find(item => item.taskId === archivedTask.task.taskId).status, 'open')
+const recentAfterArchived = await call('ria_status', { scope: 'recent' })
+assert.equal(recentAfterArchived.workers.some(item => item.sessionId === 'session-archived'), false)
+
+const noWorkspaceDispatch = await call('ria_request', { targetSessionIds: ['session-no-workspace'], message: 'nope' })
+assert.equal(noWorkspaceDispatch.results[0].ok, false)
+assert.equal(noWorkspaceDispatch.results[0].code, 'workspace_missing')
+assert.match(noWorkspaceDispatch.results[0].message, /session-no-workspace/)
+assert.match(noWorkspaceDispatch.results[0].message, /工作目录/)
+assert.equal(prompts.length, preflightPromptsBefore)
+assert.equal(concluded, 0)
+
+const missingDispatch = await call('ria_request', { targetSessionIds: ['session-nope'], message: 'nope' })
+assert.equal(missingDispatch.results[0].ok, false)
+assert.equal(missingDispatch.results[0].code, 'session_missing')
+assert.match(missingDispatch.results[0].message, /session-nope/)
+assert.equal(prompts.length, preflightPromptsBefore)
+
+const mixedPromptsBefore = prompts.length
+const mixed = await call('ria_request', {
+  targetSessionIds: ['session-worker', 'session-archived', 'session-no-workspace', 'session-nope'],
+  message: 'mixed',
+})
+assert.equal(mixed.results[0].ok, true)
+assert.deepEqual(mixed.results.slice(1).map(item => item.code), ['session_archived', 'workspace_missing', 'session_missing'])
+assert.equal(prompts.length, mixedPromptsBefore + 1)
+assert.equal(prompts.at(-1).sessionId, 'session-worker')
+assert.equal(concluded, 0)
+assertLossless(mixed)
 const read = await call('ria_read', { sessionId: 'session-worker', limit: 10 })
 assert.equal(read.messages[0].text, 'worker says done')
 await assert.rejects(

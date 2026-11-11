@@ -46,7 +46,7 @@ function harness(options = {}) {
       async list() {
         return { items: [
           { sessionId: 'session-ria', running: false, blank: false, updatedAt: 1 },
-          { sessionId: 'session-worker', running: true, blank: false, updatedAt: 2 },
+          { sessionId: 'session-worker', running: true, blank: false, updatedAt: 2, cwd: options.stateDir },
         ] }
       },
       async prompt(request, signal) {

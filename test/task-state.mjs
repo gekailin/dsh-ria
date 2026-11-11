@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createFixture } from './support/ria-fixture.mjs'
-import { migrateV1State, TICKET_TRANSITIONS } from '../lib/tickets.mjs'
+import { assertTicketInvariants, migrateV1State, TICKET_TRANSITIONS } from '../lib/tickets.mjs'
 
 function openTicket(store, overrides = {}) {
   return store.addTicket({
@@ -204,6 +204,53 @@ function openTicket(store, overrides = {}) {
   assert.equal(result.data.ticketFeedback[0].kind, 'dispatched')
   assert.equal(result.data.ticketFeedback[0].body, 'sent to worker')
   assert.deepEqual(result.data.settings, { dispatchGuard: false, progressCards: false })
+}
+
+// v1 terminal tasks carry no resolution or failure metadata. Migration must
+// backfill explicit legacy values so every migrated ticket satisfies the
+// invariants instead of making the whole store unreadable.
+{
+  const at = Date.UTC(2026, 10, 11, 12, 0, 0)
+  const result = migrateV1State({
+    version: 1,
+    tasks: [{
+      taskId: 'task_done_legacy',
+      goal: 'finished without metadata',
+      executor: 'session-worker',
+      status: 'done',
+      createdAt: 1,
+      updatedAt: 2,
+    }, {
+      taskId: 'task_cancelled_legacy',
+      goal: 'cancelled without metadata',
+      executor: 'session-worker',
+      status: 'cancelled',
+      createdAt: 3,
+      updatedAt: 4,
+    }, {
+      taskId: 'task_failed_legacy',
+      goal: 'failed without metadata',
+      executor: 'session-worker',
+      status: 'failed',
+      createdAt: 5,
+      updatedAt: 6,
+    }, {
+      taskId: 'task_blocked_legacy',
+      goal: 'blocked without a reason',
+      executor: 'session-worker',
+      status: 'blocked',
+      createdAt: 7,
+      updatedAt: 8,
+    }],
+  }, at)
+  const byId = Object.fromEntries(result.data.tickets.map(ticket => [ticket.ticketId, ticket]))
+  assert.deepEqual(byId.task_done_legacy.resolution, { kind: 'done', summary: 'finished without metadata', legacy: true })
+  assert.deepEqual(byId.task_cancelled_legacy.resolution, { kind: 'cancelled', reason: 'cancelled without metadata', legacy: true })
+  assert.equal(byId.task_failed_legacy.failure.code, 'legacy_failure')
+  assert.equal(byId.task_failed_legacy.failure.legacy, true)
+  assert.equal(byId.task_blocked_legacy.blockedReason, 'legacy blocked ticket')
+  assert.equal(byId.task_blocked_legacy.waitingOn, 'user')
+  for (const ticket of result.data.tickets) assertTicketInvariants(ticket, result.data.tickets, at)
 }
 
 // A legacy in-flight record with no matching ticket becomes an open ticket,

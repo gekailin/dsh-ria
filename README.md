@@ -8,7 +8,7 @@ Super 自己是一个普通的顶层 DSH Session，运行 PTC preset，带管理
 
 ## 当前状态
 
-- Phase 0–9 已实现：单例、PTC 创建、任务、转述、读取、memory、重启恢复、侧边栏入口、进程内微信和入口右侧的微信 chip、worker 审批可见性、新会话欢迎消息、任务派发防误发提示、临时 worker 权限调整，以及微信长回复/复杂 Markdown 自动转 .md 文件。
+- Phase 0–10 已实现：单例、PTC 创建、任务、转述、读取、memory、重启恢复（含恢复上限可见性）、侧边栏入口、进程内微信和入口右侧的微信 chip、worker 审批可见性、新会话欢迎消息、任务派发防误发提示、临时 worker 权限调整，以及微信长回复/复杂 Markdown 自动转 .md 文件。
 - 已验证环境：DSH 0.2.2-rc.1，Node 26，真实 Web profile 的隔离副本。
 - 微信入站只接受文本；扫码登录需要在弹层里完成一次，之后 DSH 重启会自动复用凭据。
 
@@ -109,7 +109,7 @@ Super Session 入口标题右侧有一个“微信”chip。点开后可以扫�
 
 | 工具 | 作用 |
 |---|---|
-| super_session_task | 建/改任务。字段：goal、acceptance、executor（self 或一个顶层 worker sessionId）、status（open/working/blocked/done/cancelled）。一个任务只有一个 executor。 |
+| super_session_task | 建/改任务。字段：goal、acceptance、executor（self 或一个顶层 worker sessionId）、status（open/working/blocked/done/cancelled）、blockedReason。一个任务只有一个 executor。每次更新都会把 recoveryCount 归零。 |
 | super_session_status | 查看任务和可管理的顶层 Session。可带 scope=tasks 或 scope=sessions。不会 resume 冷会话。 |
 | super_session_request | 把消息发给一个或多个 worker。mode=queue 或 steer；content 支持 text/image/file；带 taskId 时 executor 必须匹配，并自动加防误发提示。 |
 | super_session_read | 读某个 Session 的近期消息。live 用 snapshotEvents，冷会话用持久化 events，不 resume。 |
@@ -156,8 +156,10 @@ Super 的系统 prompt 要求：需求不明确时先和用户澄清，再下发
 Host 启动后延迟 1.5 秒：
 
 - 没有 active task：只重试 pending delivery，不创建 Super。
-- 有 open/working task：ensure Super，重试 pending delivery，并给 Super 发一条恢复消息，列出 taskId、executor、goal、acceptance。
-- 同一 task 自动恢复最多 3 次。
+- 有 open/working task：先重试 pending delivery，再给 Super 发恢复消息，列出 taskId、executor、goal、acceptance。
+- 同一 task 连续自动恢复最多 3 次。达到上限后，Host 会把任务标成 `blocked`，写入 `blockedReason`（自动恢复已达上限），并在同一条消息里列出 taskId、executor、goal，要求用户手动处理；不会静默跳过。
+- `recoveryCount` 在 task 被 `super_session_task` 更新或成功派发时归零。因此它统计的是连续无人处理的重启次数；如果 Super 或用户中途接手，额度会重置。
+- startup recovery 本身抛错时，也会向 Super 发送失败通知（错误内容和“需要手动处理”），不只写日志。
 
 ## 状态文件
 
@@ -192,7 +194,7 @@ DSH_HOME/state/super-session/
 npm test
 ~~~
 
-smoke 使用 mock ctx 覆盖 ensure、Workspace 挂载、7 个工具、request、task 派发防误发提示、quick relay 不加提示、status、read、memory、持久化、grant 的 set/list/reset 与 task 关闭恢复、GET /state 的 grants，以及欢迎消息的五事件序列和第二次 ensure 不重复；wechat 测试覆盖 assistant 文本提取、入口事件过滤、微信入站去重/回显过滤、失败标记、reconnect skip 和状态视图；wechat-file 测试覆盖阈值/代码块/表格/标题/链接判定、配置/env 覆盖、文件名、短消息不变、长消息发 .md、失败回退文本，以及上传 multipart 和 appmsg 的字段/签名/去重；approvals 测试覆盖只记录活跃 executor、始终 next()、abort/超时/shutdown 清理和 lossless 输出；grants 测试覆盖过期、startup、task 缺失/关闭、漂移跳过、恢复失败和审计。
+smoke 使用 mock ctx 覆盖 ensure、Workspace 挂载、7 个工具、request、task 派发防误发提示、quick relay 不加提示、status、read、memory、持久化、grant 的 set/list/reset 与 task 关闭恢复、GET /state 的 grants，以及欢迎消息的五事件序列和第二次 ensure 不重复；wechat 测试覆盖 assistant 文本提取、入口事件过滤、微信入站去重/回显过滤、失败标记、reconnect skip 和状态视图；wechat-file 测试覆盖阈值/代码块/表格/标题/链接判定、配置/env 覆盖、文件名、短消息不变、长消息发 .md、失败回退文本，以及上传 multipart 和 appmsg 的字段/签名/去重；approvals 测试覆盖只记录活跃 executor、始终 next()、abort/超时/shutdown 清理和 lossless 输出；grants 测试覆盖过期、startup、task 缺失/关闭、漂移跳过、恢复失败和审计；startup 测试覆盖达到恢复上限后的通知与 blocked 状态、更新/成功派发清零、以及启动异常通知。
 
 ## 限制
 

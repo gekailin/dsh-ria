@@ -79,6 +79,7 @@ task 是 Super 的管理单位；一个 task 只对应一个 executor。
   "acceptance": "回归全绿",
   "executor": "s_abc",
   "status": "open",
+  "blockedReason": "",
   "createdAt": 0,
   "updatedAt": 0,
   "recoveryCount": 0
@@ -88,6 +89,8 @@ task 是 Super 的管理单位；一个 task 只对应一个 executor。
 - executor=self：Super 自己做，可以是总结，也可以是用户明确要求的具体工作。
 - executor=sessionId：交给该 worker；用 super_session_request 发送。
 - status：open | working | blocked | done | cancelled。
+- blockedReason：blocked 的原因，展示在 taskSummary 和 status 里。
+- 每次 super_session_task 更新或成功派发，recoveryCount 归零；只有连续无人处理的重启才累计。
 - 广播给多个 worker：建多个 task。
 - 不保存 title、kind、source、lastRelayId、lastRecoveryAt。
 
@@ -235,13 +238,16 @@ super_session_read 只读最近消息，默认 30 条，最多 100 条，不 res
 2. 重试 pending request；失败保留。
 3. 如果原 request 仍在 pending 且重试成功，不追加 continuation。
 4. 收集 status=open/working 且没有 pending request 的 task。
-5. 没有 task 就安静结束。
-6. 有 task 时唤醒 Super，给 goal、acceptance、executor、recoveryCount。
-7. Super 先 read：
+5. 没有 active task 就安静结束。
+6. recoveryCount 已经达到 3 的 active task 先标成 blocked，写入 blockedReason（自动恢复已达上限），不再继续累计。
+7. 只有存在 candidate 或 exhausted task 时才 ensure Super。
+8. 给 Super 发一条 prompt：candidate 部分列出 goal、acceptance、executor、recoveryCount；exhausted 部分单独列出 taskId、executor、goal，并明确说明已超过自动恢复上限、需要用户手动处理。
+9. candidate 的 recoveryCount 加一；同一 task 连续自动恢复最多 3 次。
+10. Super 先 read：
    - 已完成：done。
-   - 需要用户/阻塞：blocked，报告用户。
+   - 需要用户/阻塞：blocked + blockedReason，报告用户。
    - 可继续：executor=sessionId 发 continuation；executor=self 自己继续。
-8. recoveryCount 加一；同一 task 最多自动恢复 3 次。
+11. startup recovery 本身抛错时，向 Super 发送失败通知（错误内容 + 需要手动处理），不能只写日志。
 
 continuation 要求 worker 先检查工作区、已改文件和测试，从中断处继续，不重复已完成部分。
 
@@ -318,7 +324,7 @@ stateDir/
 
 super.json 只存 super、tasks、deliveries、grants：
 
-- tasks：taskId、goal、acceptance、executor、status、createdAt、updatedAt、recoveryCount。
+- tasks：taskId、goal、acceptance、executor、status、blockedReason、createdAt、updatedAt、recoveryCount。
 - deliveries：deliveryId、targetSessionId、requestId、taskId、content、mode、createdAt。
 - grants：grantId、sessionId、taskId、status、createdAt、expiresAt、before、after、reason、lastError。
 
@@ -373,6 +379,8 @@ Phase 8：临时 worker 权限 grant（set/list/reset、原值记录、task 关�
 
 Phase 9：微信出站长回复/复杂 Markdown 转 .md 文件（可配置阈值和复杂度规则、完整文件、失败回退文本）。
 
+Phase 10：恢复上限可见性（达到上限的 task 标 blocked + blockedReason，通知 Super 并列出放弃的 task；startup 异常也通知；task 更新/成功派发清零 recoveryCount）。
+
 ## 16. 验收
 
 1. 点击入口只创建一个 Super。
@@ -381,7 +389,8 @@ Phase 9：微信出站长回复/复杂 Markdown 转 .md 文件（可配置阈值
 4. request 在 worker 中显示为普通用户消息，支持 DSH 支持的消息类型；task 派发带可见防误发提示，quick relay 原样。
 5. 一个 task 只有一个 executor；self 可做用户明确要求的任务，session 做分派任务。
 6. 重启后 pending request 原 requestId 重试；已送达 task 用新 requestId 继续。
-7. 同一 task 自动恢复最多 3 次。
+7. 同一 task 连续自动恢复最多 3 次；达到上限后标 blocked 并通知，不静默跳过；task 更新或成功派发清零 recoveryCount。
+7.1. startup recovery 抛错时向 Super 发送失败通知，不只写日志。
 8. memory.md 跨重启保留；冷启动注入；remember/forget 可用；当前消息优先。
 9. 没有 lessons/FTS5；经验默认只在上下文，用户给路径才写文件。
 10. 微信进程内运行，无 bridge 端口/socket；消息进 Super，回复回微信。
@@ -392,6 +401,8 @@ Phase 9：微信出站长回复/复杂 Markdown 转 .md 文件（可配置阈值
 15. 任务派发提示要求 worker 对明显无关的消息先确认、相关消息正常执行；不改 worker tools/system prompt；quick relay 不加提示。
 16. 临时权限只能由用户明确指令触发；set 需要 userConfirmed=true；记录原值；task close/reset/expiry/startup 恢复；手工改动跳过；审计可查。
 17. 微信长回复/复杂 Markdown 按可配置规则转完整 .md 文件；短消息不变；文件发送失败回退文本并提示。
+18. 达到恢复上限的 task 不再停留在 working；状态为 blocked，blockedReason 可见，且 Super 收到包含 taskId/executor/goal 的通知。
+19. startup recovery 异常时 Super 收到失败通知；通知失败不能吞掉原始错误日志。
 
 ## 17. 已确认
 
@@ -411,7 +422,9 @@ Phase 9：微信出站长回复/复杂 Markdown 转 .md 文件（可配置阈值
 | 已有 Super 不是 PTC | preset 不一致 | 提示重建/迁移，不自动改 |
 | PTC SDK 未包含自定义工具 | Super 无法调用 7 个工具 | Phase 0 验证注册时序；必要时延迟 SDK 生成 |
 | task 状态依赖 Super 维护 | 重启先 read；用户可纠正 |
-| 自动恢复误判 | 先 read；最多 3 次 |
+| 自动恢复误判 | 先 read；连续最多 3 次；达到上限标 blocked 并通知 |
+| 恢复额度被无关重启耗尽 | task 更新或成功派发清零 recoveryCount；达到上限仍可见可处理 |
+| 启动恢复失败无感知 | catch 中除日志外，再向 Super 发失败通知；通知异常单独记录 |
 | memory 过期/膨胀 | 当前消息优先；4KB 上限；用户可删 |
 | 微信全量同步 | 已接受；后续可做 turn 关联 |
 | 微信长连接绑 DSH 进程 | 重启加载 creds 重连，通常不扫码 |
@@ -430,7 +443,7 @@ Phase 9：微信出站长回复/复杂 Markdown 转 .md 文件（可配置阈值
 
 截至当前版本：
 
-- Phase 0–9 已实现；Phase 0–4 和 Phase 6 通过隔离环境的真实 DSH 验证，Phase 5、Phase 7、Phase 8 和 Phase 9 由单元测试和 smoke 覆盖。
+- Phase 0–10 已实现；Phase 0–4 和 Phase 6 通过隔离环境的真实 DSH 验证，Phase 5、Phase 7、Phase 8、Phase 9 和 Phase 10 由单元测试和 smoke 覆盖。
 - 临时 worker 权限（审批阶段二）已实现，等待用户在真实会话里首次验证。
 - 微信文件发送链路已实现并用 mock 覆盖，尚未用真实微信账号完成 .md 收发验证。
 
@@ -449,6 +462,7 @@ Phase 9：微信出站长回复/复杂 Markdown 转 .md 文件（可配置阈值
 - test/wechat-file.mjs：Markdown 判定、文件发送、失败回退和 multipart/appmsg 单元测试。
 - test/approvals.mjs：审批观察器单元测试。
 - test/grants.mjs：临时权限单元测试（过期、startup、漂移跳过、恢复失败、审计）。
+- test/startup.mjs：恢复上限、blocked 状态、更新/成功派发清零、启动异常通知。
 
 已验证：
 
@@ -459,7 +473,8 @@ Phase 9：微信出站长回复/复杂 Markdown 转 .md 文件（可配置阈值
 - GET /health、POST /ensure、GET /state 正常。
 - GET /wechat/status 返回 idle；POST /wechat/login 返回 data:image/jpeg 二维码；弹层显示 190×190 二维码。
 - 宽侧边栏中 chip 位于 Super Session 标题右侧；折叠侧边栏不插入。
-- smoke 覆盖 Workspace 挂载、7 个工具注册、request 投递、task 派发防误发提示、quick relay 不加提示、status、read、memory、持久化，以及 welcome 五事件序列和第二次 ensure 不重复；wechat 测试覆盖文本提取、事件过滤、入站去重/回显过滤、失败标记、reconnect skip 和状态视图；approvals 测试覆盖活跃 executor 过滤、始终 next()、abort/TTL/shutdown 清理和 lossless 输出；grants 测试覆盖授权门槛、原值记录、task done 自动恢复、显式 reset、过期、startup、漂移跳过、恢复失败和审计；wechat-file 测试覆盖阈值/代码块/表格/标题/链接、配置/env、文件名、短消息不变、长消息发 .md、失败回退，以及上传和 appmsg 字段。npm test 五个测试全部通过。
+- startup 测试覆盖 recoveryCount=3 的 working task：启动后产生一条通知、任务变 blocked 并带 blockedReason，status 可见；通知包含 taskId/executor/goal；更新 task 和成功派发都会把 recoveryCount 清零；pending delivery 重试成功也不会误判为超限；resolveAgent 失败时产生启动失败通知。测试不调用模型。
+- smoke 覆盖 Workspace 挂载、7 个工具注册、request 投递、task 派发防误发提示、quick relay 不加提示、status、read、memory、持久化，以及 welcome 五事件序列和第二次 ensure 不重复；wechat 测试覆盖文本提取、事件过滤、入站去重/回显过滤、失败标记、reconnect skip 和状态视图；approvals 测试覆盖活跃 executor 过滤、始终 next()、abort/TTL/shutdown 清理和 lossless 输出；grants 测试覆盖授权门槛、原值记录、task done 自动恢复、显式 reset、过期、startup、漂移跳过、恢复失败和审计；wechat-file 测试覆盖阈值/代码块/表格/标题/链接、配置/env、文件名、短消息不变、长消息发 .md、失败回退，以及上传和 appmsg 字段。npm test 六个测试全部通过。
 - 新建 Super 后真实 Web UI 显示欢迎消息；会话界面显示“已完成，用时 1 秒”和“1 轮 1 步”，输入框正常；没有浏览器 runtime error。
 - 审批观察器没有在真实 UI 中触发过；只做了单元测试和 smoke。首次实际审批时需确认 pending 列表和清理行为。
 - welcome 的合成 turn 会被 UI 计入“1 轮 1 步”，并显示“已完成”；这是 assistant 气泡可正常渲染的代价。
@@ -475,3 +490,4 @@ Phase 9：微信出站长回复/复杂 Markdown 转 .md 文件（可配置阈值
 - sandbox override 无法清除；恢复写回原 effective mode，可能留下同值 override。
 - 微信 .md 文件发送只按网页版协议 mock 验证；真实账号的文件上传/下载尚未验证。
 - .md 文件发送失败回退文本时，若文本仍超过 4 块，会按原有文本切块策略截断。
+- 恢复上限在启动时判定；如果给 Super 的通知本身发送失败，只记录日志，任务仍会保持 blocked，等待用户或下次启动处理。

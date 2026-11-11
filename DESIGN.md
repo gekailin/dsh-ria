@@ -266,29 +266,31 @@ Host 监听 agent/status（payload 为 { agent, status }）。当 status 变为 
 
 ## 10. 启动恢复
 
-重启后 worker 的 turn 已经中断；恢复以 task 为单位。
+重启后 worker 的 turn 已经中断；恢复以 task 和 Ria 自己的未完成 turn 为单位。
 
 | 情况 | 处理 |
 |---|---|
 | pending request：原消息没送达 | 用原 requestId 重试 |
 | 已送达但 task 未完成 | 用新 requestId 发 continuation |
+| Ria 自己的 turn 未收尾 | 发一条恢复 prompt，让 Ria 先 read 自己的会话再继续 |
 
 步骤：
 
 1. 读 ria.json。
 2. 重试 pending request；失败保留。
 3. 如果原 request 仍在 pending 且重试成功，不追加 continuation。
-4. 收集 status=open/working 且没有 pending request 的 task。
-5. 没有 active task 就安静结束。
-6. recoveryCount 已经达到 3 的 active task 先标成 blocked，写入 blockedReason（自动恢复已达上限），不再继续累计。
-7. 只有存在 candidate 或 exhausted task 时才 ensure Ria。
-8. 给 Ria 发一条 prompt：candidate 部分列出 goal、acceptance、executor、recoveryCount；exhausted 部分单独列出 taskId、executor、goal，并明确说明已超过自动恢复上限、需要用户手动处理。
-9. candidate 的 recoveryCount 加一；同一 task 连续自动恢复最多 3 次。
-10. Ria 先 read：
+4. 收集 status=open/working 且没有 pending request 的 task；同时读顶层 `inFlight`（记录 Ria 当前/上一个未完成 turn：turnId、startedAt、lastUserMessage、lastPhase、recoveryCount）。
+5. 没有 active task、没有 `inFlight`、也没有 pending request 就安静结束。
+6. recoveryCount 已经达到 3 的 active task 先标成 blocked，写入 blockedReason（自动恢复已达上限），不再继续累计；`inFlight.recoveryCount` 达到 3 时清掉记录，只在本次 prompt 里提示一次“已达自动恢复上限”。
+7. 只有存在 candidate、exhausted task 或 `inFlight` 时才 ensure Ria。
+8. 给 Ria 发**一条** prompt：`inFlight` 部分说明上次 turn 未完成、附开始时间与用户消息摘要（及最近工具名），要求先 `ria_read` 自己的会话、检查工作区，再从中断处继续；candidate 部分列出 goal、acceptance、executor、recoveryCount；exhausted 部分单独列出 taskId、executor、goal，并明确说明已超过自动恢复上限、需要用户手动处理。各部分之间空行分隔，绝不发两条。
+9. candidate 的 recoveryCount 加一；`inFlight.recoveryCount` 同样加一；同一对象连续自动恢复最多 3 次。
+10. `inFlight` 的写入与清除：Ria 收到真实用户消息（source.kind=user 且 rpcId 不是 host_ 前缀）时写入一次，turn/end completed 或用户主动停止（aborted/user）时清除；崩溃或进程重启不会写 turn/end，记录因此留给下次启动。工具名只在内存跟踪，turn 异常结束落盘一次，不每次 tool/call 写盘。
+11. Ria 先 read：
    - 已完成：done。
    - 需要用户/阻塞：blocked + blockedReason，报告用户。
    - 可继续：executor=sessionId 发 continuation；executor=self 自己继续。
-11. startup recovery 本身抛错时，向 Ria 发送失败通知（错误内容 + 需要手动处理），不能只写日志。
+12. startup recovery 本身抛错时，向 Ria 发送失败通知（错误内容 + 需要手动处理），不能只写日志。
 
 continuation 要求 worker 先检查工作区、已改文件和测试，从中断处继续，不重复已完成部分。
 

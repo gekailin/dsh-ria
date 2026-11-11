@@ -4,15 +4,27 @@ import { join } from 'node:path'
 import assert from 'node:assert/strict'
 import { RiaService } from '../lib/index.js'
 
-function writeState(dir, tasks, deliveries = []) {
-  writeFileSync(join(dir, 'ria.json'), JSON.stringify({
+function writeState(dir, tasks, deliveries = [], inFlight = undefined) {
+  const state = {
     version: 1,
     riaSessionId: 'session-ria',
     riaPreset: 'ptc',
     tasks,
     deliveries,
     grants: [],
-  }, null, 2))
+  }
+  if (inFlight !== undefined) state.inFlight = inFlight
+  writeFileSync(join(dir, 'ria.json'), JSON.stringify(state, null, 2))
+}
+
+function inFlightRecord(overrides = {}) {
+  return {
+    turnId: 12,
+    startedAt: Date.UTC(2026, 10, 11, 8, 30, 0),
+    lastUserMessage: '调查无人车底商 GPU 方案',
+    recoveryCount: 0,
+    ...overrides,
+  }
 }
 
 function harness(options = {}) {
@@ -164,4 +176,125 @@ try {
 } finally {
   rmSync(dir, { recursive: true, force: true })
 }
+// (a) A leftover in-flight turn with no task: startup sends one recovery
+// prompt that quotes the user message, and bumps the recovery counter.
+const flightDir = mkdtempSync(join(tmpdir(), 'dsh-ria-startup-flight-'))
+try {
+  writeState(flightDir, [], [], inFlightRecord())
+  const flightHarness = harness({ stateDir: flightDir })
+  const flightService = new RiaService(flightHarness.ctx, flightDir)
+  await flightService.startup()
+  assert.equal(flightHarness.prompts.length, 1)
+  const flightText = flightHarness.prompts[0].content[0].text
+  assert.match(flightText, /上次我自己的 turn 没有正常结束/)
+  assert.match(flightText, /开始时间/)
+  assert.match(flightText, /调查无人车底商 GPU 方案/)
+  assert.match(flightText, /ria_read/)
+  assert.match(flightText, /不要重复已完成的部分/)
+  const savedFlight = JSON.parse(readFileSync(join(flightDir, 'ria.json'), 'utf8'))
+  assert.equal(savedFlight.inFlight.recoveryCount, 1)
+  assert.equal(savedFlight.inFlight.turnId, 12)
+} finally {
+  rmSync(flightDir, { recursive: true, force: true })
+}
+
+// (b) A normal turn end clears the record; an aborted turn keeps it and
+// remembers the last tool so the recovery prompt can say where it stopped.
+const trackDir = mkdtempSync(join(tmpdir(), 'dsh-ria-startup-track-'))
+try {
+  writeState(trackDir, [])
+  const trackHarness = harness({ stateDir: trackDir })
+  const trackService = new RiaService(trackHarness.ctx, trackDir)
+  let turn = 5
+  const session = {
+    header: { id: 'session-ria' },
+    snapshotEvents() { return [{ type: 'turn/start', data: { turn } }] },
+  }
+  const userMessage = text => ({
+    type: 'user/message',
+    data: { source: { kind: 'user', rpcId: 'req_user_' + text.length }, content: [{ type: 'text', text }] },
+  })
+  trackService.onSessionEvent(session, userMessage('  调查 GPU 方案  '))
+  assert.equal(trackService.store.inFlight().turnId, 5)
+  assert.equal(trackService.store.inFlight().lastUserMessage, '调查 GPU 方案')
+  assert.equal(trackService.store.inFlight().recoveryCount, 0)
+  // Host prompts must not overwrite the record they are recovering.
+  trackService.onSessionEvent(session, {
+    type: 'user/message',
+    data: { source: { kind: 'user', rpcId: 'host_recovery' }, content: [{ type: 'text', text: 'DSH 刚刚重启。' }] },
+  })
+  assert.equal(trackService.store.inFlight().lastUserMessage, '调查 GPU 方案')
+  trackService.onSessionEvent(session, { type: 'tool/call', data: { name: 'ria_read' } })
+  trackService.onSessionEvent(session, { type: 'turn/end', data: { turn: 5, reason: { kind: 'completed' } } })
+  assert.equal(trackService.store.inFlight(), undefined)
+
+  turn = 7
+  trackService.onSessionEvent(session, userMessage('继续调查'))
+  trackService.onSessionEvent(session, { type: 'tool/call', data: { name: 'bash' } })
+  trackService.onSessionEvent(session, { type: 'turn/end', data: { turn: 7, reason: { kind: 'aborted', reason: { kind: 'disposed' } } } })
+  assert.equal(trackService.store.inFlight().turnId, 7)
+  assert.equal(trackService.store.inFlight().lastPhase, 'bash')
+  trackService.onSessionEvent(session, { type: 'turn/end', data: { turn: 7, reason: { kind: 'completed' } } })
+  assert.equal(trackService.store.inFlight(), undefined)
+
+  // A stop the user asked for is deliberate: no recovery prompt later.
+  turn = 9
+  trackService.onSessionEvent(session, userMessage('停下来'))
+  trackService.onSessionEvent(session, { type: 'tool/call', data: { name: 'bash' } })
+  trackService.onSessionEvent(session, { type: 'turn/end', data: { turn: 9, reason: { kind: 'aborted', reason: { kind: 'user' } } } })
+  assert.equal(trackService.store.inFlight(), undefined)
+} finally {
+  rmSync(trackDir, { recursive: true, force: true })
+}
+
+// (c) At the recovery limit the prompt appears once, the record is cleared,
+// and the next startup stays silent.
+const limitDir = mkdtempSync(join(tmpdir(), 'dsh-ria-startup-limit-'))
+try {
+  writeState(limitDir, [], [], inFlightRecord({ recoveryCount: 3 }))
+  const limitHarness = harness({ stateDir: limitDir })
+  const limitService = new RiaService(limitHarness.ctx, limitDir)
+  await limitService.startup()
+  assert.equal(limitHarness.prompts.length, 1)
+  assert.match(limitHarness.prompts[0].content[0].text, /自动恢复已达上限/)
+  assert.match(limitHarness.prompts[0].content[0].text, /调查无人车底商 GPU 方案/)
+  const savedLimit = JSON.parse(readFileSync(join(limitDir, 'ria.json'), 'utf8'))
+  assert.equal(savedLimit.inFlight, undefined)
+  const againHarness = harness({ stateDir: limitDir })
+  await new RiaService(againHarness.ctx, limitDir).startup()
+  assert.equal(againHarness.prompts.length, 0)
+} finally {
+  rmSync(limitDir, { recursive: true, force: true })
+}
+
+// (d) Tasks and an unfinished turn share one prompt instead of two.
+const mergeDir = mkdtempSync(join(tmpdir(), 'dsh-ria-startup-merge-'))
+try {
+  writeState(mergeDir, [{
+    taskId: 'task_merge',
+    goal: 'merge the recovery prompts',
+    acceptance: '',
+    executor: 'session-worker',
+    status: 'working',
+    blockedReason: '',
+    createdAt: 1,
+    updatedAt: 1,
+    recoveryCount: 0,
+  }], [], inFlightRecord({ recoveryCount: 1 }))
+  const mergeHarness = harness({ stateDir: mergeDir })
+  const mergeService = new RiaService(mergeHarness.ctx, mergeDir)
+  await mergeService.startup()
+  assert.equal(mergeHarness.prompts.length, 1)
+  const mergeText = mergeHarness.prompts[0].content[0].text
+  assert.match(mergeText, /调查无人车底商 GPU 方案/)
+  assert.match(mergeText, /task_merge/)
+  assert.match(mergeText, /merge the recovery prompts/)
+  assert.match(mergeText, /上一轮自动恢复 2\/3/)
+  const savedMerge = JSON.parse(readFileSync(join(mergeDir, 'ria.json'), 'utf8'))
+  assert.equal(savedMerge.inFlight.recoveryCount, 2)
+  assert.equal(savedMerge.tasks[0].recoveryCount, 1)
+} finally {
+  rmSync(mergeDir, { recursive: true, force: true })
+}
+
 console.log('startup ok')

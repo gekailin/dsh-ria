@@ -23,7 +23,7 @@ Ria 自己是一个普通的顶层 DSH Session，运行 PTC preset，带管理�
 
 ## 当前状态
 
-- Phase 0–18 已实现：单例、PTC 创建、任务、转述、读取、memory、重启恢复（含恢复上限可见性）、侧边栏入口、进程内微信和入口右侧的微信 chip、worker 审批可见性、new-session 欢迎卡片、系统 prompt 防误发提示与设置页开关、临时 worker 权限调整、微信长回复/复杂 Markdown 自动转 .md 文件，worker 结束 turn 后自动唤醒 Ria，微信推送的暂停/恢复，以及暂停状态和手动开关的 UI，带 taskId 派发的 note 硬约束与可见的 turn-tail 派发卡片，以及同步到微信的派发确认文本；微信图片收发只预留接口，默认关闭。
+- Phase 0–18 已实现：单例、PTC 创建、任务、转述、读取、memory、重启恢复（task 与 Ria 自己未完成 turn 都能续上，含恢复上限可见性）、侧边栏入口、进程内微信和入口右侧的微信 chip、worker 审批可见性、new-session 欢迎卡片、系统 prompt 防误发提示与设置页开关、临时 worker 权限调整、微信长回复/复杂 Markdown 自动转 .md 文件，worker 结束 turn 后自动唤醒 Ria，微信推送的暂停/恢复，以及暂停状态和手动开关的 UI，带 taskId 派发的 note 硬约束与可见的 turn-tail 派发卡片，以及同步到微信的派发确认文本；微信图片收发只预留接口，默认关闭。
 - 已验证环境：DSH 0.2.2-rc.1，Node 26，真实 Web profile 的隔离副本。
 - 微信入站目前只投递文本；图片收发只预留了接口，见“图片接口（预留）”。扫码登录需要在弹层里完成一次，之后 DSH 重启会自动复用凭据。
 
@@ -234,8 +234,11 @@ Ria 的系统 prompt 要求：需求不明确时先和用户澄清，再下发�
 
 Host 启动后延迟 1.5 秒：
 
-- 没有 active task：只重试 pending delivery，不创建 Ria。
+- 没有 active task、没有中断的 Ria turn、也没有 pending delivery：什么都不做，不创建 Ria。
 - 有 open/working task：先重试 pending delivery，再给 Ria 发恢复消息，列出 taskId、executor、goal、acceptance。
+- Ria 自己的 turn 是否走完也记在 `ria.json` 顶层 `inFlight`：`turnId`、`startedAt`、`lastUserMessage`（≤500 字）、可选的 `lastPhase`（最近工具名）与 `recoveryCount`。收到真实用户消息时写一次；turn 正常完成或用户主动停止时清除。只有 turn 没来得及收尾（崩溃、进程重启）时才留到下次启动。
+- 没有 active task 但有 `inFlight`：同样发一条恢复消息。task 与 `inFlight` 同时存在时合并成一条，不连发两条。
+- 恢复消息带开始时间、用户消息摘要与最近工具名，要求 Ria 先 `ria_read` 自己的会话、检查工作区改动，再从中断处继续，不重复已完成部分；`recoveryCount` 达到 3/3 时只提示一次“已达自动恢复上限”并清除记录。每次真实用户消息都会把计数归零。
 - 同一 task 连续自动恢复最多 3 次。达到上限后，Host 会把任务标成 `blocked`，写入 `blockedReason`（自动恢复已达上限），并在同一条消息里列出 taskId、executor、goal，要求用户手动处理；不会静默跳过。
 - `recoveryCount` 在 task 被 `ria_task` 更新或成功派发时归零。因此它统计的是连续无人处理的重启次数；如果 Ria 或用户中途接手，额度会重置。
 - startup recovery 本身抛错时，也会向 Ria 发送失败通知（错误内容和“需要手动处理”），不只写日志。

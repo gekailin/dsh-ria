@@ -1,6 +1,6 @@
 # dsh-super-session 设计方案
 
-> 状态：v0.25（2026-11-11）
+> 状态：v0.26（2026-11-11）
 > 目标目录：/home/gkl/Desktop/vibe_proj/dsh-super-session
 > Super Session 固定用 PTC preset（agentPreset=ptc）启动，模型只直接看到 run_code + SDK。本文是设计说明；实现状态见第 20 节。
 
@@ -159,7 +159,10 @@ request 就是一条普通会话消息，没有单独的消息类型体系。
 
 - message 直接使用 DSH Session 支持的内容：文本、图片、文件等。
 - 不做额外的文件分类、根目录白名单或专用上传流程；由 DSH 现有 message/content 能力处理。
-- 带 taskId 的任务派发，Super 必须在同一条 assistant 消息里、工具调用之前写一两句给用户看的话：派给谁、要 worker 做什么、用户接下来会看到什么；禁止只调用工具不输出文字。成功派发会 concludeTurn，工具-only 的消息会让用户收不到回复。这条是 prompt/工具描述约束，不是 Host 硬拦截。
+- 带 taskId 的任务派发必须提供 note（一两句话：派给谁、要 worker 做什么、用户接下来会看到什么），最多 500 字。Host 在投递成功后、concludeTurn 之前，把 note 写成 Super 会话的 command/run + command/done 事件，UI 显示为一条独立的命令卡片（Host 在文本末尾加换行，使长 note 可展开）。command 事件是 log-only，不属于模型 surface，不进入模型上下文，并随 session log 持久化；重启后从日志重放，不会变成用户消息。
+- note 缺失、纯空白或超过 500 字时，工具直接报错：不投递、不写 delivery、不 concludeTurn。报错文案分别是 requires a non-empty note when taskId is set 和 note is N characters; the maximum is 500；超长不截断。
+- note 展示失败（例如 Super 的 session 还没有 append 能力或 append 抛错）只记 warn，不阻断派发，也不影响已经成功的请求；成功派发仍然 concludeTurn。
+- quick relay（不带 taskId）不需要 note；如果提供了 note，也会显示一条“消息转发”卡片（同样受 500 字限制），否则不产生卡片。消息原样转发。
 - 带 taskId 的任务派发和不带 taskId 的 quick relay 都原样发送，Host 不在消息里插入任何 text part 或前缀。
 - 防误发提示由 DispatchGuard 提供：为每个 agent 注册 name=dsh-super-session:dispatch-guard、order=4100 的静态 system prompt section。文本是通用提示（本会话可能收到其他会话转交的任务；明显无关时先问用户，空闲/相关时正常执行），对所有 agent 生效，对普通会话无害。
 - section 通过 agent.ctx.systemPrompt.section 安装；apply 时遍历 ctx.agents.list() 补装，并监听 agent/created；agent/disposed 和插件卸载时 dispose，避免同名 section 重载冲突。
@@ -480,6 +483,8 @@ Phase 14：近期 worker 选择（成功 request 记录 recentWorkers；status �
 
 Phase 15：微信暂停推送 UI（chip 弹层显示“推送中 / 已暂停推送”、来源与时间、手动暂停/恢复按钮；自动暂停时弹层内和侧边栏右下角各一条 8 秒轻提示；chip 圆点显示暂停色）。
 
+Phase 16：note 硬约束（带 taskId 的 request 必须传 note，最多 500 字；缺失/空白/超长直接报错且不投递；Host 在 concludeTurn 前写入 command/run + command/done 可见卡片，失败只 warn；quick relay 不受影响）。
+
 ## 16. 验收
 
 1. 点击入口只创建一个 Super。
@@ -512,7 +517,7 @@ Phase 15：微信暂停推送 UI（chip 弹层显示“推送中 / 已暂停推�
 27. 手动暂停不被自动暂停覆盖；微信入站可以恢复手动暂停；手动恢复后下一条非微信消息再次暂停。
 28. 暂停期间在途消息发送完成，排队消息丢弃并记录日志；outbox 不发送，恢复后补发。
 29. 暂停相关测试覆盖手动开关、自动切换、合成消息过滤、优先级、队列竞态、日志和重启持久化。
-30. 带 taskId 派发时，manager prompt 和工具描述都硬性要求同一条 assistant 消息里先写用户可见文字（派给谁、做什么、接下来会看到什么）；禁止工具-only 消息；成功派发仍然 concludeTurn。
+30. 带 taskId 派发必须传 note（最多 500 字）；缺失、空白或超长直接报错，不投递、不 concludeTurn；成功后 Host 把 note 写成 Super 会话的 command card，再 concludeTurn；note 展示失败只 warn；quick relay 不需要 note。
 31. 设置页默认 dispatchGuard=true；关闭后所有已安装 section 的 text 返回空字符串；POST /settings 只接受 boolean 并持久化到 super.json；GET /state 可见 settings。
 32. manager prompt 明确：用户未指定 worker 时只从 scope=recent 选择，不遍历全部会话，不凭空挑没用过的；没有合适候选时先问用户。
 33. “近期用过”定义为成功 super_session_request 过的顶层 worker，窗口 7 天、最多 5 个、保留 30 天；task 创建/更新不算，用户手工会话不算。
@@ -559,20 +564,22 @@ Phase 15：微信暂停推送 UI（chip 弹层显示“推送中 / 已暂停推�
 | sandbox override 无法清除 | 写回原 effective mode，行为一致但可能保留同值 override |
 | 暂停与在途出站竞态 | 在途一条发完即止；排队丢弃并记日志；outbox 暂停期间不发送，恢复后补发 |
 | 自动暂停误判合成消息 | host_ 前缀 + source.kind=user 双重过滤；schedule 不参与 |
-| 派发只调工具不写回复 | prompt 和工具描述硬性要求先写一两句用户可见的话；成功即结束本轮，属行为约束而非 Host 拦截 |
+| 派发只调工具不写回复 | note 是工具参数硬约束：缺失/空白/超长直接报错且不投递；成功后 Host 先写可见 command card 再 concludeTurn |
+| note 卡片过长被折叠 | command 卡片默认单行 ellipsis；Host 在 note 末尾加换行，使卡片可展开查看全文 |
+| command 事件被当成命令 | 卡片样式类似命令执行记录；标题区分“任务派发/消息转发”，不进入模型上下文 |
 | system prompt section 是行为约束 | 模型仍可能忽略；设置页只开关提示，不改变 worker 的 tools/preset/历史，也不做硬拦截 |
 | 插件重载残留同名 section | apply 统一 dispose；按 agent id 去重；安装失败只 warn，不阻断加载 |
 | 手动暂停被自动覆盖 | manual 优先；只有微信入站能清除 manual，并明确记录 resumedBy |
 
 ## 19. 总结
 
-全局一个 Super Session，PTC preset（agentPreset=ptc）+ 管理者 prompt、memory.md 和 7 个工具；模型通过 run_code SDK 调用工具；用 task 管理谁做什么，request 就是普通会话消息；通过可开关的 agent system prompt section 提供通用防误发提示，任务消息不加前缀；worker idle 时自动唤醒 Super（只读事件、30 秒节流）；重启按 task 继续；微信客户端进程内运行，长回复/复杂 Markdown 自动转 .md 文件；推送可暂停（手动或按消息通道自动切换），暂停只停出站、连接保持；新建会话有一条不调用模型的一次性欢迎消息。
+全局一个 Super Session，PTC preset（agentPreset=ptc）+ 管理者 prompt、memory.md 和 7 个工具；模型通过 run_code SDK 调用工具；用 task 管理谁做什么，request 就是普通会话消息；通过可开关的 agent system prompt section 提供通用防误发提示，任务消息不加前缀；带 taskId 派发必须提供 note，Host 写成可见 command card 后结束本轮；worker idle 时自动唤醒 Super（只读事件、30 秒节流）；重启按 task 继续；微信客户端进程内运行，长回复/复杂 Markdown 自动转 .md 文件；推送可暂停（手动或按消息通道自动切换），暂停只停出站、连接保持；新建会话有一条不调用模型的一次性欢迎消息。
 
 ## 20. 实现状态
 
 截至当前版本：
 
-- Phase 0–15 已实现；Phase 0–4、Phase 6 和 Phase 13 通过隔离环境的真实 DSH 验证，Phase 5、Phase 7、Phase 8、Phase 9、Phase 10、Phase 11、Phase 12、Phase 14 和 Phase 15 由单元测试和 smoke 覆盖。
+- Phase 0–16 已实现；Phase 0–4、Phase 6 和 Phase 13 通过隔离环境的真实 DSH 验证，其余阶段由单元测试和 smoke 覆盖。Phase 16 的 command card 尚未在真实 UI 里截图验证。
 - Phase 15 的暂停状态卡、手动开关和自动暂停轻提示没有在真实微信账号下走完整链路；弹层只在已登录时显示状态卡，隔离 profile 无法伪造成已登录。
 - Phase 14 的近期 worker 记录、scope=recent 候选字段、空窗口和无 lastUsedAt 字段的 lossless 输出由 smoke 覆盖；挑选行为本身是 prompt 约束，未用真实模型验证。
 - Phase 13 的设置页已在隔离 DSH 里真实点击：设置导航出现 Super Session；开关默认勾选，关闭后显示“当前：已关闭”且 GET /settings 返回 false，重新打开后恢复 true；截图 docs/ui-settings.png。system prompt section 的安装、开关和空文本同时由单元测试与 smoke 覆盖。

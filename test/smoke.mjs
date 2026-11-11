@@ -36,6 +36,7 @@ const worker = {
   },
 }
 const superEvents = []
+let failSuperAppend = false
 const superAgent = {
   id: superId,
   ctx: {
@@ -50,7 +51,11 @@ const superAgent = {
   },
   session: {
     snapshotEvents: () => [],
-    append(type, data, options) { superEvents.push({ type, data, options }); return { seq: superEvents.length - 1, time: 1 } },
+    append(type, data, options) {
+      if (failSuperAppend) throw new Error('append failed')
+      superEvents.push({ type, data, options })
+      return { seq: superEvents.length - 1, time: 1 }
+    },
   },
 }
 
@@ -234,6 +239,7 @@ assert.ok(installed.has('prompt:super-session-manager'))
 
 let concluded = 0
 const call = async (name, args) => installed.get(name).execute(args, {
+  agent: superAgent,
   signal: new AbortController().signal,
   concludeTurn() { concluded += 1 },
 })
@@ -246,12 +252,37 @@ assertLossless(recentEmpty)
 const task = await call('super_session_task', { goal: 'fix tests', acceptance: 'green', executor: 'session-worker' })
 assert.equal(task.task.taskId.startsWith('task_'), true)
 concluded = 0
-const requestResult = await call('super_session_request', { targetSessionIds: ['session-worker'], message: 'please fix', taskId: task.task.taskId })
+const promptsBeforeNoteErrors = prompts.length
+await assert.rejects(
+  () => call('super_session_request', { targetSessionIds: ['session-worker'], message: 'no note', taskId: task.task.taskId }),
+  /requires a non-empty note/,
+)
+await assert.rejects(
+  () => call('super_session_request', { targetSessionIds: ['session-worker'], message: 'blank note', taskId: task.task.taskId, note: '   ' }),
+  /requires a non-empty note/,
+)
+await assert.rejects(
+  () => call('super_session_request', { targetSessionIds: ['session-worker'], message: 'long note', taskId: task.task.taskId, note: 'x'.repeat(501) }),
+  /maximum is 500/,
+)
+assert.equal(prompts.length, promptsBeforeNoteErrors)
+assert.equal(concluded, 0)
+const eventsBeforeTaskDispatch = superEvents.length
+const dispatchNote = '已把“修复测试”交给 Worker One，请它先检查现有用例；完成后我会向你汇报。'
+const requestResult = await call('super_session_request', { targetSessionIds: ['session-worker'], message: 'please fix', taskId: task.task.taskId, note: dispatchNote })
 assert.equal(requestResult.results[0].ok, true)
 assert.equal(concluded, 1)
 assert.equal(prompts.at(-1).content.length, 1)
 assert.equal(prompts.at(-1).content[0].text, 'please fix')
 assert.equal(prompts.at(-1).requestId.startsWith('req_'), true)
+assert.equal(superEvents.length, eventsBeforeTaskDispatch + 2)
+assert.equal(superEvents[eventsBeforeTaskDispatch].type, 'command/run')
+assert.equal(superEvents[eventsBeforeTaskDispatch].data.name, '任务派发')
+assert.equal(superEvents[eventsBeforeTaskDispatch].data.source.kind, 'user')
+assert.equal(superEvents[eventsBeforeTaskDispatch + 1].type, 'command/done')
+assert.equal(superEvents[eventsBeforeTaskDispatch + 1].data.kind, 'success')
+assert.equal(superEvents[eventsBeforeTaskDispatch + 1].data.text, dispatchNote + '\n')
+assert.equal(superEvents[eventsBeforeTaskDispatch + 1].data.commandId, superEvents[eventsBeforeTaskDispatch].data.commandId)
 const recentAfterTask = await call('super_session_status', { scope: 'recent' })
 assert.equal(recentAfterTask.workers.length, 1)
 assert.equal(recentAfterTask.workers[0].sessionId, 'session-worker')
@@ -264,18 +295,33 @@ assert.equal(typeof recentAfterTask.workers[0].lastUsedAt, 'number')
 assertLossless(recentAfterTask)
 const lastUsedBeforeQuick = recentAfterTask.workers[0].lastUsedAt
 concluded = 0
+const eventsBeforeQuick = superEvents.length
 const quickRequest = await call('super_session_request', { targetSessionIds: ['session-worker'], message: 'just checking' })
 assert.equal(quickRequest.results[0].ok, true)
 assert.equal('taskId' in quickRequest.results[0], false)
 assert.equal(concluded, 1)
 assert.equal(prompts.at(-1).content.length, 1)
 assert.equal(prompts.at(-1).content[0].text, 'just checking')
+assert.equal(superEvents.length, eventsBeforeQuick)
 assertLossless(quickRequest)
 const recentAfterQuick = await call('super_session_status', { scope: 'recent' })
 assert.equal(recentAfterQuick.workers.length, 1)
 assert.equal(recentAfterQuick.workers[0].lastUsedAt >= lastUsedBeforeQuick, true)
 assert.equal(recentAfterQuick.workers[0].lastTaskId, task.task.taskId)
 assertLossless(recentAfterQuick)
+concluded = 0
+const eventsBeforeAppendFailure = superEvents.length
+failSuperAppend = true
+let appendFailure
+try {
+  appendFailure = await call('super_session_request', { targetSessionIds: ['session-worker'], message: 'note display failure', taskId: task.task.taskId, note: '展示失败也要继续派发。' })
+} finally {
+  failSuperAppend = false
+}
+assert.equal(appendFailure.results[0].ok, true)
+assert.equal(concluded, 1)
+assert.equal(superEvents.length, eventsBeforeAppendFailure)
+assertLossless(appendFailure)
 concluded = 0
 const partialRequest = await call('super_session_request', { targetSessionIds: ['session-worker', 'session-child'], message: 'partial' })
 assert.equal(partialRequest.results.filter(item => item.ok).length, 1)
@@ -397,7 +443,9 @@ assert.match(promptText, /Super Session id/)
 assert.match(promptText, /End the current turn immediately/)
 assert.match(promptText, /who received the task/)
 assert.match(promptText, /what the user will see next/)
-assert.match(promptText, /Never send only the tool call/)
+assert.match(promptText, /MUST include note/)
+assert.match(promptText, /quick relay without taskId does not need note/)
+assert.match(promptText, /do not rely on assistant text/)
 assert.match(installed.get('super_session_status').description, /never waits/)
 assert.match(installed.get('super_session_status').description, /scope=recent/)
 assert.match(installed.get('super_session_status').description, /lastUsedAt/)
@@ -405,10 +453,11 @@ assert.match(installed.get('super_session_status').description, /lastTaskGoal/)
 assert.match(installed.get('super_session_request').description, /ends the current turn/)
 assert.match(installed.get('super_session_request').description, /anti-misdelivery constraint/)
 assert.match(installed.get('super_session_request').description, /adds no message prefix/)
-assert.match(installed.get('super_session_request').description, /MUST write one or two user-facing sentences/)
-assert.match(installed.get('super_session_request').description, /never call this tool without text/)
-assert.match(installed.get('super_session_request').description, /who received it/)
+assert.match(installed.get('super_session_request').description, /note is REQUIRED/)
+assert.match(installed.get('super_session_request').description, /missing, blank, or over-500-character note is an error/)
+assert.match(installed.get('super_session_request').description, /who received the task/)
 assert.match(installed.get('super_session_request').description, /what the user will see next/)
+assert.match(installed.get('super_session_request').description, /maximum 500 characters/i)
 assert.match(installed.get('super_session_approval').description, /never approves or denies/)
 assert.match(promptText, /anti-misdelivery constraint/)
 assert.match(promptText, /does not add any prefix/)

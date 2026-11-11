@@ -101,7 +101,7 @@ try {
 
   service.store.updateTask('task_exhausted', { recoveryCount: 2 })
   const requestTool = first.tools.get('super_session_request')
-  const dispatched = await requestTool.execute({ targetSessionIds: ['session-worker'], message: 'continue', taskId: 'task_exhausted' }, exec)
+  const dispatched = await requestTool.execute({ targetSessionIds: ['session-worker'], message: 'continue', taskId: 'task_exhausted', note: '已让 Worker 继续执行未完成任务。' }, exec)
   assert.equal(dispatched.results[0].ok, true)
   assert.equal(service.store.task('task_exhausted').recoveryCount, 0)
 

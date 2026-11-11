@@ -141,7 +141,7 @@ function assertLossless(value, path = '$') {
 
 apply(ctx, { stateDir })
 
-function request(method, path) {
+function request(method, path, payload) {
   const req = new EventEmitter()
   req.method = method
   req.url = path
@@ -154,7 +154,10 @@ function request(method, path) {
   }
   const done = new Promise(resolve => { res.done = resolve })
   ctx.route.handler(req, res)
-  setImmediate(() => req.emit('end'))
+  setImmediate(() => {
+    if (payload !== undefined) req.emit('data', Buffer.from(JSON.stringify(payload)))
+    req.emit('end')
+  })
   return done.then(body => ({ status: res.statusCode, body: JSON.parse(body) }))
 }
 
@@ -263,6 +266,20 @@ const activeGrants = await call('super_session_grant', { action: 'list' })
 assert.equal(activeGrants.count, 1)
 assert.equal(activeGrants.grants[0].grantId, grant.grant.grantId)
 assertLossless(activeGrants)
+const paused = await request('POST', '/plugins/dsh-super-session/api/wechat/pause', { paused: true, reason: 'smoke' })
+assert.equal(paused.status, 200)
+assert.equal(paused.body.paused, true)
+assert.equal(paused.body.pausedBy, 'manual')
+assert.equal(paused.body.pauseReason, 'smoke')
+const pausedStatus = await request('GET', '/plugins/dsh-super-session/api/wechat/status')
+assert.equal(pausedStatus.body.paused, true)
+assert.equal(pausedStatus.body.pausedBy, 'manual')
+const resumed = await request('POST', '/plugins/dsh-super-session/api/wechat/pause', { paused: false })
+assert.equal(resumed.status, 200)
+assert.equal(resumed.body.paused, false)
+assert.equal(resumed.body.resumedBy, 'manual')
+const badPause = await request('POST', '/plugins/dsh-super-session/api/wechat/pause', { paused: 'yes' })
+assert.equal(badPause.status, 400)
 const httpState = await request('GET', '/plugins/dsh-super-session/api/state')
 assert.equal(httpState.status, 200)
 assert.equal(httpState.body.grants.length, 1)

@@ -1,6 +1,6 @@
 # dsh-super-session 设计方案
 
-> 状态：v0.20（2026-11-11）
+> 状态：v0.21（2026-11-11）
 > 目标目录：/home/gkl/Desktop/vibe_proj/dsh-super-session
 > Super Session 固定用 PTC preset（agentPreset=ptc）启动，模型只直接看到 run_code + SDK。本文是设计说明；实现状态见第 20 节。
 
@@ -57,7 +57,7 @@ SuperSessionService
   |-- WorkerIdleWatcher（agent/status 只读观察，worker idle 通知）
   |-- TaskRecovery（启动时继续未完成 task）
   |-- WechatService（进程内）
-  |-- SuperHttpApi（ensure / 微信控制）
+  |-- SuperHttpApi（ensure / 微信控制 / 暂停推送）
   |
   +--> sessionController.state/events（只读）
   +--> sessionController.prompt（user-rpc）
@@ -324,6 +324,44 @@ markdownFile 也可以直接写 false 关闭。环境变量优先于 profile 配
 - 不新增 sidebar 条目，不注册微信 main 面板。
 - 这是 DOM 注入，用 MutationObserver 补插；参考 Super Chat 的 SidebarShortcut。
 
+### 11.2 暂停推送
+
+暂停只关闭“Super -> 微信”的出站推送；微信连接、登录态、长轮询和心跳都保持不变，不需要重新扫码，也不影响微信入站。
+
+手动控制：
+
+- POST /plugins/dsh-super-session/api/wechat/pause，JSON body 为 { "paused": true } 或 { "paused": false }，可选 reason；paused 不是布尔值返回 400。
+- GET /wechat/status 增加 paused、pausedBy、pauseReason、pausedAt、resumedAt、resumedBy；未暂停时 paused=false，时间字段为 null。
+- 状态写入 wechat/state.json，DSH 重启后保持；带 creds 启动时，Outbound 在创建后立即套用暂停状态。
+
+自动切换：
+
+- 只把 source.kind=user 的真实用户消息当作通道信号。微信入站 requestId 以 wx_ 开头；Web GUI、手机端等其他通道通常是裸 UUID。
+- 非微信用户消息 -> 自动暂停，pausedBy=channel，reason=非微信通道消息。
+- 微信用户消息 -> 自动恢复，pausedBy=channel，reason=微信消息。
+- host_ 开头的 Host 合成消息（启动恢复、启动失败、worker idle 唤醒）不参与判断；source.kind=schedule 的官方定时提醒也不参与，避免把 Super 自己的提醒当成用户切通道。
+- 微信入站即使当前是手动暂停也会恢复：它同时是自动恢复的触发点。
+
+优先级：
+
+- 手动暂停 pausedBy=manual 不会被非微信消息的自动暂停覆盖；自动暂停被手动暂停拦下时记一条 info，不改暂停原因和时间。
+- 手动暂停可以被微信入站恢复，也可以通过接口手动恢复；恢复后 resumedBy 记为实际触发方。
+- 手动恢复后，下一条非微信用户消息会再次自动暂停，这是预期行为。
+
+队列和在途消息：
+
+- 正在发送中的那一条不打断，发送完成后才停止后续出站；尚未开始发送的排队文本/文件全部丢弃。
+- 暂停期间不写 outbox：assistant 回复、系统提示和长回复转文件都在入队前被拦截并记录。
+- 暂停前已经在 outbox 里的待发消息保持不发送；恢复时再按重连积压策略补发（超过 10 条只发最后 10 条并先提示）。
+- 暂停期间微信入站消息仍正常投递给 Super，因此会话历史完整。
+
+日志（logger 前缀 dsh-super-session: wechat:）：
+
+- 暂停：warn，pause: 后接 JSON，字段为 at、pausedBy、reason、dropped（本次丢弃条数）、inFlight（是否有在途消息）。
+- 恢复：info，resume: 后接 JSON，字段为 at、resumedBy、reason、previousPausedBy。
+- 丢弃：warn，dropped outbound while paused: 后接 JSON，字段为 at、superSessionId、to（filehelper）、kind（assistant/system/text/file）、pausedBy、reason；text 另有 chars、preview，file 另有 name、bytes。
+- 自动暂停被手动暂停拦下：info，auto pause ignored: manual pause is active。
+
 ## 12. 状态文件
 
 ~~~text
@@ -333,7 +371,7 @@ stateDir/
   audit.jsonl      # 临时权限审计，0600
   wechat/
     creds.json      # 登录凭据，0600
-    state.json      # seen 消息 id（上限 500）、outbox 文本（上限 50）
+    state.json      # seen 消息 id（上限 500）、outbox（上限 50）、暂停状态与时间
 ~~~
 
 没有 lessons、lock、briefs、outbox。
@@ -399,6 +437,8 @@ Phase 10：恢复上限可见性（达到上限的 task 标 blocked + blockedRea
 
 Phase 11：worker idle 自动唤醒（agent/status 只读监听、working task executor 过滤、排除 Super、按 worker+task 30 秒节流、可配置开关、mock 测试）。
 
+Phase 12：微信暂停推送（只停出站、连接保持；手动 pause/status API；非微信用户消息自动暂停、微信入站自动恢复；manual/channel 优先级；队列丢弃与在途完成；持久化与重启恢复）。
+
 ## 16. 验收
 
 1. 点击入口只创建一个 Super。
@@ -425,6 +465,12 @@ Phase 11：worker idle 自动唤醒（agent/status 只读监听、working task e
 21. idle 通知只读 worker，不写 worker、不 resume 冷会话；通知文本要求 read 确认且不假设完成。
 22. idle 通知默认开启，可通过配置或环境变量一键关闭；关闭后不注册监听，日志说明原因。
 23. 通知投递失败只记 warn，不影响 worker 状态，也不改变 task。
+24. 微信暂停只停出站，连接、登录态、轮询和入站不受影响，不需要重新扫码。
+25. 手动暂停/恢复通过 POST /wechat/pause，状态在 GET /wechat/status 可见，并跨 DSH 重启保持。
+26. 非微信用户消息自动暂停，微信入站自动恢复；host_ 合成消息和 schedule 提醒不触发切换。
+27. 手动暂停不被自动暂停覆盖；微信入站可以恢复手动暂停；手动恢复后下一条非微信消息再次暂停。
+28. 暂停期间在途消息发送完成，排队消息丢弃并记录日志；outbox 不发送，恢复后补发。
+29. 暂停相关测试覆盖手动开关、自动切换、合成消息过滤、优先级、队列竞态、日志和重启持久化。
 
 ## 17. 已确认
 
@@ -436,6 +482,7 @@ Phase 11：worker idle 自动唤醒（agent/status 只读监听、working task e
 - 微信长回复/复杂 Markdown 转 .md：默认 800 字，代码块/表格/4 标题/6 链接任一命中。
 - request 是普通会话消息，使用 DSH 支持的消息类型。
 - worker idle 通知默认开启，节流 30 秒；只对 working task 的 executor 触发。
+- 微信暂停默认不启用；手动 pause 优先于自动 pause；微信入站总是恢复。
 
 ## 18. 风险
 
@@ -460,19 +507,23 @@ Phase 11：worker idle 自动唤醒（agent/status 只读监听、working task e
 | idle 通知刷屏/自我唤醒 | 排除 Super；按 worker+task 30 秒节流；只匹配 working task |
 | 通知投递失败 | 只 warn，不重试；worker 状态不受影响 |
 | sandbox override 无法清除 | 写回原 effective mode，行为一致但可能保留同值 override |
+| 暂停与在途出站竞态 | 在途一条发完即止；排队丢弃并记日志；outbox 暂停期间不发送，恢复后补发 |
+| 自动暂停误判合成消息 | host_ 前缀 + source.kind=user 双重过滤；schedule 不参与 |
+| 手动暂停被自动覆盖 | manual 优先；只有微信入站能清除 manual，并明确记录 resumedBy |
 
 ## 19. 总结
 
-全局一个 Super Session，PTC preset（agentPreset=ptc）+ 管理者 prompt、memory.md 和 7 个工具；模型通过 run_code SDK 调用工具；用 task 管理谁做什么，request 就是普通会话消息；带 taskId 的派发自动附一条中性的防误发提示；worker idle 时自动唤醒 Super（只读事件、30 秒节流）；重启按 task 继续；微信客户端进程内运行，长回复/复杂 Markdown 自动转 .md 文件；新建会话有一条不调用模型的一次性欢迎消息。
+全局一个 Super Session，PTC preset（agentPreset=ptc）+ 管理者 prompt、memory.md 和 7 个工具；模型通过 run_code SDK 调用工具；用 task 管理谁做什么，request 就是普通会话消息；带 taskId 的派发自动附一条中性的防误发提示；worker idle 时自动唤醒 Super（只读事件、30 秒节流）；重启按 task 继续；微信客户端进程内运行，长回复/复杂 Markdown 自动转 .md 文件；推送可暂停（手动或按消息通道自动切换），暂停只停出站、连接保持；新建会话有一条不调用模型的一次性欢迎消息。
 
 ## 20. 实现状态
 
 截至当前版本：
 
-- Phase 0–11 已实现；Phase 0–4 和 Phase 6 通过隔离环境的真实 DSH 验证，Phase 5、Phase 7、Phase 8、Phase 9、Phase 10 和 Phase 11 由单元测试和 smoke 覆盖。
+- Phase 0–12 已实现；Phase 0–4 和 Phase 6 通过隔离环境的真实 DSH 验证，Phase 5、Phase 7、Phase 8、Phase 9、Phase 10、Phase 11 和 Phase 12 由单元测试和 smoke 覆盖。
 - Phase 11 只用 mock 的 agent/status 事件验证，尚未在真实 worker 会话里触发。
 - 临时 worker 权限（审批阶段二）已实现，等待用户在真实会话里首次验证。
 - 微信文件发送链路已实现并用 mock 覆盖，尚未用真实微信账号完成 .md 收发验证。
+- 微信暂停推送的自动切换、队列丢弃和持久化由单元测试与 HTTP smoke 覆盖；没有用真实微信账号验证暂停期间的连接保持。
 
 文件：
 
@@ -483,11 +534,14 @@ Phase 11：worker idle 自动唤醒（agent/status 只读监听、working task e
 - lib/client.js：侧边栏入口、瞬时 launcher、入口右侧微信 chip 和登录弹层。
 - lib/wechat/wxweb.mjs、login.mjs、outbound.mjs：复用的文件传输助手协议、扫码登录、串行发送，以及 .md 文件上传/appmsg 发送。
 - lib/wechat/markdown.mjs：长度/代码块/表格/标题/链接判定、配置归一化、文件名。
-- lib/wechat/service.mjs：进程内连接、assistant 文本回传、长回复转文件/失败回退、入站去重、Super 投递、重连积压处理。
+- lib/wechat/service.mjs：进程内连接、assistant 文本回传、长回复转文件/失败回退、入站去重、Super 投递、重连积压处理、暂停状态与按通道自动切换。
+- lib/wechat/request-ids.mjs：wx_ / host_ requestId 前缀与来源判定。
+- lib/wechat/outbound.mjs：串行发送、暂停门禁、排队丢弃、在途完成。
 - cordis.patch.yml：插件 patch。
 - test/smoke.mjs：Host 流程 smoke。
 - test/wechat.mjs：微信服务单元测试。
 - test/wechat-file.mjs：Markdown 判定、文件发送、失败回退和 multipart/appmsg 单元测试。
+- test/wechat-pause.mjs：手动暂停/恢复、自动按通道切换、合成消息过滤、manual 优先级、队列竞态、丢弃日志、重启持久化。
 - test/approvals.mjs：审批观察器单元测试。
 - test/grants.mjs：临时权限单元测试（过期、startup、漂移跳过、恢复失败、审计）。
 - test/worker-idle.mjs：正常触发、Super 排除、非 working/running 不触发、节流、关闭开关、多 task 合并、配置归一化。
@@ -504,7 +558,7 @@ Phase 11：worker idle 自动唤醒（agent/status 只读监听、working task e
 - GET /wechat/status 返回 idle；POST /wechat/login 返回 data:image/jpeg 二维码；弹层显示 190×190 二维码。
 - 宽侧边栏中 chip 位于 Super Session 标题右侧；折叠侧边栏不插入。
 - startup 测试覆盖 recoveryCount=3 的 working task：启动后产生一条通知、任务变 blocked 并带 blockedReason，status 可见；通知包含 taskId/executor/goal；更新 task 和成功派发都会把 recoveryCount 清零；pending delivery 重试成功也不会误判为超限；resolveAgent 失败时产生启动失败通知。测试不调用模型。
-- smoke 覆盖 Workspace 挂载、7 个工具注册、request 投递、task 派发防误发提示、quick relay 不加提示、status、read、memory、持久化，以及 welcome 五事件序列和第二次 ensure 不重复；wechat 测试覆盖文本提取、事件过滤、入站去重/回显过滤、失败标记、reconnect skip 和状态视图；approvals 测试覆盖活跃 executor 过滤、始终 next()、abort/TTL/shutdown 清理和 lossless 输出；grants 测试覆盖授权门槛、原值记录、task done 自动恢复、显式 reset、过期、startup、漂移跳过、恢复失败和审计；wechat-file 测试覆盖阈值/代码块/表格/标题/链接、配置/env、文件名、短消息不变、长消息发 .md、失败回退，以及上传和 appmsg 字段。npm test 七个测试全部通过。
+- smoke 覆盖 Workspace 挂载、7 个工具注册、request 投递、task 派发防误发提示、quick relay 不加提示、status、read、memory、持久化，以及 welcome 五事件序列和第二次 ensure 不重复；wechat 测试覆盖文本提取、事件过滤、入站去重/回显过滤、失败标记、reconnect skip 和状态视图；approvals 测试覆盖活跃 executor 过滤、始终 next()、abort/TTL/shutdown 清理和 lossless 输出；grants 测试覆盖授权门槛、原值记录、task done 自动恢复、显式 reset、过期、startup、漂移跳过、恢复失败和审计；wechat-file 测试覆盖阈值/代码块/表格/标题/链接、配置/env、文件名、短消息不变、长消息发 .md、失败回退，以及上传和 appmsg 字段；wechat-pause 测试覆盖手动开关与持久化、非微信自动暂停、微信自动恢复、host_/schedule 过滤、manual 不被 channel 覆盖、暂停时不发送、排队丢弃而在途完成、恢复后补发 outbox，以及日志字段。npm test 八个测试全部通过。
 - 新建 Super 后真实 Web UI 显示欢迎消息；会话界面显示“已完成，用时 1 秒”和“1 轮 1 步”，输入框正常；没有浏览器 runtime error。
 - 审批观察器没有在真实 UI 中触发过；只做了单元测试和 smoke。首次实际审批时需确认 pending 列表和清理行为。
 - welcome 的合成 turn 会被 UI 计入“1 轮 1 步”，并显示“已完成”；这是 assistant 气泡可正常渲染的代价。
@@ -514,10 +568,12 @@ Phase 11：worker idle 自动唤醒（agent/status 只读监听、working task e
 - 工作区列表会多一个 Super Session Workspace。
 - 隔离测试 profile 没有配置模型，界面显示“请选择模型”；真实 profile 使用用户当前默认模型。
 - 真实 ~/.dsh/profiles/web 尚未安装本插件；安装后需要重启 dsh web。
-- 阶段一不代批、不推送、不自动唤醒；审批仍需在 worker 会话里完成。
+- 审批可见性阶段不代批；审批动作仍需在 worker 会话里完成。
 - 防误发提示依赖 worker 模型遵守；插件无法强制或验证，worker 仍可能直接执行。
 - 临时权限没有在真实会话里触发过；只做了单元测试和 smoke，首次 grant 时需确认 DSH 事件投影和恢复行为。
 - sandbox override 无法清除；恢复写回原 effective mode，可能留下同值 override。
 - 微信 .md 文件发送只按网页版协议 mock 验证；真实账号的文件上传/下载尚未验证。
 - .md 文件发送失败回退文本时，若文本仍超过 4 块，会按原有文本切块策略截断。
 - 恢复上限在启动时判定；如果给 Super 的通知本身发送失败，只记录日志，任务仍会保持 blocked，等待用户或下次启动处理。
+- 微信暂停目前只有 HTTP 接口和 status 字段，chip 弹层还没有暂停按钮和暂停状态指示。
+- 暂停不能撤回已经在发送中的那一条；只保证后续排队消息不发出。

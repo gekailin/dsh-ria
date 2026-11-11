@@ -81,7 +81,7 @@ try {
     assert.deepEqual(ctx.prompts[0].content, [{ type: 'text', text: ' raw text ' }])
     assert.equal(ctx.signals[0] instanceof AbortSignal, true)
     assert.equal(ctx.signals[0].aborted, false)
-    assert.match(ctx.prompts[0].requestId, /^req_/)
+    assert.match(ctx.prompts[0].requestId, /^wx_/)
 
     await bridge.handle({ id: 'msg-2', to: 'filehelper', type: 1, text: ' raw text ' })
     assert.equal(ctx.prompts.length, 1)

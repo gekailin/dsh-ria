@@ -8,7 +8,7 @@ Super 自己是一个普通的顶层 DSH Session，运行 PTC preset，带管理
 
 ## 当前状态
 
-- Phase 0–11 已实现：单例、PTC 创建、任务、转述、读取、memory、重启恢复（含恢复上限可见性）、侧边栏入口、进程内微信和入口右侧的微信 chip、worker 审批可见性、新会话欢迎消息、任务派发防误发提示、临时 worker 权限调整、微信长回复/复杂 Markdown 自动转 .md 文件，以及 worker 结束 turn 后自动唤醒 Super。
+- Phase 0–12 已实现：单例、PTC 创建、任务、转述、读取、memory、重启恢复（含恢复上限可见性）、侧边栏入口、进程内微信和入口右侧的微信 chip、worker 审批可见性、新会话欢迎消息、任务派发防误发提示、临时 worker 权限调整、微信长回复/复杂 Markdown 自动转 .md 文件，worker 结束 turn 后自动唤醒 Super，以及微信推送的暂停/恢复。
 - 已验证环境：DSH 0.2.2-rc.1，Node 26，真实 Web profile 的隔离副本。
 - 微信入站只接受文本；扫码登录需要在弹层里完成一次，之后 DSH 重启会自动复用凭据。
 
@@ -69,11 +69,23 @@ Super Session 入口标题右侧有一个“微信”chip。点开后可以扫�
 - 微信客户端运行在 DSH 进程内，不启动 bridge 进程，不占端口。
 - 凭据和去重/待发状态在 `DSH_HOME/state/super-session/wechat/`，文件权限 0600。
 - 微信发来的文本原样作为普通用户消息进入 Super，不加前缀，也不直接进 worker。
-- Super 的每条 assistant 文本回复都会同步回微信。
+- Super 的每条 assistant 文本回复都会同步回微信；暂停推送时除外。
 - 入站只处理文本；图片和文件仍建议直接在 Super Session 界面发送。
 - 出站长回复或复杂 Markdown 时，默认改发完整的 .md 文件；短消息和简单文本保持原样。
 - DSH 重启后如有 creds 会自动重连；待发文本超过 10 条时只补发最后 10 条，并先提示跳过了多少条。
 - chip 只在宽侧边栏显示；折叠侧边栏不插入。
+
+### 暂停推送
+
+暂停只关闭“Super -> 微信”的出站推送：连接、登录态、长轮询和心跳保持，微信入站照常投递给 Super。状态存在 `wechat/state.json`，DSH 重启后保持。
+
+- 手动：`POST /plugins/dsh-super-session/api/wechat/pause`，body 为 `{"paused":true}` 或 `{"paused":false}`，可选 `reason`；`paused` 不是布尔值返回 400。
+- 查询：`GET /wechat/status` 返回 `paused`、`pausedBy`、`pauseReason`、`pausedAt`、`resumedAt`、`resumedBy`。
+- 自动：Web/手机等非微信用户消息进入 Super 时自动暂停（`pausedBy=channel`）；微信入站自动恢复，包括恢复手动暂停。
+- 合成消息（`host_` 开头的启动恢复、启动失败、worker idle 唤醒）和官方 schedule 提醒不触发切换。
+- 手动暂停优先：非微信消息的自动暂停不会覆盖 `pausedBy=manual`；手动恢复后，下一条非微信消息会再次暂停，这是预期行为。
+- 正在发送的那一条会发完；还没开始发送的排队文本/文件丢弃。暂停期间不写 outbox，恢复后按重连积压策略补发。
+- 丢弃会记 warn 日志：`dropped outbound while paused: {"at":...,"superSessionId":...,"to":"filehelper","kind":"assistant|system|text|file","pausedBy":...,"reason":...}`，文本带 chars/preview，文件带 name/bytes。暂停和恢复各有一条 `pause:` / `resume:` info/warn 日志。
 
 ### 长回复转 .md 文件
 
@@ -194,7 +206,7 @@ DSH_HOME/state/super-session/
   memory.md       # 用户偏好和长期记忆
   audit.jsonl     # 临时权限审计，0600
   wechat/creds.json  # 微信登录凭据，0600
-  wechat/state.json  # 已处理的微信消息 id、待发文本
+  wechat/state.json  # 已处理消息 id、outbox、暂停状态与时间
 ~~~
 
 不保存聊天 transcript。Super 的原始 Session 日志仍由 DSH 写在 DSH_HOME/sessions 下。
@@ -206,10 +218,11 @@ DSH_HOME/state/super-session/
 - POST /ensure：创建或打开唯一 Super。
 - GET /state：superSessionId、tasks、pendingDeliveries、grants、workerIdleNotifications（enabled/throttleMs）。
 - GET /health：健康检查。
-- GET /wechat/status：微信登录和连接状态。
+- GET /wechat/status：微信登录和连接状态，含 paused/pausedBy/pauseReason/pausedAt/resumedAt/resumedBy。
 - POST /wechat/login：获取登录二维码。
 - POST /wechat/logout：退出微信登录。
 - POST /wechat/start：用已有凭据重连。
+- POST /wechat/pause：手动暂停或恢复推送，body {paused, reason?}。
 
 所有请求校验 DSH 同源；没有额外的 loopback 端口。
 
@@ -219,11 +232,14 @@ DSH_HOME/state/super-session/
 npm test
 ~~~
 
-smoke 使用 mock ctx 覆盖 ensure、Workspace 挂载、7 个工具、request、task 派发防误发提示、quick relay 不加提示、status、read、memory、持久化、grant 的 set/list/reset 与 task 关闭恢复、GET /state 的 grants，以及欢迎消息的五事件序列和第二次 ensure 不重复；wechat 测试覆盖 assistant 文本提取、入口事件过滤、微信入站去重/回显过滤、失败标记、reconnect skip 和状态视图；wechat-file 测试覆盖阈值/代码块/表格/标题/链接判定、配置/env 覆盖、文件名、短消息不变、长消息发 .md、失败回退文本，以及上传 multipart 和 appmsg 的字段/签名/去重；approvals 测试覆盖只记录活跃 executor、始终 next()、abort/超时/shutdown 清理和 lossless 输出；grants 测试覆盖过期、startup、task 缺失/关闭、漂移跳过、恢复失败和审计；startup 测试覆盖达到恢复上限后的通知与 blocked 状态、更新/成功派发清零、以及启动异常通知；worker-idle 测试覆盖正常触发、排除 Super、非 working task/running 状态不触发、按 task 节流、开关关闭，以及提示文本要求 read/不假设完成/等用户输入时标 blocked。
+smoke 使用 mock ctx 覆盖 ensure、Workspace 挂载、7 个工具、request、task 派发防误发提示、quick relay 不加提示、status、read、memory、持久化、grant 的 set/list/reset 与 task 关闭恢复、GET /state 的 grants，以及欢迎消息的五事件序列和第二次 ensure 不重复；wechat 测试覆盖 assistant 文本提取、入口事件过滤、微信入站去重/回显过滤、失败标记、reconnect skip 和状态视图；wechat-file 测试覆盖阈值/代码块/表格/标题/链接判定、配置/env 覆盖、文件名、短消息不变、长消息发 .md、失败回退文本，以及上传 multipart 和 appmsg 的字段/签名/去重；approvals 测试覆盖只记录活跃 executor、始终 next()、abort/超时/shutdown 清理和 lossless 输出；grants 测试覆盖过期、startup、task 缺失/关闭、漂移跳过、恢复失败和审计；startup 测试覆盖达到恢复上限后的通知与 blocked 状态、更新/成功派发清零、以及启动异常通知；worker-idle 测试覆盖正常触发、排除 Super、非 working task/running 状态不触发、按 task 节流、开关关闭，以及提示文本要求 read/不假设完成/等用户输入时标 blocked；wechat-pause 测试覆盖手动开关与持久化、非微信消息自动暂停、微信入站自动恢复、host_/schedule 合成消息不触发、manual 优先级、暂停时不出站且丢日志、排队丢弃而在途完成、重启保持，以及恢复后补发 outbox。
 
 ## 限制
 
 - 微信协议依赖「文件传输助手」网页版；入站只有文本，出站文件也只发 .md。
+- 暂停推送目前只能通过 HTTP 接口操作，chip 弹层没有暂停按钮和暂停状态指示。
+- 暂停不能撤回已经在发送中的消息；只能保证之后排队的消息不发出。
+- 暂停期间的连接保持和真实收发没有用真实微信账号验证，只做了单元测试和 HTTP smoke。
 - 微信文件上传/发送链路按网页版协议实现并用 mock 覆盖，尚未用真实微信账号完成一次 .md 文件收发验证。
 - 扫码登录和消息收发仍需要真实微信账号验证。
 - 审批可见性只报告 pending，不代批、不自动唤醒 Super；临时权限需要用户明确指令，Super 不能自行判断后提权。

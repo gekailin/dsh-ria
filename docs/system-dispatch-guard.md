@@ -1,18 +1,18 @@
 # 系统级「任务转交 · 防误发」提示调研
 
-状态：调研完成，未改代码，等待确认。目标是把 super_session_request 在任务派发时逐条插入的防误发文本，改为 DSH 系统级的通用行为约束。调研基线为 commit e2cac28。
+状态：已实施（DESIGN v0.23）。调研基线为 commit e2cac28；最终采用静态 system prompt section + 设置页开关，不再按 task 动态判断，也不再插入消息前缀。目标是把 super_session_request 在任务派发时逐条插入的防误发文本，改为 DSH 系统级的通用行为约束。
 
 ## 0. 结论
 
-推荐方案只有一个：给每个 worker agent 注册一个 agent 作用域的 system prompt section，由 Host 按当前 task 状态动态决定是否输出防误发提示；同时删除 task 派发时的整段消息前缀。
+最终实施：给每个 agent 注册一个 agent 作用域的静态 system prompt section；同时删除 task 派发时的整段消息前缀。
 
-- 注入点：agent.ctx.systemPrompt.section，section 名称建议 dsh-super-session:dispatch-guard，order 4100。
-- 生效范围：只对「当前有未结束 task，且 task.executor 等于该 agent id」的 agent 输出文本；其他 agent 输出空字符串，DSH 会丢弃空 section。
-- 注册时机：插件 apply 时遍历 ctx.agents.list() 补装；同时监听 agent/created。冷 worker 在下一次被 prompt 唤醒、agent/created 触发时、排队消息释放前完成注册。
-- 清理：section 返回 disposer，插件卸载时逐个 dispose；agent 销毁时其 ctx 也会自动 unwind。
-- 前缀：建议替换，不保留整段前缀。历史消息里已有的前缀不迁移，也没必要迁移；新派发不再插入。
-- 标记：默认不需要额外标记。若必须精确归因，最多保留一行 [任务转交]，不要保留整段说明。这一项需要用户确认。
-- 微信：微信入站消息进入 Super，不直接进 worker；防误发只挂在 Super 到 worker 的任务派发上，所以 UI 和微信入口最终一致。quick relay 仍然保持原文。
+- 注入点：agent.ctx.systemPrompt.section，section 名称 dsh-super-session:dispatch-guard，order 4100。
+- 生效范围：所有 agent 都安装，文本是通用提示；用户明确接受「对所有 agent 生效」，因为它对普通会话无害。不再按 task 或 executor 动态判断。
+- 开关：设置页「设置 > Super Session」提供 dispatchGuard 开关，默认打开。关闭后 section 的 text 返回空字符串，DSH 的 renderPrompt 丢弃空 section。
+- 注册时机：插件 apply 时遍历 ctx.agents.list() 补装；同时监听 agent/created。冷 worker 在 agent/created 时、排队消息释放前完成注册。
+- 清理：section 返回 disposer；agent/disposed 和插件卸载时 dispose，按 agent id 去重。注册失败只 warn，不阻断插件加载。
+- 前缀：已删除。task 派发和 quick relay 的 content 都原样发送，不加任何前缀或标记。
+- 微信：微信入站消息进入 Super，不直接进 worker；防误发由 worker 的系统提示提供，所以 UI 和微信入口最终一致。quick relay 仍然保持原文。
 - 不改 worker preset、不改 AGENTS.md、不写 session 历史、不依赖 developer message。preset 无法给已开始会话换绑，AGENTS.md 是 user 角色且范围过大，developer message 没有自由文本 API。
 
 ## 1. 现状与问题
@@ -53,7 +53,7 @@ Agent loop 的时序：
 - 同文件 :691-696 渲染 context sections，组装系统提示。
 - 同文件 :843-850 refresh/project system prompt；system prompt 会作为 system/message 投影进 session，不是普通对话历史。
 
-结论：这是真正的 system 角色、每步重新计算、按 agent 隔离，而且不触碰 session 内容。它满足「系统级」和「只对被派发的 worker 生效」两个要求。
+结论：这是真正的 system 角色、每步重新计算、按 agent 隔离，而且不触碰 session 内容。它能满足「系统级」；原需求还要求只对被派发的 worker 生效，但最终按用户决定改成静态文本安装到所有 agent（见 3.1），因为文本通用且对普通会话无害。
 
 ### 2.2 agent/pre-step（不能改系统提示）
 
@@ -123,23 +123,22 @@ ctx.systemPrompt.context 可以注册 agent 作用域的动态 context，但渲�
 
 ## 3. 推荐设计
 
-### 3.1 一个 section，动态文本
+### 3.1 一个 section，静态文本
 
-建议在 lib/index.js 增加：
+实施时改为静态方案，实际在 lib/dispatch-guard.mjs 增加：
 
 - 名称：dsh-super-session:dispatch-guard
 - order：4100（在工具说明之后、TOOLS_SDK 5000 之前；避免和内置 section 的固定 order 冲突）
-- text：一个函数，返回字符串或空字符串。
+- interpolate：false
+- text：一个函数；settings.dispatchGuard 为 true 时返回固定文本，否则返回空字符串。
 
-判断逻辑：
+原调研曾建议按 task 动态判断：遍历 store.tasks()，只对 status 为 open/working/blocked 且 executor 等于 agent id 的 agent 输出文本。用户最终决定不这样做，理由是：
 
-- 遍历 this.store.tasks()。
-- 找到 status 为 open、working 或 blocked，且 executor === String(agent.id) 的 task。
-- 找到则返回防误发文本；否则返回空字符串。
-- executor 为 self 的 Super 任务不会命中任何 agent id，所以 Super 自己不会出现这段提示。
-- subagent 不作为 task executor（toolRequest 已拒绝 parentSessionId 和 origin=subagent），所以它们即使被注册也不会命中。
+- 提示是通用行为约束，对所有 agent 都无害；
+- 静态文本不依赖 task 状态，不会因为 Super 忘记更新 task 而多留或少留；
+- 动态判断会让 system prompt 随 task 状态变化，增加 prompt cache 抖动和实现复杂度。
 
-为什么把 blocked 也算 active：blocked 表示任务还没结束，Super 可能随后带 taskId 继续派发；如果 section 在 blocked 时消失，continuation 就没有提示。done 和 cancelled 不算 active，任务结束后提示自动消失。
+因此最终实现不安 executor 过滤，也不在 Super 自己身上做例外；所有 agent 都安装同一个静态 section。
 
 ### 3.2 注册与生命周期
 
@@ -152,41 +151,37 @@ ctx.systemPrompt.context 可以注册 agent 作用域的动态 context，但渲�
 
 ### 3.3 文本措辞
 
-去掉「这条消息前面有一段提示」的假设，改成对「最新一条用户消息」的判断。建议文本：
+去掉「这条消息前面有一段提示」的假设，改成对「最新一条用户消息」的判断。实际实现文本：
 
-本会话可能收到由其他会话（Super Session）转交的任务。
+## 任务转交提示
+本会话可能收到由其他会话（Super Session）转交的任务。以下提示是通用的，不代表当前消息一定是转交任务。
 - 如果最新一条用户消息与本会话正在做的事明显不同，或与本会话上下文完全对不上：可能发错了会话，请先向用户确认，不要直接执行。
 - 如果本会话空闲、刚建立，或消息与当前任务相关：按正常任务执行，不要因为这段提示额外确认。
 
-这段文本只在 task active 时出现，因此不需要每句话都重复「这是转交任务」；它约束的是当前这段派发生命周期。
+这段文本是静态的，对所有 agent 都存在；因此措辞明确说明「不代表当前消息一定是转交任务」，避免普通会话误判。
 
-### 3.4 前缀：替换，不重复
+### 3.4 前缀：已删除
 
-建议：
+实施结果：
 
-- task 派发不再插入 DISPATCH_GUARD_TEXT；outboundContent 就是 content。
-- 保留 quick relay 的原文语义。
+- task 派发不再插入 DISPATCH_GUARD_TEXT；delivery 和 prompt 都直接使用原 content。
+- quick relay 保持原文语义。
 - 历史 session 里已经存在的旧前缀保留，不迁移。system prompt 不是对话历史，不需要迁移；旧前缀只是历史消息的一部分。
-- 新派发不再有整段前缀，因此不会出现「系统提示 + 前缀」双重提示。
+- 新派发没有任何前缀或标记，因此不会出现「系统提示 + 前缀」双重提示，也不会出现「系统提示 + 一行标记」。
 
-可选的精确归因：
-
-- 如果用户希望 worker 能明确知道「这条是 Super 转交的」，可以只保留一行 [任务转交] 作为消息开头，而不是整段说明。
-- 但推荐的通用措辞不依赖这个标记；不加标记也不会影响判断。
-- 需要用户确认选「完全无前缀」还是「一行标记」。
+用户已确认完全无标记，不再保留 [任务转交] 行。
 
 ### 3.5 对已有 worker、历史和重启的影响
 
 已有 live worker：
 
 - 插件 apply 遍历 agents.list() 后立即生效；下一步系统提示就包含 section。
-- 已经存在的 task 状态从 super.json 恢复，所以不需要重新派发就能恢复提示。
+- 是否出现与 task 无关；开关打开就出现，开关状态从 super.json 恢复。
 
 冷 worker：
 
 - 没有 live agent，无法提前注册；下一次 prompt 触发 agent/created 时注册。
 - 注册发生在 queued input 释放之前，第一步就能看到。
-- 如果 worker 是被 Super 用 taskId 唤醒的，task 在 super.json 里已经是 open/working/blocked，section 文本非空。
 
 历史消息：
 
@@ -196,7 +191,7 @@ ctx.systemPrompt.context 可以注册 agent 作用域的动态 context，但渲�
 重启：
 
 - 插件重新 apply，遍历 live agents 或等待 agent/created，section 重新注册。
-- task 状态持久化，提示是否出现完全由 task 状态决定。
+- 开关状态从 super.json 的 settings.dispatchGuard 恢复，不依赖 task 状态。
 - 不需要把提示写进 session 文件，也不需要改 worker 配置。
 
 升级/重装：
@@ -205,11 +200,11 @@ ctx.systemPrompt.context 可以注册 agent 作用域的动态 context，但渲�
 - 如果回退到旧版本，旧版本会重新插入前缀；新版本遗留的历史前缀不会被删除。
 - 如果插件被卸载但 agent 还活着，已注册 section 应在插件 cleanup 中 dispose；否则同名重载可能抛错。这是实现时必须处理的点。
 
-### 3.6 只对被 Super 派发的 worker 生效
+### 3.6 对所有 agent 生效
 
-- 判断依据是 task.executor，不是「这个 session 是否被 Super 创建」。
-- 用户自己开的普通会话没有 task，section 文本为空，不占上下文。
-- worker 的 task 结束后，section 文本变为空，下次系统提示自动去掉。
+- 不再按 task.executor 过滤；所有 live agent 和新建 agent 都安装同一个静态 section。
+- 文本明确说明「不代表当前消息一定是转交任务」，普通会话不会因为这段提示误判。
+- 用户已确认通用提示无害；关闭开关后所有 agent 的 section 文本为空，DSH 会丢弃空 section。
 - 不写任何持久标记到 worker session，不污染用户自己的会话。
 - 唯一副作用：一个仍处于 blocked 的 task 会让该 worker 在用户直接对话时也看到这段提示。这是任务仍 active 的合理代价；任务关闭后消失。
 
@@ -224,7 +219,7 @@ ctx.systemPrompt.context 可以注册 agent 作用域的动态 context，但渲�
 
 | 方案 | 侵入性 | 可靠性 | 上下文开销 | 重启后保持 | 升级/重装回退 | 实现复杂度 | 精确归因 |
 |---|---|---|---|---|---|---|---|
-| agent 作用域 system prompt section（推荐） | 低：内存注册，不改 session/preset/文件 | 高：system 角色，每步组装 | 无 active task 时为 0；active 时一小段 | 是：重新注册，task 状态持久化 | 代码级，无需回退配置 | 低到中 | 依赖 task 状态，不依赖消息标记 |
+| agent 作用域 system prompt section（推荐） | 低：内存注册，不改 session/preset/文件 | 高：system 角色，每步组装 | 开关打开时每个 system prompt 一小段；关闭为 0 | 是：重新注册，开关从 super.json 恢复 | 代码级，无需回退配置 | 低到中 | 无：通用提示，不区分消息 |
 | 保留整段消息前缀 | 低：只改消息内容 | 高：每条派发都可见 | 每条派发重复一段 | 是：delivery 里保存了 content | 代码级 | 低 | 高：每条消息自带说明 |
 | 改 worker preset | 高：整套 preset 差异 | 高：preset 内可写系统提示 | 取决于 preset | 是：session 保存 preset id | 需要迁移/重建 | 中到高 | 高 |
 | AGENTS.md / CLAUDE.md | 中高：写文件，影响范围大 | 中：user 角色 reminder | 每个相关 session 都带 | 是：文件持久化 | 文件需手动清理 | 中 | 低：无法按 task 开关 |
@@ -239,37 +234,35 @@ ctx.systemPrompt.context 可以注册 agent 作用域的动态 context，但渲�
 - pre-step 的致命问题是它发生在系统提示组装之后，只能改 user 消息；要按 requestId 精确注入也不是不行，但会写历史、增加复杂度，收益不如 section。
 - developer message 没有自由文本入口；session/created 没有 agent 作用域。这两个方向在当前 DSH 版本直接不可行。
 
-## 5. 落地步骤（待确认后执行）
+## 5. 落地步骤（已执行）
 
-1. 在 lib/index.js 增加 DISPATCH_GUARD_SECTION_TEXT（替换现有 DISPATCH_GUARD_TEXT 的用途）和 installDispatchGuard(agent)。
-2. installDispatchGuard 调 agent.ctx.systemPrompt.section，name 固定，order 4100，text 用闭包检查 store.tasks() 与 agent.id；把 disposer 存进 Map。
-3. apply 中遍历 this.ctx.agents.list() 补装，并保留 agent/created 注册；增加 ctx.effect cleanup 统一 dispose 所有 section。
-4. 删除 toolRequest 里的 outboundContent 拼接（lib/index.js:678），delivery 和 prompt 直接使用 content。
-5. 更新 manager prompt 和 super_session_request 的工具描述：Host 通过 worker 的系统提示提供防误发约束，模型不要手写；quick relay 仍然原文。
+1. 新建 lib/dispatch-guard.mjs，导出 DISPATCH_GUARD_SECTION_NAME、DISPATCH_GUARD_SECTION_ORDER、DISPATCH_GUARD_TEXT 和 DispatchGuard。
+2. DispatchGuard.install 调 agent.ctx.systemPrompt.section，name 固定，order 4100，interpolate=false，text 根据 settings.dispatchGuard 返回静态文本或空字符串；disposer 存进 Map，按 agent id 去重。
+3. lib/index.js 的 apply 中调用 dispatchGuard.installAll()，订阅 agent/created 与 agent/disposed，并在 ctx.effect cleanup 统一 dispose。
+4. 删除 toolRequest 里的 outboundContent 拼接；delivery 和 prompt 直接使用 content。
+5. 更新 manager prompt 和 super_session_request 的工具描述：防误发由 worker 系统提示提供，不加消息前缀，模型不要手写。
 6. 补测试：
-   - mock agent.ctx.systemPrompt.section 捕获 name/order/text；
-   - 没有 task 时 text 为空；open/working/blocked 且 executor 匹配时非空；done/cancelled 后为空；
-   - Super 和无关 worker 为空；
-   - 已有 live agent 在 apply 时被注册；agent/created 也会注册；
-   - cleanup 会 dispose；重复注册不抛错；
-   - task 派发的 content 不再包含前缀；quick relay 仍是一段原文。
-7. 更新 README.md、DESIGN.md 第 6 节和实现状态；新增本文档链接。
-8. 在隔离 DSH 环境验证：创建一个 worker、给它一个 task，检查 session 的 system/message 投影里出现该 section；task 结束后下一次请求不再出现；确认没有改动 worker 的 tools/preset。
-9. npm test 全绿后再提交；真实 ~/.dsh/profiles/web 仍不安装，等用户确认。
+   - test/dispatch-guard.mjs 覆盖安装、agent/created 与 disposed、重复安装、开关文本、失败 warning、shutdown；
+   - test/smoke.mjs 覆盖 worker 和 Super 都安装 section、默认文本、POST /settings 关闭后 text 为空、再次打开恢复、非法值 400、GET /state 的 settings；
+   - task 派发 content 只有一段原文；quick relay 也只有一段原文。
+7. README.md、DESIGN.md 第 6 节、设置页、Phase 13、验收和实现状态已更新。
+8. 设置页已在隔离 DSH 中真实点击验证；section 安装、开关和空文本同时由单元测试和 smoke 覆盖。
+9. npm test 九个 suite 全绿后提交；真实 ~/.dsh/profiles/web 仍不安装。
 
 ## 6. 风险与限制
 
 - 系统提示是行为约束，不是硬拦截；模型仍可能不遵守。它比消息前缀更权威，但插件无法验证 worker 是否真的先问用户。
-- task 状态不及时会导致提示多留或少留：Super 忘记把 task 置 done，提示会继续存在；task 还是 open 但派发失败，提示也会存在。需要 Super 维护 task 状态，和现有设计一致。
-- 系统提示每步重新组装；task 状态不变时文本稳定，不会每步抖动；task 状态变化时会有一次系统提示变化，可能影响 prompt cache。相比每条消息重复前缀，长期开销更小。
-- 如果插件重载时旧 section 没有 dispose，同名注册会抛错。实现必须用 Map + cleanup，并在注册失败时记录 warn，不能静默重复。
-- 已存在的旧前缀不能从历史里删除；新旧格式会共存一段时间。这是可接受的迁移成本。
-- 隔离测试 profile 没有配置模型，无法验证真实模型是否按提示先确认；只能验证 section 是否进入系统提示，以及消息内容是否还有前缀。
-- 如果用户选择保留一行 [任务转交] 标记，系统提示应明确「只有带这个标记的消息才是转交任务」，否则不要提标记，避免模型把普通消息误判为转交。
+- 静态文本对所有 agent 生效。用户已确认这是可接受的，因为文本明确说明「不代表当前消息一定是转交任务」，对普通会话无害。
+- 系统提示每步重新组装；文本固定，不会每步抖动。开关切换时会有一次系统提示变化，可能影响 prompt cache。
+- 如果插件重载时旧 section 没有 dispose，同名注册会抛错。实现用 Map + cleanup，并在注册失败时记录 warn。
+- 已存在的旧前缀不能从历史里删除；旧消息带前缀、新消息靠系统提示，这是可接受的过渡状态。
+- 隔离测试 profile 没有配置模型，无法验证真实模型是否按提示先确认；只能验证 section 是否安装、文本是否随开关变化，以及消息内容是否还有前缀。
+- 设置页只开关该 section，不改变 worker 的 tools、preset 或历史，也不做硬拦截。
 
-## 7. 需要确认
+## 7. 已确认
 
-1. 是否按推荐方案替换整段前缀，默认完全不加标记？
-2. 如果要精确归因，是否接受保留一行 [任务转交]？
-3. active 状态是否按 open、working、blocked 计算？（推荐是；done/cancelled 不算。）
-4. 确认后再实现、补测试、更新文档；现在不动代码。
+1. 采用 agent 作用域 system prompt section，而不是消息前缀。
+2. 使用静态文本，对所有 agent 生效；不按 task 或 executor 动态判断。
+3. task 派发和 quick relay 都不加任何前缀或标记。
+4. 增加设置页开关，默认打开；关闭后 section 文本为空。
+5. 已实现并通过单元测试与 smoke；设置页真实点击已验证，真实模型行为尚未验证。

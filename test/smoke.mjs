@@ -12,6 +12,11 @@ let created = false
 let superId = 'session-super'
 
 const workerEvents = []
+const guardSections = []
+function recordGuard(agentId, section) {
+  guardSections.push({ agentId, section })
+  return () => {}
+}
 const permissions = {
   sandboxMode: 'workspace-write',
   sandboxOverride: undefined,
@@ -20,7 +25,7 @@ const permissions = {
 }
 const worker = {
   id: 'session-worker',
-  ctx: { tools: { register: () => () => {} }, systemPrompt: { section: () => () => {} } },
+  ctx: { tools: { register: () => () => {} }, systemPrompt: { section(section) { return recordGuard('worker', section) } } },
   session: {
     snapshotEvents: () => [{ type: 'assistant/message', seq: 2, data: { message: { content: [{ type: 'text', text: 'worker says done' }] } } }],
     append(type, data) {
@@ -35,7 +40,13 @@ const superAgent = {
   id: superId,
   ctx: {
     tools: { register(definition) { installed.set(definition.name, definition); return () => {} } },
-    systemPrompt: { section(section) { installed.set('prompt:' + section.name, section); return () => {} } },
+    systemPrompt: {
+      section(section) {
+        installed.set('prompt:' + section.name, section)
+        if (section.name === 'dsh-super-session:dispatch-guard') recordGuard('super', section)
+        return () => {}
+      },
+    },
   },
   session: {
     snapshotEvents: () => [],
@@ -54,7 +65,17 @@ const workspace = {
 }
 const ctx = {
   logger: { info() {}, warn() {}, error() {} },
-  on(name, handler) { listeners.set(name, handler) },
+  agents: { list() { return [worker] } },
+  on(name, handler) {
+    const list = listeners.get(name) || []
+    list.push(handler)
+    listeners.set(name, list)
+    return () => {
+      const current = listeners.get(name) || []
+      const index = current.indexOf(handler)
+      if (index >= 0) current.splice(index, 1)
+    }
+  },
   effect(factory) { const dispose = factory(); if (dispose) effects.push(dispose); return dispose },
   webServer: {
     register(route) { ctx.route = route; return () => {} },
@@ -98,8 +119,7 @@ const ctx = {
       created = true
       superId = String(request.sessionId)
       superAgent.id = superId
-      const listener = listeners.get('agent/created')
-      if (listener) await listener({ agent: superAgent })
+      for (const listener of [...(listeners.get('agent/created') || [])]) await listener({ agent: superAgent })
       await workspace.attachSession(superId)
       return { sessionId: superId, agentPreset: request.agentPreset }
     },
@@ -177,6 +197,27 @@ assert.match(superEvents[2].data.message.content[0].text, /选择模型/)
 assert.match(superEvents[2].data.message.content[0].text, /danger-full-access/)
 assert.match(superEvents[2].data.message.content[0].text, /权限设置/)
 assert.equal(superEvents[4].data.reason.kind, 'completed')
+const initialSettings = await request('GET', '/plugins/dsh-super-session/api/settings')
+assert.equal(initialSettings.status, 200)
+assert.deepEqual(initialSettings.body, { dispatchGuard: true })
+assertLossless(initialSettings.body)
+const workerGuard = guardSections.find(item => item.agentId === 'worker')
+const superGuard = guardSections.find(item => item.agentId === 'super')
+assert.ok(workerGuard && superGuard)
+assert.match(workerGuard.section.text(), /任务转交提示/)
+assert.match(workerGuard.section.text(), /可能发错.*会话/)
+assert.equal(superGuard.section.text(), workerGuard.section.text())
+const guardOff = await request('POST', '/plugins/dsh-super-session/api/settings', { dispatchGuard: false })
+assert.equal(guardOff.status, 200)
+assert.deepEqual(guardOff.body, { dispatchGuard: false })
+assert.equal(workerGuard.section.text(), '')
+assert.equal(superGuard.section.text(), '')
+const guardOn = await request('POST', '/plugins/dsh-super-session/api/settings', { dispatchGuard: true })
+assert.equal(guardOn.status, 200)
+assert.deepEqual(guardOn.body, { dispatchGuard: true })
+assert.match(workerGuard.section.text(), /任务转交提示/)
+const badGuard = await request('POST', '/plugins/dsh-super-session/api/settings', { dispatchGuard: 'yes' })
+assert.equal(badGuard.status, 400)
 const reopened = await request('POST', '/plugins/dsh-super-session/api/ensure')
 assert.equal(reopened.body.created, false)
 assert.equal(superEvents.length, 5)
@@ -201,14 +242,8 @@ concluded = 0
 const requestResult = await call('super_session_request', { targetSessionIds: ['session-worker'], message: 'please fix', taskId: task.task.taskId })
 assert.equal(requestResult.results[0].ok, true)
 assert.equal(concluded, 1)
-assert.equal(prompts.at(-1).content.length, 2)
-assert.match(prompts.at(-1).content[0].text, /任务转交/)
-assert.match(prompts.at(-1).content[0].text, /可能发错.*会话/)
-assert.match(prompts.at(-1).content[0].text, /不要直接执行/)
-assert.match(prompts.at(-1).content[0].text, /本会话空闲/)
-assert.match(prompts.at(-1).content[0].text, /完全对不上/)
-assert.match(prompts.at(-1).content[0].text, /正常任务执行/)
-assert.equal(prompts.at(-1).content[1].text, 'please fix')
+assert.equal(prompts.at(-1).content.length, 1)
+assert.equal(prompts.at(-1).content[0].text, 'please fix')
 assert.equal(prompts.at(-1).requestId.startsWith('req_'), true)
 concluded = 0
 const quickRequest = await call('super_session_request', { targetSessionIds: ['session-worker'], message: 'just checking' })
@@ -284,6 +319,7 @@ const httpState = await request('GET', '/plugins/dsh-super-session/api/state')
 assert.equal(httpState.status, 200)
 assert.equal(httpState.body.grants.length, 1)
 assert.equal(httpState.body.grants[0].grantId, grant.grant.grantId)
+assert.deepEqual(httpState.body.settings, { dispatchGuard: true })
 const closedTask = await call('super_session_task', { taskId: task.task.taskId, status: 'done' })
 assert.equal(closedTask.task.status, 'done')
 assert.equal(permissions.sandboxOverride, 'workspace-write')
@@ -324,13 +360,15 @@ assert.match(promptText, /what the user will see next/)
 assert.match(promptText, /Never send only the tool call/)
 assert.match(installed.get('super_session_status').description, /never waits/)
 assert.match(installed.get('super_session_request').description, /ends the current turn/)
-assert.match(installed.get('super_session_request').description, /anti-misdelivery note/)
+assert.match(installed.get('super_session_request').description, /anti-misdelivery constraint/)
+assert.match(installed.get('super_session_request').description, /adds no message prefix/)
 assert.match(installed.get('super_session_request').description, /MUST write one or two user-facing sentences/)
 assert.match(installed.get('super_session_request').description, /never call this tool without text/)
 assert.match(installed.get('super_session_request').description, /who received it/)
 assert.match(installed.get('super_session_request').description, /what the user will see next/)
 assert.match(installed.get('super_session_approval').description, /never approves or denies/)
-assert.match(promptText, /防误发/)
+assert.match(promptText, /anti-misdelivery constraint/)
+assert.match(promptText, /does not add any prefix/)
 assert.match(promptText, /\[Worker idle\]/)
 assert.match(promptText, /super_session_approval/)
 assert.match(promptText, /super_session_grant/)

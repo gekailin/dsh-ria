@@ -1,6 +1,6 @@
 # dsh-super-session 设计方案
 
-> 状态：v0.22（2026-11-11）
+> 状态：v0.23（2026-11-11）
 > 目标目录：/home/gkl/Desktop/vibe_proj/dsh-super-session
 > Super Session 固定用 PTC preset（agentPreset=ptc）启动，模型只直接看到 run_code + SDK。本文是设计说明；实现状态见第 20 节。
 
@@ -32,7 +32,7 @@ Super Session 是全局唯一的普通顶层 DSH Session。
 - Host 强制 brief / 澄清门禁。
 - 多实例锁、409 防双开。
 - lesson 目录、FTS5、向量检索。
-- 专用 worker Preset，或修改 worker 的 prompt/tools/skills/MCP。
+- 专用 worker Preset，或修改 worker 的 tools/skills/MCP；只追加一个通用、可关闭的 system prompt section。
 
 保留：
 
@@ -55,19 +55,21 @@ SuperSessionService
   |-- RequestGateway（普通消息 + 幂等）
   |-- ApprovalObserver（approval/request 只读观察）
   |-- WorkerIdleWatcher（agent/status 只读观察，worker idle 通知）
+  |-- DispatchGuard（agent 作用域 system prompt section，可开关）
   |-- TaskRecovery（启动时继续未完成 task）
   |-- WechatService（进程内）
   |-- SuperHttpApi（ensure / 微信控制 / 暂停推送）
   |
   +--> sessionController.state/events（只读）
   +--> sessionController.prompt（user-rpc）
+  +--> agent.ctx.systemPrompt.section / ctx.agents.list()（通用防误发提示）
   +--> workspaceRegistry.create/attach（Super 专用 Workspace，UI 输入必需）
   |
   v
 普通顶层 Worker Sessions（Preset/tools 不变）
 ~~~
 
-没有后台轮询，没有独立 bridge 进程；只有两个只读事件观察器：approval/request 记录后立即 next()，agent/status 在 worker idle 时通知 Super。
+没有后台轮询，没有独立 bridge 进程；只有两个只读业务事件观察器：approval/request 记录后立即 next()，agent/status 在 worker idle 时通知 Super。DispatchGuard 另外监听 agent/created 与 agent/disposed，用于安装和清理 system prompt section。
 
 ## 4. Task
 
@@ -112,7 +114,7 @@ task 是 Super 的管理单位；一个 task 只对应一个 executor。
 - 只在 Super Agent ctx 注册。
 - PTC 下不直接调用工具；模型写 run_code，通过 SDK 调用 tools.super_session_*。
 - 工具必须在 run_code SDK 生成前完成注册；Phase 0 验证。
-- 不伪造用户消息之外的身份，不改 worker 的 prompt/tools。
+- 不伪造用户消息之外的身份，不改 worker 的 preset/tools；只追加一个可关闭的通用 system prompt section。
 - taskId 只用于关联状态，不是发送门禁。
 - broadcast 或 steer 前先向用户确认。
 
@@ -145,9 +147,11 @@ request 就是一条普通会话消息，没有单独的消息类型体系。
 - message 直接使用 DSH Session 支持的内容：文本、图片、文件等。
 - 不做额外的文件分类、根目录白名单或专用上传流程；由 DSH 现有 message/content 能力处理。
 - 带 taskId 的任务派发，Super 必须在同一条 assistant 消息里、工具调用之前写一两句给用户看的话：派给谁、要 worker 做什么、用户接下来会看到什么；禁止只调用工具不输出文字。成功派发会 concludeTurn，工具-only 的消息会让用户收不到回复。这条是 prompt/工具描述约束，不是 Host 硬拦截。
-- 带 taskId 的任务派发：Host 在 content 最前面插入一个固定的 text part「任务转交 · 防误发」，说明这是另一个会话转交的任务；本会话空闲、刚建立或消息相关时正常执行，只有在做另一件明显不同的事或完全对不上时才先向用户确认、不直接执行。它是同一条 user message 的普通文本，不是 system role，也不改 worker 的 tools 或 system prompt。
-- 不带 taskId 的 quick relay 保持原文，不加提示；用于“原话转发”和短消息，不用于任务派发。
-- 防误发提示只是行为约束，不是硬拦截；Host 看不到 worker 的内部上下文，无法判断是否真的发错。
+- 带 taskId 的任务派发和不带 taskId 的 quick relay 都原样发送，Host 不在消息里插入任何 text part 或前缀。
+- 防误发提示由 DispatchGuard 提供：为每个 agent 注册 name=dsh-super-session:dispatch-guard、order=4100 的静态 system prompt section。文本是通用提示（本会话可能收到其他会话转交的任务；明显无关时先问用户，空闲/相关时正常执行），对所有 agent 生效，对普通会话无害。
+- section 通过 agent.ctx.systemPrompt.section 安装；apply 时遍历 ctx.agents.list() 补装，并监听 agent/created；agent/disposed 和插件卸载时 dispose，避免同名 section 重载冲突。
+- 开关在“设置 > Super Session”，默认打开，持久化在 super.json 的 settings.dispatchGuard。关闭后 text 返回空字符串，DSH 的 renderPrompt 丢弃空 section；开关只影响后续 system prompt，不改历史消息、tools 或 preset。
+- 该提示只是行为约束，不是硬拦截；Host 看不到 worker 的内部上下文，无法判断是否真的发错。
 - source 是 user-rpc，worker 看到的就是普通用户消息。
 - requestId 每目标独立；重试复用同一个 requestId。
 - 可带 taskId；task.executor 必须等于目标 sessionId。发送成功后 task.status=working。
@@ -156,7 +160,7 @@ request 就是一条普通会话消息，没有单独的消息类型体系。
 
 pending request 记录 target、requestId、taskId、content、mode；成功后删除，失败保留，重启后按原 requestId 重试。
 
-关于把这条提示改为 agent 作用域 system prompt section 的调研、替代方案和落地步骤，见 docs/system-dispatch-guard.md；该改造尚未实施，等待确认。
+关于这条提示的调研、替代方案和落地步骤，见 docs/system-dispatch-guard.md；v0.23 已按其中的静态 section 方案实施，并增加设置页开关。
 
 ## 7. Prompt
 
@@ -377,7 +381,9 @@ stateDir/
 
 没有 lessons、lock、briefs、outbox。
 
-super.json 只存 super、tasks、deliveries、grants：
+super.json 只存 super、tasks、deliveries、grants、settings：
+
+- settings：dispatchGuard（boolean，默认 true）。
 
 - tasks：taskId、goal、acceptance、executor、status、blockedReason、createdAt、updatedAt、recoveryCount。
 - deliveries：deliveryId、targetSessionId、requestId、taskId、content、mode、createdAt。
@@ -402,6 +408,7 @@ super.json 和 memory.md 都不存 transcript。
 - 新建 Super 时追加一条欢迎消息：提示选模型、设置权限（建议 danger-full-access + 审批策略）、直接说目标。
 - 欢迎消息是一个合成的完整 turn（turn/start、step/start、assistant/message、step/end、turn/end），只在新创建路径写一次；已存在/重启不重复，不占用户消息位，不调用模型。
 - 微信 chip 在 Super 入口标题右侧，点击打开微信弹层。
+- 设置页注册 settings.section：id=super-session-settings、order=25、label=Super Session；一个“任务转交提示”开关，默认打开，POST /settings 持久化。说明文字明确：只影响后续 system prompt，不改 worker 历史、工具或预设。
 
 ## 14. 安全
 
@@ -428,7 +435,7 @@ Phase 5：审批可见性 observer、super_session_approval list、清理与 TTL
 
 Phase 6：新建 Super 的一次性欢迎消息（合成 assistant turn，不调用模型）。
 
-Phase 7：任务派发防误发提示（仅带 taskId 的 request，固定 text part，quick relay 不加）。
+Phase 7：任务派发防误发提示（最初实现为仅带 taskId 的 request 插入固定 text part；Phase 13 已改为静态 system prompt section 并删除前缀）。
 
 Phase 8：临时 worker 权限 grant（set/list/reset、原值记录、task 关闭/过期/启动恢复、审计）。
 
@@ -440,12 +447,14 @@ Phase 11：worker idle 自动唤醒（agent/status 只读监听、working task e
 
 Phase 12：微信暂停推送（只停出站、连接保持；手动 pause/status API；非微信用户消息自动暂停、微信入站自动恢复；manual/channel 优先级；队列丢弃与在途完成；持久化与重启恢复）。
 
+Phase 13：静态 system prompt section 防误发提示（对所有 agent 安装、可开关、默认开启），移除 task 派发的消息前缀，增加设置页。
+
 ## 16. 验收
 
 1. 点击入口只创建一个 Super。
 2. Super 以 agentPreset=ptc 创建；模型只直接看到 run_code，7 个 super_session_* 通过 SDK 可用。
 3. 没有 attach/detach。
-4. request 在 worker 中显示为普通用户消息，支持 DSH 支持的消息类型；task 派发带可见防误发提示，quick relay 原样。
+4. request 在 worker 中显示为普通用户消息，支持 DSH 支持的消息类型；task 派发和 quick relay 都原样发送，不加消息前缀。
 5. 一个 task 只有一个 executor；self 可做用户明确要求的任务，session 做分派任务。
 6. 重启后 pending request 原 requestId 重试；已送达 task 用新 requestId 继续。
 7. 同一 task 连续自动恢复最多 3 次；达到上限后标 blocked 并通知，不静默跳过；task 更新或成功派发清零 recoveryCount。
@@ -457,7 +466,7 @@ Phase 12：微信暂停推送（只停出站、连接保持；手动 pause/statu
 12. 微信 chip 在 Super 入口右侧，宽侧边栏显示。
 13. 审批 observer 只记录活跃 task executor，记录后调用 next()，从不改变审批结果；abort/超时/重启后不残留 pending。
 14. 新建 Super 显示一次欢迎消息；已存在/重启不重复；不占用户消息位；不调用模型；Web UI 显示为正常 assistant 消息。
-15. 任务派发提示要求 worker 对明显无关的消息先确认、相关消息正常执行；不改 worker tools/system prompt；quick relay 不加提示。
+15. 防误发提示由 agent 作用域 system prompt section 提供，对所有 agent 生效；要求 worker 对明显无关的消息先确认、相关消息正常执行；设置页可关闭，关闭后 text 为空；任务和 quick relay 的消息内容都不变。
 16. 临时权限只能由用户明确指令触发；set 需要 userConfirmed=true；记录原值；task close/reset/expiry/startup 恢复；手工改动跳过；审计可查。
 17. 微信长回复/复杂 Markdown 按可配置规则转完整 .md 文件；短消息不变；文件发送失败回退文本并提示。
 18. 达到恢复上限的 task 不再停留在 working；状态为 blocked，blockedReason 可见，且 Super 收到包含 taskId/executor/goal 的通知。
@@ -473,6 +482,7 @@ Phase 12：微信暂停推送（只停出站、连接保持；手动 pause/statu
 28. 暂停期间在途消息发送完成，排队消息丢弃并记录日志；outbox 不发送，恢复后补发。
 29. 暂停相关测试覆盖手动开关、自动切换、合成消息过滤、优先级、队列竞态、日志和重启持久化。
 30. 带 taskId 派发时，manager prompt 和工具描述都硬性要求同一条 assistant 消息里先写用户可见文字（派给谁、做什么、接下来会看到什么）；禁止工具-only 消息；成功派发仍然 concludeTurn。
+31. 设置页默认 dispatchGuard=true；关闭后所有已安装 section 的 text 返回空字符串；POST /settings 只接受 boolean 并持久化到 super.json；GET /state 可见 settings。
 
 ## 17. 已确认
 
@@ -485,6 +495,8 @@ Phase 12：微信暂停推送（只停出站、连接保持；手动 pause/statu
 - request 是普通会话消息，使用 DSH 支持的消息类型。
 - worker idle 通知默认开启，节流 30 秒；只对 working task 的 executor 触发。
 - 微信暂停默认不启用；手动 pause 优先于自动 pause；微信入站总是恢复。
+- 防误发提示使用静态 system prompt section，对所有 agent 生效；任务消息不加前缀。
+- 设置页提供 dispatchGuard 开关，默认打开。
 
 ## 18. 风险
 
@@ -512,17 +524,20 @@ Phase 12：微信暂停推送（只停出站、连接保持；手动 pause/statu
 | 暂停与在途出站竞态 | 在途一条发完即止；排队丢弃并记日志；outbox 暂停期间不发送，恢复后补发 |
 | 自动暂停误判合成消息 | host_ 前缀 + source.kind=user 双重过滤；schedule 不参与 |
 | 派发只调工具不写回复 | prompt 和工具描述硬性要求先写一两句用户可见的话；成功即结束本轮，属行为约束而非 Host 拦截 |
+| system prompt section 是行为约束 | 模型仍可能忽略；设置页只开关提示，不改变 worker 的 tools/preset/历史，也不做硬拦截 |
+| 插件重载残留同名 section | apply 统一 dispose；按 agent id 去重；安装失败只 warn，不阻断加载 |
 | 手动暂停被自动覆盖 | manual 优先；只有微信入站能清除 manual，并明确记录 resumedBy |
 
 ## 19. 总结
 
-全局一个 Super Session，PTC preset（agentPreset=ptc）+ 管理者 prompt、memory.md 和 7 个工具；模型通过 run_code SDK 调用工具；用 task 管理谁做什么，request 就是普通会话消息；带 taskId 的派发自动附一条中性的防误发提示；worker idle 时自动唤醒 Super（只读事件、30 秒节流）；重启按 task 继续；微信客户端进程内运行，长回复/复杂 Markdown 自动转 .md 文件；推送可暂停（手动或按消息通道自动切换），暂停只停出站、连接保持；新建会话有一条不调用模型的一次性欢迎消息。
+全局一个 Super Session，PTC preset（agentPreset=ptc）+ 管理者 prompt、memory.md 和 7 个工具；模型通过 run_code SDK 调用工具；用 task 管理谁做什么，request 就是普通会话消息；通过可开关的 agent system prompt section 提供通用防误发提示，任务消息不加前缀；worker idle 时自动唤醒 Super（只读事件、30 秒节流）；重启按 task 继续；微信客户端进程内运行，长回复/复杂 Markdown 自动转 .md 文件；推送可暂停（手动或按消息通道自动切换），暂停只停出站、连接保持；新建会话有一条不调用模型的一次性欢迎消息。
 
 ## 20. 实现状态
 
 截至当前版本：
 
-- Phase 0–12 已实现；Phase 0–4 和 Phase 6 通过隔离环境的真实 DSH 验证，Phase 5、Phase 7、Phase 8、Phase 9、Phase 10、Phase 11 和 Phase 12 由单元测试和 smoke 覆盖。
+- Phase 0–13 已实现；Phase 0–4、Phase 6 和 Phase 13 通过隔离环境的真实 DSH 验证，Phase 5、Phase 7、Phase 8、Phase 9、Phase 10、Phase 11 和 Phase 12 由单元测试和 smoke 覆盖。
+- Phase 13 的设置页已在隔离 DSH 里真实点击：设置导航出现 Super Session；开关默认勾选，关闭后显示“当前：已关闭”且 GET /settings 返回 false，重新打开后恢复 true；截图 docs/ui-settings.png。system prompt section 的安装、开关和空文本同时由单元测试与 smoke 覆盖。
 - Phase 11 只用 mock 的 agent/status 事件验证，尚未在真实 worker 会话里触发。
 - 临时 worker 权限（审批阶段二）已实现，等待用户在真实会话里首次验证。
 - 微信文件发送链路已实现并用 mock 覆盖，尚未用真实微信账号完成 .md 收发验证。
@@ -530,11 +545,12 @@ Phase 12：微信暂停推送（只停出站、连接保持；手动 pause/statu
 
 文件：
 
-- lib/index.js：Host、SuperStore、7 个工具、manager prompt、启动恢复、HTTP API、approval observer 接线、grant 接线、微信服务接线，以及新建 Super 的 welcome 合成 turn。
+- lib/index.js：Host、SuperStore、7 个工具、manager prompt、启动恢复、HTTP API（含 settings）、approval observer 接线、grant 接线、微信服务接线、DispatchGuard 接线，以及新建 Super 的 welcome 合成 turn。
+- lib/dispatch-guard.mjs：agent 作用域静态 system prompt section 的安装、agent/created 与 disposed 监听、开关求值、dispose。
 - lib/approvals.mjs：approval/request 只读观察器、pending 列表、TTL/abort/shutdown 清理。
 - lib/worker-idle.mjs：agent/status 只读监听、working task executor 过滤、Super 排除、按 worker+task 节流、配置/环境变量归一化。
 - lib/grants.mjs：临时权限 set/list/reset、原值记录、task close/expiry/startup 恢复、审计、失败重试。
-- lib/client.js：侧边栏入口、瞬时 launcher、入口右侧微信 chip 和登录弹层。
+- lib/client.js：侧边栏入口、瞬时 launcher、入口右侧微信 chip 和登录弹层、设置页 Super Session section。
 - lib/wechat/wxweb.mjs、login.mjs、outbound.mjs：复用的文件传输助手协议、扫码登录、串行发送，以及 .md 文件上传/appmsg 发送。
 - lib/wechat/markdown.mjs：长度/代码块/表格/标题/链接判定、配置归一化、文件名。
 - lib/wechat/service.mjs：进程内连接、assistant 文本回传、长回复转文件/失败回退、入站去重、Super 投递、重连积压处理、暂停状态与按通道自动切换。
@@ -549,7 +565,9 @@ Phase 12：微信暂停推送（只停出站、连接保持；手动 pause/statu
 - test/grants.mjs：临时权限单元测试（过期、startup、漂移跳过、恢复失败、审计）。
 - test/worker-idle.mjs：正常触发、Super 排除、非 working/running 不触发、节流、关闭开关、多 task 合并、配置归一化。
 - test/startup.mjs：恢复上限、blocked 状态、更新/成功派发清零、启动异常通知。
-- docs/system-dispatch-guard.md：系统级防误发提示调研，含 DSH 注入点、对比、推荐方案和落地步骤。
+- test/dispatch-guard.mjs：section 安装、agent/created 与 disposed、重复安装、开关文本、失败 warning、shutdown。
+- docs/system-dispatch-guard.md：系统级防误发提示调研，含 DSH 注入点、对比、推荐方案和落地步骤；v0.23 已按静态 section + 设置页方案实施。
+- docs/ui-settings.png：隔离 DSH 中“设置 > Super Session”开关的真实界面截图。
 
 已验证：
 
@@ -561,7 +579,7 @@ Phase 12：微信暂停推送（只停出站、连接保持；手动 pause/statu
 - GET /wechat/status 返回 idle；POST /wechat/login 返回 data:image/jpeg 二维码；弹层显示 190×190 二维码。
 - 宽侧边栏中 chip 位于 Super Session 标题右侧；折叠侧边栏不插入。
 - startup 测试覆盖 recoveryCount=3 的 working task：启动后产生一条通知、任务变 blocked 并带 blockedReason，status 可见；通知包含 taskId/executor/goal；更新 task 和成功派发都会把 recoveryCount 清零；pending delivery 重试成功也不会误判为超限；resolveAgent 失败时产生启动失败通知。测试不调用模型。
-- smoke 覆盖 Workspace 挂载、7 个工具注册、request 投递、task 派发防误发提示、quick relay 不加提示、status、read、memory、持久化，以及 welcome 五事件序列和第二次 ensure 不重复；wechat 测试覆盖文本提取、事件过滤、入站去重/回显过滤、失败标记、reconnect skip 和状态视图；approvals 测试覆盖活跃 executor 过滤、始终 next()、abort/TTL/shutdown 清理和 lossless 输出；grants 测试覆盖授权门槛、原值记录、task done 自动恢复、显式 reset、过期、startup、漂移跳过、恢复失败和审计；wechat-file 测试覆盖阈值/代码块/表格/标题/链接、配置/env、文件名、短消息不变、长消息发 .md、失败回退，以及上传和 appmsg 字段；wechat-pause 测试覆盖手动开关与持久化、非微信自动暂停、微信自动恢复、host_/schedule 过滤、manual 不被 channel 覆盖、暂停时不发送、排队丢弃而在途完成、恢复后补发 outbox，以及日志字段。npm test 八个测试全部通过。
+- smoke 覆盖 Workspace 挂载、7 个工具注册、request 投递、task 派发与 quick relay 都不加前缀、dispatch guard section 同时装到 worker 和 Super、GET/POST /settings 与 GET /state 的 settings、status、read、memory、持久化，以及 welcome 五事件序列和第二次 ensure 不重复；dispatch-guard 测试覆盖安装、created/disposed、重复安装、开关文本、失败 warning、shutdown；wechat 测试覆盖文本提取、事件过滤、入站去重/回显过滤、失败标记、reconnect skip 和状态视图；approvals 测试覆盖活跃 executor 过滤、始终 next()、abort/TTL/shutdown 清理和 lossless 输出；grants 测试覆盖授权门槛、原值记录、task done 自动恢复、显式 reset、过期、startup、漂移跳过、恢复失败和审计；wechat-file 测试覆盖阈值/代码块/表格/标题/链接、配置/env、文件名、短消息不变、长消息发 .md、失败回退，以及上传和 appmsg 字段；wechat-pause 测试覆盖手动开关与持久化、非微信自动暂停、微信自动恢复、host_/schedule 过滤、manual 不被 channel 覆盖、暂停时不发送、排队丢弃而在途完成、恢复后补发 outbox，以及日志字段。npm test 九个测试全部通过。
 - 新建 Super 后真实 Web UI 显示欢迎消息；会话界面显示“已完成，用时 1 秒”和“1 轮 1 步”，输入框正常；没有浏览器 runtime error。
 - 审批观察器没有在真实 UI 中触发过；只做了单元测试和 smoke。首次实际审批时需确认 pending 列表和清理行为。
 - welcome 的合成 turn 会被 UI 计入“1 轮 1 步”，并显示“已完成”；这是 assistant 气泡可正常渲染的代价。
@@ -571,8 +589,9 @@ Phase 12：微信暂停推送（只停出站、连接保持；手动 pause/statu
 - 工作区列表会多一个 Super Session Workspace。
 - 隔离测试 profile 没有配置模型，界面显示“请选择模型”；真实 profile 使用用户当前默认模型。
 - 真实 ~/.dsh/profiles/web 尚未安装本插件；安装后需要重启 dsh web。
+- Phase 13 的设置页已在隔离 DSH 中实际点击并验证开关与持久化；真实模型是否遵守 section 提示仍未验证。
 - 审批可见性阶段不代批；审批动作仍需在 worker 会话里完成。
-- 防误发提示依赖 worker 模型遵守；插件无法强制或验证，worker 仍可能直接执行。
+- 防误发提示依赖 worker 模型遵守；插件无法强制或验证，worker 仍可能直接执行。设置页只开关 section，不改变 worker 的历史、tools 或 preset。
 - 临时权限没有在真实会话里触发过；只做了单元测试和 smoke，首次 grant 时需确认 DSH 事件投影和恢复行为。
 - sandbox override 无法清除；恢复写回原 effective mode，可能留下同值 override。
 - 微信 .md 文件发送只按网页版协议 mock 验证；真实账号的文件上传/下载尚未验证。

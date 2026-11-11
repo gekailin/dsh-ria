@@ -14,7 +14,7 @@
   "type": "module",
   "main": "lib/index.js",
   "scripts": {
-    "test": "node test/smoke.mjs && node test/wechat.mjs && node test/wechat-pause.mjs && node test/wechat-file.mjs && node test/approvals.mjs && node test/grants.mjs && node test/startup.mjs && node test/worker-idle.mjs"
+    "test": "node test/smoke.mjs && node test/wechat.mjs && node test/wechat-pause.mjs && node test/wechat-file.mjs && node test/approvals.mjs && node test/grants.mjs && node test/startup.mjs && node test/worker-idle.mjs && node test/dispatch-guard.mjs"
   },
   "exports": {
     ".": "./lib/index.js",
@@ -28,6 +28,7 @@
     "lib/approvals.mjs",
     "lib/grants.mjs",
     "lib/worker-idle.mjs",
+    "lib/dispatch-guard.mjs",
     "lib/wechat",
     "cordis.patch.yml",
     "DESIGN.md",

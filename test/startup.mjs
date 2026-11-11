@@ -95,8 +95,8 @@ try {
   assert.match(recoveryText, /finish the long task/)
   assert.match(recoveryText, /blocked/)
   const saved = JSON.parse(readFileSync(join(dir, 'ria.json'), 'utf8'))
-  assert.equal(saved.tasks[0].status, 'blocked')
-  assert.match(saved.tasks[0].blockedReason, /自动恢复已达上限/)
+  assert.equal(saved.tickets[0].status, 'blocked')
+  assert.match(saved.tickets[0].blockedReason, /自动恢复已达上限/)
 
   const statusTool = first.tools.get('ria_status')
   const snapshot = await statusTool.execute({ scope: 'tasks' }, { signal: new AbortController().signal })
@@ -115,7 +115,7 @@ try {
   const requestTool = first.tools.get('ria_request')
   const dispatched = await requestTool.execute({ targetSessionIds: ['session-worker'], message: 'continue', taskId: 'task_exhausted', note: '已让 Worker 继续执行未完成任务。' }, exec)
   assert.equal(dispatched.results[0].ok, true)
-  assert.equal(service.store.task('task_exhausted').recoveryCount, 0)
+  assert.equal(service.store.task('task_exhausted').recovery.count, 0)
 
   const retryDir = mkdtempSync(join(tmpdir(), 'dsh-ria-startup-retry-'))
   try {
@@ -143,7 +143,7 @@ try {
     await retried.startup()
     assert.equal(third.prompts.length, 2)
     assert.equal(retried.store.task('task_retry').status, 'working')
-    assert.equal(retried.store.task('task_retry').recoveryCount, 1)
+    assert.equal(retried.store.task('task_retry').recovery.count, 1)
     assert.equal(retried.store.task('task_retry').blockedReason, '')
   } finally {
     rmSync(retryDir, { recursive: true, force: true })
@@ -292,7 +292,7 @@ try {
   assert.match(mergeText, /上一轮自动恢复 2\/3/)
   const savedMerge = JSON.parse(readFileSync(join(mergeDir, 'ria.json'), 'utf8'))
   assert.equal(savedMerge.inFlight.recoveryCount, 2)
-  assert.equal(savedMerge.tasks[0].recoveryCount, 1)
+  assert.equal(savedMerge.tickets[0].recovery.count, 1)
 } finally {
   rmSync(mergeDir, { recursive: true, force: true })
 }

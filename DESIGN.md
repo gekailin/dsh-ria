@@ -155,6 +155,8 @@ request 就是一条普通会话消息，没有单独的消息类型体系。
 
 pending request 记录 target、requestId、taskId、content、mode；成功后删除，失败保留，重启后按原 requestId 重试。
 
+关于把这条提示改为 agent 作用域 system prompt section 的调研、替代方案和落地步骤，见 docs/system-dispatch-guard.md；该改造尚未实施，等待确认。
+
 ## 7. Prompt
 
 初始 prompt 用原则和少量示例，不写死步骤。
@@ -490,6 +492,7 @@ Phase 11：worker idle 自动唤醒（agent/status 只读监听、working task e
 - test/grants.mjs：临时权限单元测试（过期、startup、漂移跳过、恢复失败、审计）。
 - test/worker-idle.mjs：正常触发、Super 排除、非 working/running 不触发、节流、关闭开关、多 task 合并、配置归一化。
 - test/startup.mjs：恢复上限、blocked 状态、更新/成功派发清零、启动异常通知。
+- docs/system-dispatch-guard.md：系统级防误发提示调研，含 DSH 注入点、对比、推荐方案和落地步骤。
 
 已验证：
 

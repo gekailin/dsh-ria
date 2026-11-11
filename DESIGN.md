@@ -164,7 +164,7 @@ request 就是一条普通会话消息，没有单独的消息类型体系。
 - note 展示失败（例如 Ria 的 session 还没有 append 能力或 append 抛错）只记 warn，不阻断派发，也不影响已经成功的请求；成功派发仍然 concludeTurn。
 - quick relay（不带 taskId）不需要 note；如果提供了 note，也会显示一条“消息转发”卡片（同样受 500 字限制），否则不产生卡片。消息原样转发。
 - 带 taskId 的任务派发和不带 taskId 的 quick relay 都原样发送，Host 不在消息里插入任何 text part 或前缀。
-- 防误发提示由 DispatchGuard 提供：为每个 agent 注册 name=dsh-ria:dispatch-guard、order=4100 的静态 system prompt section。文本是简短英文 2 句、无标题、不提 Ria 或其他会话名：最新消息若与本会话当前工作明显无关，先向用户确认再执行；若会话空闲或消息相关，则正常执行。对所有 agent 生效，对普通会话无害。
+- 防误发提示由 DispatchGuard 提供：为每个 agent 注册 name=dsh-ria:dispatch-guard、order=4100 的静态 system prompt section。文本是简短英文 2 句、无标题、不提 Ria 或其他会话名：最新消息若与本会话当前工作明显无关，先向用户确认再执行。只保留这一条约束，不再额外说明空闲或相关时应当放行。对所有 agent 生效，对普通会话无害。
 - section 通过 agent.ctx.systemPrompt.section 安装；apply 时遍历 ctx.agents.list() 补装，并监听 agent/created；agent/disposed 和插件卸载时 dispose，避免同名 section 重载冲突。
 - 开关在“设置 > Ria”，默认打开，持久化在 ria.json 的 settings.dispatchGuard。关闭后 text 返回空字符串，DSH 的 renderPrompt 丢弃空 section；开关只影响后续 system prompt，不改历史消息、tools 或 preset。
 - 该提示只是行为约束，不是硬拦截；Host 看不到 worker 的内部上下文，无法判断是否真的发错。
@@ -532,7 +532,7 @@ Phase 18：微信图片接口预留（识别 MsgType 3、入站下载/转换/投
 12. 微信 chip 在 Ria 入口右侧，宽侧边栏显示。
 13. 审批 observer 只记录活跃 task executor，记录后调用 next()，从不改变审批结果；abort/超时/重启后不残留 pending。
 14. 新建 Ria 显示一次欢迎消息；已存在/重启不重复；不占用户消息位；不调用模型；Web UI 显示为正常 assistant 消息。
-15. 防误发提示由 agent 作用域 system prompt section 提供，对所有 agent 生效；要求 worker 对明显无关的消息先确认、相关消息正常执行；设置页可关闭，关闭后 text 为空；任务和 quick relay 的消息内容都不变。
+15. 防误发提示由 agent 作用域 system prompt section 提供，对所有 agent 生效；要求 worker 对明显无关的消息先确认；设置页可关闭，关闭后 text 为空；任务和 quick relay 的消息内容都不变。
 16. 临时权限只能由用户明确指令触发；set 需要 userConfirmed=true；记录原值；task close/reset/expiry/startup 恢复；手工改动跳过；审计可查。
 17. 微信长回复/复杂 Markdown 按可配置规则转完整 .md 文件；短消息不变；文件发送失败回退文本并提示。
 18. 达到恢复上限的 task 不再停留在 working；状态为 blocked，blockedReason 可见，且 Ria 收到包含 taskId/executor/goal 的通知。

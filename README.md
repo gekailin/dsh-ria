@@ -202,7 +202,7 @@ Ria 的系统 prompt 要求：需求不明确时先和用户澄清，再下发�
 - task 是管理记录，不是 DSH 内置对象；保存在 ria.json。
 - request 是真正的 Session 消息。发送前先写 pending delivery，prompt 被接受后删除；失败保留，重启或下次 ensure 时按原 requestId 重试。
 - request 的 worker 侧来源是普通的 user 消息，不伪装成系统消息，也不改 worker 的 tools。
-- 带 taskId 的任务派发，消息内容原样发送，不加任何前缀。防误发提示由 Host 注册在每个 agent 上的 system prompt section 提供：本会话空闲、刚建立或消息相关时正常执行；只有在做另一件明显不同的事或完全对不上时，才先向用户确认、不直接执行。
+- 带 taskId 的任务派发，消息内容原样发送，不加任何前缀。防误发提示由 Host 注册在每个 agent 上的 system prompt section 提供：只有在做另一件明显不同的事或完全对不上时，才先向用户确认、不直接执行。
 - 带 taskId 派发必须提供 `note`，最多 500 字。Host 在投递成功后把 note 写入 `ria.json`（最多保留 100 条），插件 client 通过 `GET /plugins/dsh-ria/api/dispatch-notes?sessionId=...&turn=...` 读取，并在 `conversation.chat.turnTail` slot 渲染成当前轮次末尾的卡片。
 - 卡片不属于 turn process，不会被完成后的流程折叠隐藏；它不进入模型上下文，也不依赖 session log；重启后仍能从 ria.json 读到。
 - note 缺失、纯空白或超过 500 字时，工具直接报错，消息不投递、不 concludeTurn。展示 note 失败只记 warn，不阻断已经成功的派发。

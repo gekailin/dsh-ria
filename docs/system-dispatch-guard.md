@@ -153,9 +153,9 @@ ctx.systemPrompt.context 可以注册 agent 作用域的动态 context，但渲�
 
 去掉「这条消息前面有一段提示」的假设，改成对「最新一条用户消息」的判断。v0.29 的实际实现是一段简短英文，没有标题，不提 Ria 或其他会话名：
 
-The latest message may not belong to this session's current work. If it is clearly unrelated to what the session is doing, ask the user to confirm before acting on it; if the session is idle or the message is relevant, proceed normally.
+The latest message may not belong to this session's current work. If it is clearly unrelated to what the session is doing, ask the user to confirm before acting on it.
 
-这段文本是静态的，对所有 agent 都存在。它不假设消息一定来自转交，也不点名任何会话；如果最新消息与当前工作明显无关，先向用户确认；会话空闲或消息相关，则正常执行。
+这段文本是静态的，对所有 agent 都存在。它不假设消息一定来自转交，也不点名任何会话；只规定最新消息与当前工作明显无关时先向用户确认，不再补充空闲或相关时如何处理的说明。
 
 ### 3.4 前缀：已删除
 

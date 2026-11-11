@@ -23,9 +23,9 @@ Ria 自己是一个普通的顶层 DSH Session，运行 PTC preset，带管理�
 
 ## 当前状态
 
-- Phase 0–18 已实现：单例、PTC 创建、完整任务模型（用户消息自动登记 intake、8 态状态机、ria_resolve 定性、合并、归档、重启恢复）、转述、读取、memory、重启恢复（task 与 Ria 自己未完成 turn 都能续上，含恢复上限可见性）、侧边栏入口、进程内微信和入口右侧的微信 chip、worker 审批可见性、new-session 欢迎卡片、系统 prompt 防误发提示与设置页开关、临时 worker 权限调整、微信长回复/复杂 Markdown 自动转 .md 文件，worker 结束 turn 后自动唤醒 Ria，微信推送的暂停/恢复，以及暂停状态和手动开关的 UI，带 ticketId 派发的 note 硬约束与可见的 turn-tail 派发卡片，以及同步到微信的派发确认文本；微信图片收发只预留接口，默认关闭。
+- Phase 0–18 已实现：单例、PTC 创建、完整任务模型（用户消息自动登记 intake、8 态状态机、ria_resolve 定性、合并、归档、重启恢复）、转述、读取、memory、重启恢复（task 与 Ria 自己未完成 turn 都能续上，含恢复上限可见性）、侧边栏入口、进程内微信和入口右侧的微信 chip、worker 审批可见性、new-session 欢迎卡片、系统 prompt 防误发提示与设置页开关、临时 worker 权限调整、微信长回复/复杂 Markdown 自动转 .md 文件，worker 结束 turn 后自动唤醒 Ria，微信推送的暂停/恢复，以及暂停状态和手动开关的 UI，带 ticketId 派发的 note 硬约束与可见的 turn-tail 派发卡片，以及同步到微信的派发确认文本；微信出站图片已实现（assistant 回复里的本机图片会作为微信图片发出），入站图片仍预留。
 - 已验证环境：DSH 0.2.2-rc.1，Node 26，真实 Web profile 的隔离副本。
-- 微信入站目前只投递文本；图片收发只预留了接口，见“图片接口（预留）”。扫码登录需要在弹层里完成一次，之后 DSH 重启会自动复用凭据。
+- 微信入站目前只投递文本（入站图片仍预留）；出站可发文本、.md 文件与本机图片，见“图片（出站）”。扫码登录需要在弹层里完成一次，之后 DSH 重启会自动复用凭据。
 
 ## 安装
 
@@ -83,7 +83,7 @@ Ria 入口标题右侧有一个“微信”chip。点开后可以扫码登录微
 - 微信发来的文本原样作为普通用户消息进入 Ria，不加前缀，也不直接进 worker。
 - Ria 的每条 assistant 文本回复都会同步回微信，统一以 🌊 前缀标记；暂停推送时除外。
 - 带 note 的派发/转述成功后，note 也会作为一条普通微信文本推送（见下文“派发 note 卡片”），同样受暂停开关约束。
-- 入站只投递文本；图片收发接口目前只是预留（默认关闭），图片和文件仍建议直接在 Ria 界面发送。
+- 入站只投递文本（入站图片仍预留）；出站支持文本、.md 文件与本机图片：assistant 回复里的 Markdown 图片若指向本机存在的图片文件，会作为微信图片发出，见“图片（出站）”。
 - 出站长回复或复杂 Markdown 时，默认改发完整的 .md 文件；短消息和简单文本保持原样。
 - DSH 重启后如有 creds 会自动重连；待发文本超过 10 条时只补发最后 10 条，并先提示跳过了多少条。
 - chip 只在宽侧边栏显示；折叠侧边栏不插入。
@@ -132,21 +132,25 @@ Ria 入口标题右侧有一个“微信”chip。点开后可以扫码登录微
 
 也可以直接写 `markdownFile: false` 关闭整套规则。环境变量优先级高于 profile 配置：`DSH_RIA_MD_FILE`、`DSH_RIA_MD_THRESHOLD`、`DSH_RIA_MD_CODE`、`DSH_RIA_MD_TABLE`、`DSH_RIA_MD_HEADINGS`、`DSH_RIA_MD_LINKS`。阈值会被限制在安全范围（80–100000 字符）。
 
-### 图片接口（预留）
+### 图片（出站已实现，入站预留）
 
-微信图片收发目前只是预留接口，没有完整实现。两个开关都默认关闭：
+出站图片默认开启，入站图片仍默认关闭：
 
 ~~~yaml
 - id: ria
   config:
     wechatImage:
       inbound: false
-      outbound: false
+      outbound: true
 ~~~
 
-- 入站：`InboundBridge` 已能识别 MsgType 3（图片）；`WechatService.deliverImageFromWechat(message)` 和 `lib/wechat/image.mjs` 的 `imagePartFromMessage(message, { client, signal })` 是预留签名，负责解析 `<img>` 元数据、下载原图、转成 DSH 的 `{ type: 'image', mediaType, data }` 内容块。函数体内有 TODO，当前会明确报 “reserved but not implemented”，不会投递半成品。
-- 出站：`Outbound.enqueueImage({ name, buffer, mime, ref })` 是预留签名，TODO 是上传图片并按网页版协议发 Type=6 appmsg；当前调用会 reject。
-- 默认关闭时图片仍按原来的“目前只能接收文本消息”处理；文本收发、文件发送、暂停、去重和 outbox 路径都不受影响。
+- 触发：Ria 的 assistant 文本里出现 `![alt](path)`，且 path 指向本机真实存在的图片文件时，该图片会作为微信图片发出；不扫描围栏代码块里的示例。
+- 路径：绝对路径，或相对 Ria 状态目录（`DSH_HOME/state/ria`）与 dsh 进程当前目录；`file://` 等带 scheme 的地址不处理。
+- 类型和大小：按文件头识别 PNG、JPEG、GIF、WebP，大小上限 20 MB；文件不存在、不是图片或超过上限时保留原 Markdown 文本，整条回复照常发送，不会失败。
+- 顺序与失败：先发文本（图片语法从文本里去掉），再逐张发图片。某张图片发送失败只记 warn，不影响已经发出的文本和其他图片；暂停推送时按普通出站规则丢弃。
+- 协议：与 .md 文件共用同一条串行限速队列；上传用 `mediatype=pic`、`MediaType=3`，发送用 `webwxsendmsgimg` 的 `Msg.Type=3`，返回的 MsgID 加入去重集合。`Outbound.enqueueImage()` 仍接受 `{ name, buffer, mime, ref }`，失败会 reject，调用方可重试。
+- 入站：`InboundBridge` 能识别 MsgType 3，但 `imagePartFromMessage` 仍是预留签名（解析 `<img>`、下载原图、转 DSH 图片内容块）；当前明确报 “reserved but not implemented”，不会投递半成品。
+- `outbound: false` 时保留原来的纯文本行为；文本、.md 文件、暂停、去重和 outbox 路径不受影响。
 
 ## 工具
 
@@ -311,15 +315,16 @@ DSH_HOME/state/ria/
 npm test
 ~~~
 
-smoke 使用 mock ctx 覆盖 ensure、Workspace 挂载、9 个工具、request、ticket 派发都不加前缀、dispatch guard section 安装到 worker 和 Ria、GET/POST /settings 与 GET /state 的 settings、status、read、memory、持久化、grant 的 set/list/reset 与 ticket 关闭恢复，以及新建 Ria 不写任何 session 事件和第二次 ensure 不重复；近期 worker 覆盖空列表、ticket 派发后候选的 title/cwd/lastUsedAt/lastTicketGoal/lastTicketStatus、失败请求不更新、scope=sessions 字段、ria.json 持久化和 lossless；dispatch-guard 测试覆盖 installAll、agent/created 与 disposed、重复安装、开关关闭时 text 为空、注册失败只 warn 和 shutdown；wechat 测试覆盖 assistant 文本提取、入口事件过滤、微信入站去重/回显过滤、失败标记、reconnect skip、状态视图，以及图片接口预留：默认关闭不影响文本、开启后只走图片桩、图片内容块转换和出站图片接口均明确报未实现；wechat-file 测试覆盖阈值/代码块/表格/标题/链接判定、配置/env 覆盖、文件名、短消息不变、长消息发 .md、失败回退文本，以及上传 multipart 和 appmsg 的字段/签名/去重；approvals 测试覆盖只记录活跃 executor、始终 next()、abort/超时/shutdown 清理和 lossless 输出；grants 测试覆盖过期、startup、ticket 缺失/关闭、漂移跳过、恢复失败和审计；startup 测试覆盖达到恢复上限后的通知与 blocked 状态、更新/成功派发清零、以及启动异常通知；worker-idle 测试覆盖正常触发、排除 Ria、非 working ticket/running 状态不触发、按 ticket 节流、开关关闭，以及提示文本要求 read/不假设完成/等用户输入时标 blocked；wechat-pause 测试覆盖手动开关与持久化、非微信消息自动暂停、微信入站自动恢复、host_/schedule 合成消息不触发、manual 优先级、暂停时不出站且丢日志、排队丢弃而在途完成、重启保持，以及恢复后补发 outbox；smoke 还验证 pause/unpause 往返后 pausedAt、resumedAt、pausedBy 和重复读取 status 的字段一致；以及 dispatch-notes 按 session/turn 过滤、错误 session 返回空列表、note 持久化、无 note 的请求不记录、snapshot 读取失败不影响派发和 concludeTurn；wechat 和 smoke 还覆盖派发 note 的微信镜像：ticket 格式、暂停时丢弃并记日志、恢复后发送、未登录跳过、发送异常不影响派发与 concludeTurn；spawn 测试覆盖新建顶层 worker 的参数、title、失败码与 ria_status 可见性；attachments 测试覆盖图片 content 投递、attachment_missing/attachment_invalid/model_no_image、多目标部分成功，以及失败不投递、不写 recentWorkers、不动 ticket。
+smoke 使用 mock ctx 覆盖 ensure、Workspace 挂载、9 个工具、request、ticket 派发都不加前缀、dispatch guard section 安装到 worker 和 Ria、GET/POST /settings 与 GET /state 的 settings、status、read、memory、持久化、grant 的 set/list/reset 与 ticket 关闭恢复，以及新建 Ria 不写任何 session 事件和第二次 ensure 不重复；近期 worker 覆盖空列表、ticket 派发后候选的 title/cwd/lastUsedAt/lastTicketGoal/lastTicketStatus、失败请求不更新、scope=sessions 字段、ria.json 持久化和 lossless；dispatch-guard 测试覆盖 installAll、agent/created 与 disposed、重复安装、开关关闭时 text 为空、注册失败只 warn 和 shutdown；wechat 测试覆盖 assistant 文本提取、入口事件过滤、微信入站去重/回显过滤、失败标记、reconnect skip、状态视图，以及图片入站预留；wechat-image 测试覆盖图片上传/发送字段与去重、成功发送、暂停、本机相对路径图片提取、缺失/非图片回退、围栏代码跳过和 outbound 关闭；wechat-file 测试覆盖阈值/代码块/表格/标题/链接判定、配置/env 覆盖、文件名、短消息不变、长消息发 .md、失败回退文本，以及上传 multipart 和 appmsg 的字段/签名/去重；approvals 测试覆盖只记录活跃 executor、始终 next()、abort/超时/shutdown 清理和 lossless 输出；grants 测试覆盖过期、startup、ticket 缺失/关闭、漂移跳过、恢复失败和审计；startup 测试覆盖达到恢复上限后的通知与 blocked 状态、更新/成功派发清零、以及启动异常通知；worker-idle 测试覆盖正常触发、排除 Ria、非 working ticket/running 状态不触发、按 ticket 节流、开关关闭，以及提示文本要求 read/不假设完成/等用户输入时标 blocked；wechat-pause 测试覆盖手动开关与持久化、非微信消息自动暂停、微信入站自动恢复、host_/schedule 合成消息不触发、manual 优先级、暂停时不出站且丢日志、排队丢弃而在途完成、重启保持，以及恢复后补发 outbox；smoke 还验证 pause/unpause 往返后 pausedAt、resumedAt、pausedBy 和重复读取 status 的字段一致；以及 dispatch-notes 按 session/turn 过滤、错误 session 返回空列表、note 持久化、无 note 的请求不记录、snapshot 读取失败不影响派发和 concludeTurn；wechat 和 smoke 还覆盖派发 note 的微信镜像：ticket 格式、暂停时丢弃并记日志、恢复后发送、未登录跳过、发送异常不影响派发与 concludeTurn；spawn 测试覆盖新建顶层 worker 的参数、title、失败码与 ria_status 可见性；attachments 测试覆盖图片 content 投递、attachment_missing/attachment_invalid/model_no_image、多目标部分成功，以及失败不投递、不写 recentWorkers、不动 ticket。
 
 ## 限制
 
-- 微信协议依赖「文件传输助手」网页版；入站只投递文本，出站文件只发 .md；微信图片收发目前只有预留接口和默认关闭的开关，尚未实现。
+- 微信协议依赖「文件传输助手」网页版；入站只投递文本（入站图片仍预留），出站可发文本、.md 文件与本机图片；出站图片只按网页版协议用 mock 验证过，尚未用真实微信账号完成一次图片收发验证。
 - 暂停推送的界面入口只在 chip 弹层里；设置页“Ria”不重复放同一个开关，避免两个控制点。
 - 暂停不能撤回已经在发送中的消息；只能保证之后排队的消息不发出。
 - 暂停期间的连接保持和真实收发没有用真实微信账号验证，只做了单元测试和 HTTP smoke。
 - 微信文件上传/发送链路按网页版协议实现并用 mock 覆盖，尚未用真实微信账号完成一次 .md 文件收发验证。
+- 出站图片只在 assistant 文本里提取本机图片，不支持直接把 DSH 的 imagePart 或远程 URL 转成微信图片；入站图片仍未实现。
 - 扫码登录、消息收发和派发 note 的微信镜像仍需要真实微信账号验证。
 - 审批可见性只报告 pending，不代批、不自动唤醒 Ria；临时权限需要用户明确指令，Ria 不能自行判断后提权。
 - worker 自动唤醒由 `agent/status` 的 `idle` 触发，能读到最后一轮 `turn/end` 的 reason（含 `aborted(user)`），但“明确拒绝”只能由 Ria 读消息判断；提示措辞不假设完成，需要 Ria 再 read。

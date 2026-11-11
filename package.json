@@ -15,7 +15,7 @@
   "type": "module",
   "main": "lib/index.js",
   "scripts": {
-    "test": "node test/smoke.mjs && node test/wechat.mjs && node test/wechat-pause.mjs && node test/wechat-file.mjs && node test/approvals.mjs && node test/grants.mjs && node test/startup.mjs && node test/worker-idle.mjs && node test/dispatch-guard.mjs && node test/spawn.mjs && node test/attachments.mjs && node test/task-state.mjs && node test/intake.mjs && node test/merge.mjs && node test/archive.mjs"
+    "test": "node test/smoke.mjs && node test/wechat.mjs && node test/wechat-pause.mjs && node test/wechat-file.mjs && node test/wechat-image.mjs && node test/approvals.mjs && node test/grants.mjs && node test/startup.mjs && node test/worker-idle.mjs && node test/dispatch-guard.mjs && node test/spawn.mjs && node test/attachments.mjs && node test/task-state.mjs && node test/intake.mjs && node test/merge.mjs && node test/archive.mjs"
   },
   "exports": {
     ".": "./lib/index.js",

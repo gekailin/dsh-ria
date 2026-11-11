@@ -163,9 +163,9 @@ try {
   }
 
   {
-    assert.deepEqual(DEFAULT_WECHAT_IMAGE_OPTIONS, { inbound: false, outbound: false })
-    assert.deepEqual(normalizeWechatImageOptions(undefined), { inbound: false, outbound: false })
-    assert.deepEqual(normalizeWechatImageOptions({ inbound: true, outbound: 'yes' }), { inbound: true, outbound: false })
+    assert.deepEqual(DEFAULT_WECHAT_IMAGE_OPTIONS, { inbound: false, outbound: true })
+    assert.deepEqual(normalizeWechatImageOptions(undefined), { inbound: false, outbound: true })
+    assert.deepEqual(normalizeWechatImageOptions({ inbound: true, outbound: 'yes' }), { inbound: true, outbound: true })
     assert.equal(isImageMessage({ type: 3 }), true)
     assert.equal(isImageMessage({ type: '3' }), true)
     assert.equal(isImageMessage({ type: 1 }), false)
@@ -179,8 +179,14 @@ try {
     await withPrefix.enqueue('plain', { prefix: false })
     assert.deepEqual(sentTexts, ['plain'])
 
-    const outbound = new Outbound({ async send() { return 'id' }, async sendFile() { return 'id' } })
-    await assert.rejects(() => outbound.enqueueImage({ name: 'a.jpg', buffer: Buffer.from('x') }), /reserved but not implemented/)
+    const images = []
+    const outbound = new Outbound({
+      async send() { return 'id' },
+      async sendFile() { return 'id' },
+      async sendImage(name, buffer, mime) { images.push([name, buffer.toString(), mime]); return 'image-id' },
+    })
+    assert.equal(await outbound.enqueueImage({ name: 'a.jpg', buffer: Buffer.from('x'), mime: 'image/jpeg' }), 'image-id')
+    assert.deepEqual(images, [['a.jpg', 'x', 'image/jpeg']])
     outbound.setPaused(true)
     await assert.rejects(() => outbound.enqueueImage({ name: 'a.jpg', buffer: Buffer.from('x') }), error => error.code === 'WECHAT_PAUSED')
   }

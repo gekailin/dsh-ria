@@ -92,6 +92,7 @@ ticket 是 Ria 的管理单位；一个 ticket 只对应一个 executor。完整
   "attempts": [],
   "recovery": { "count": 0 },
   "blockedReason": "",
+  "attention": null,
   "failure": null,
   "resolution": null,
   "history": [],
@@ -108,6 +109,7 @@ ticket 是 Ria 的管理单位；一个 ticket 只对应一个 executor。完整
 - `waitingOn`：`ria`、`worker`、`user`、`approval`、`environment`、`children`、`none`；由状态决定，阻塞类必须有人可等。
 - 只有 `RiaStore.transitionTicket` 能改 status。它校验 28 条转移和 10 条不变量；非法转移返回 `invalid_transition`，`expectedRevision` 不匹配返回 `stale_revision`，都不静默改写。
 - 每次变更 `revision+1`；终态写 `closedAt`；reopen 清空 `closedAt/failure/resolution` 并保留 history。
+- `blocked + waitingOn=user` 可以带 `attention`：`{ kind: question|approval|decision, question, options?, askedAt, askedBy, ref? }`；question 为空时归一化为 null，离开 blocked 或关闭/reopen 时清空。只有老 `blockedReason` 的票仍可读，`ria_status.attentionOverview` 用 `legacy=true` 标出。`attention` 是 Ria 请用户拍板的事，与 worker 审批（`ria_approval`）分开。
 - `blocked` 必须有非空 `blockedReason` 且 `waitingOn` 是 user/approval/environment；`done` 必须有 `resolution.summary`；`failed` 必须有 `failure.code+message`；`cancelled` 必须有 `resolution.reason`。
 - 分叉用父 ticket + 子 ticket：父 `status=forked`、`executor=null`，只做容器；子 ticket 各自一个 executor、独立派发/失败/恢复；全部子收敛后父按 blocked > failed > cancelled > done 聚合。`forkDepth` 最大 2，每个父 2–8 个子。
 - 合并（`mergeTicket`）：source 的 history/attempts 摘要与子 ticket、deliveries 重挂到 target；source 以 `done + resolution.kind=merged` 收敛且不可 reopen；target 保留自己的 executor/goal/acceptance。错误码含 merge_self、ticket_missing、source_closed、target_closed、merge_cycle、merge_root_mismatch、target_busy、merge_irreversible。
@@ -133,7 +135,7 @@ ticket 是 Ria 的管理单位；一个 ticket 只对应一个 executor。完整
 | ria_ticket | 创建/更新/关闭/合并 ticket | ticketId?, goal, acceptance?, executor, status?, action=merge + sourceTicketId/targetTicketId/note |
 | ria_status | 查 ticket、历史归档、单条 ticket、可用顶层会话，或列近期 worker | scope: tickets/sessions/recent/history, sessionId?, ticketId?, limit? |
 | ria_spawn | 在已存在的绝对目录中新建顶层 worker 会话；title 失败只返回 titleError | cwd, agentPreset?, title? |
-| ria_resolve | 给 intake 定性 answered/work/merge/split/control/blocked | ticketId, kind, summary?, goal?, acceptance?, executor?, start?, targetTicketId?, action?, reason?, blockedReason?, waitingOn?, expectedRevision? |
+| ria_resolve | 给 intake 定性 answered/work/merge/split/control/blocked | ticketId, kind, summary?, goal?, acceptance?, executor?, start?, targetTicketId?, action?, reason?, blockedReason?, waitingOn?, attention?, expectedRevision? |
 | ria_request | 以普通用户消息发送内容；attachments 为图片绝对路径，投递前检查文件、宿主限制与目标模型 | targetSessionIds, message, content?, attachments?, ticketId, note, mode? |
 | ria_read | 读会话最近消息 | sessionId, limit? |
 | ria_approval | 列出等待审批的 worker | action: list |

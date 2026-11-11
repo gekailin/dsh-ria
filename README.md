@@ -156,14 +156,20 @@ Ria 入口标题右侧有一个“微信”chip。点开后可以扫码登录微
 
 | 工具 | 作用 |
 |---|---|
-| ria_ticket | 建/改/关/合并 ticket。字段：ticketId、goal、acceptance、executor（self 或一个顶层 worker sessionId）、status（intake/open/working/blocked/forked/done/failed/cancelled）、blockedReason。一个 ticket 只有一个 executor；状态只能经状态机转移。每次更新都会把 recovery.count 归零。action=merge 把 sourceTicketId 并进 targetTicketId：source 以 done + resolution.kind=merged 收敛，子 ticket 与待投递消息改挂 target，合并不可逆。 |
-| ria_status | 查看 ticket 和可管理的顶层 Session。可带 scope=tickets、scope=sessions、scope=recent 或 scope=history；带 ticketId 可精确查一条（归档的也能查）。scope=tickets 只列热存储（所有非终态 + 最近 24h 或最新 50 条终态）；scope=history 从归档日志按 closedAt 倒序读，默认 50 条、limit 最大 200。scope=sessions 带 title、cwd、updatedAt、lastUsedAt；scope=recent 返回最近 7 天成功派发过的最多 5 个顶层 worker，按 lastUsedAt 倒序，带 sessionId、title、cwd、lastUsedAt、lastTicketGoal、lastTicketStatus。不会 resume 冷会话。 |
+| ria_ticket | 建/改/关/合并 ticket。字段：ticketId、goal、acceptance、executor（self 或一个顶层 worker sessionId）、status（intake/open/working/blocked/forked/done/failed/cancelled）、blockedReason、waitingOn、attention。当 status=blocked 且 waitingOn=user 时，attention 用 {kind:'question'|'approval'|'decision', question, options?, askedBy?, ref?} 记录“在等用户回答什么”；旧票只有 blockedReason 也能正常读取。一个 ticket 只有一个 executor；状态只能经状态机转移。每次更新都会把 recovery.count 归零。action=merge 把 sourceTicketId 并进 targetTicketId：source 以 done + resolution.kind=merged 收敛，子 ticket 与待投递消息改挂 target，合并不可逆。 |
+| ria_status | 查看 ticket 和可管理的顶层 Session。可带 scope=tickets、scope=sessions、scope=recent 或 scope=history；带 ticketId 可精确查一条（归档的也能查）。scope=tickets 只列热存储（所有非终态 + 最近 24h 或最新 50 条终态）；scope=history 从归档日志按 closedAt 倒序读，默认 50 条、limit 最大 200。scope=sessions 带 title、cwd、updatedAt、lastUsedAt；scope=recent 返回最近 7 天成功派发过的最多 5 个顶层 worker，按 lastUsedAt 倒序，带 sessionId、title、cwd、lastUsedAt、lastTicketGoal、lastTicketStatus。不会 resume 冷会话。所有 ticket 响应附带 attentionOverview：waitingOnUser 计数与 items（ticketId、goal、question、kind、options、legacy）。 |
 | ria_spawn | 新建一个顶层 worker 会话。cwd 必须是存在且可读的绝对目录；agentPreset 可选；title 可选（创建后用 title 服务重命名，失败只返回 titleError，不影响创建）。失败码：workspace_missing、preset_not_found、spawn_failed。新会话作为 top-level worker 出现在 ria_status scope=sessions，不会被当成 subagent。 |
 | ria_request | 把 ticket 的消息发给一个或多个 worker。ticketId 与 note 均必填；mode=queue 或 steer；content 支持 text/image/file；attachments 支持最多 20 个图片绝对路径（png/jpeg/webp/gif），与 content 一起作为 text + image parts 投递，交给宿主 attachment 服务统一校验和存储。目标 executor 必须等于 ticket.executor。Host 把 note 记录到 ria.json，由插件 client 在 Ria 会话当前轮次末尾显示成可见卡片，不进入模型上下文；同时把 note 作为“📌 任务已派发：<note>”推送到微信。缺 note、空白或超长会直接报错且不投递。附件预检失败码：attachment_missing、attachment_invalid、model_no_image；预检失败不投递、不写 recentWorkers、不动 ticket。Host 不加消息前缀；防误发提示由 agent system prompt section 提供。 |
 | ria_read | 读某个 Session 的近期消息。live 用 snapshotEvents，冷会话用持久化 events，不 resume。 |
 | ria_approval | 列出正在等待审批的 worker（仅限有 active ticket 的 executor）。只读：不批准、不拒绝、不替 UI answerer 作答。 |
 | ria_grant | 临时调整一个 worker 的 sandbox mode 和/或 approval policy。action=set/list/reset；set 必须带 userConfirmed=true，并记录原值、到期时间、审计，任务结束或 reset 时恢复。 |
 | ria_memory | read/remember/forget。写 stateDir/memory.md，0600，上限 4096 字节。 |
+
+### 等待用户拍板（attention）
+
+`blocked + waitingOn=user` 的 ticket 可以带 `attention`，把“在等什么问题、有哪些选项、什么时候问的”结构化存进 ria.json。`ria_status` 的任意 ticket 响应都会返回 `attentionOverview`：`waitingOnUser` 是票数，`items` 逐条给出问题；只有老 `blockedReason` 的历史票仍然可读，并标 `legacy=true`。ticket 离开 blocked、关闭或被 reopen 时会清空 attention。
+
+`attention` 和 `ria_approval` 是两件事：`ria_approval` 只读地列出 **worker** 正在等待的审批，审批由 worker 会话和 UI answerer 处理；`attention` 是 **Ria 自己**需要用户拍板的问题（方案选择、是否继续、范围确认等），不会批准或拒绝任何 worker 操作。
 
 ### 近期 worker 与默认选择
 

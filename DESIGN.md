@@ -28,7 +28,7 @@ Super Session 是全局唯一的普通顶层 DSH Session。
 不做：
 
 - attach/detach 和 managed 会话列表。
-- needs_input/failed 即时自动唤醒。
+- needs_input/failed 的独立事件级唤醒；只做 worker idle 通知，不做审批/输入等待的自动提醒。
 - Host 强制 brief / 澄清门禁。
 - 多实例锁、409 防双开。
 - lesson 目录、FTS5、向量检索。
@@ -54,6 +54,7 @@ SuperSessionService
   |-- MemoryFile（memory.md）
   |-- RequestGateway（普通消息 + 幂等）
   |-- ApprovalObserver（approval/request 只读观察）
+  |-- WorkerIdleWatcher（agent/status 只读观察，worker idle 通知）
   |-- TaskRecovery（启动时继续未完成 task）
   |-- WechatService（进程内）
   |-- SuperHttpApi（ensure / 微信控制）
@@ -66,7 +67,7 @@ SuperSessionService
 普通顶层 Worker Sessions（Preset/tools 不变）
 ~~~
 
-没有后台轮询 observer，没有独立 bridge 进程；只有 approval/request 的只读观察器，记录后立即 next()。
+没有后台轮询，没有独立 bridge 进程；只有两个只读事件观察器：approval/request 记录后立即 next()，agent/status 在 worker idle 时通知 Super。
 
 ## 4. Task
 
@@ -209,7 +210,7 @@ stateDir/memory.md
 
 ## 9. 状态与定时
 
-super_session_status 按需读取，不后台轮询、不主动唤醒。
+super_session_status 按需读取，不后台轮询；唯一主动推送是 worker idle 通知（见 9.1）。
 
 - scope=tasks：task 列表。
 - scope=sessions：可用的顶层 Session，排除 Super 自己、subagent、带 parentSessionId 的会话。
@@ -222,6 +223,19 @@ super_session_read 只读最近消息，默认 30 条，最多 100 条，不 res
 - target 只能是 this_session。
 - title 带“Super:”前缀；用完删除。
 - 插件不实现 timer、不存 nextAt。
+
+### 9.1 Worker idle 唤醒
+
+Host 监听 agent/status（payload 为 { agent, status }）。当 status 变为 idle，且该 session 是至少一个 working task 的 executor 时，给 Super 发一条 mode=queue 的普通消息。
+
+- 只读：不读 worker transcript，不写 worker，不改 worker prompt/tools，不 resume 冷 worker；唯一动作是 ensure Super 并 prompt Super。
+- 排除 Super 自身，避免自我唤醒循环。
+- 只匹配 status=working 的 task；open/done/cancelled/blocked 不触发。
+- 节流键是 workerSessionId + taskId，默认 30 秒；多 task 分别计时，同一次事件只发一条消息。
+- 文本固定以 [Worker idle] 开头，只写“turn 已结束”，要求 Super 先 read 确认，不假设完成；等用户输入/决定时标 blocked，继续时发 continuation。
+- idle 无法区分完成、失败和等用户输入；审批 pending 通常仍为 running，因此不会产生 idle 通知。
+- 配置 notifyOnWorkerIdle（默认 true）、workerIdleThrottleMs（默认 30000，1 秒–10 分钟）；环境变量 DSH_SUPER_SESSION_WORKER_IDLE、DSH_SUPER_SESSION_WORKER_IDLE_THROTTLE_MS 优先。
+- 日志记录 enabled/disabled、notify、throttled、no working task、Super skip；投递失败只 warn，不重试。
 
 ## 10. 启动恢复
 
@@ -381,6 +395,8 @@ Phase 9：微信出站长回复/复杂 Markdown 转 .md 文件（可配置阈值
 
 Phase 10：恢复上限可见性（达到上限的 task 标 blocked + blockedReason，通知 Super 并列出放弃的 task；startup 异常也通知；task 更新/成功派发清零 recoveryCount）。
 
+Phase 11：worker idle 自动唤醒（agent/status 只读监听、working task executor 过滤、排除 Super、按 worker+task 30 秒节流、可配置开关、mock 测试）。
+
 ## 16. 验收
 
 1. 点击入口只创建一个 Super。
@@ -403,6 +419,10 @@ Phase 10：恢复上限可见性（达到上限的 task 标 blocked + blockedRea
 17. 微信长回复/复杂 Markdown 按可配置规则转完整 .md 文件；短消息不变；文件发送失败回退文本并提示。
 18. 达到恢复上限的 task 不再停留在 working；状态为 blocked，blockedReason 可见，且 Super 收到包含 taskId/executor/goal 的通知。
 19. startup recovery 异常时 Super 收到失败通知；通知失败不能吞掉原始错误日志。
+20. worker 结束 turn 变 idle 时，只有 working task 的 executor 触发一次通知；Super 自己、非 working task、节流窗口内重复 idle 都不触发。
+21. idle 通知只读 worker，不写 worker、不 resume 冷会话；通知文本要求 read 确认且不假设完成。
+22. idle 通知默认开启，可通过配置或环境变量一键关闭；关闭后不注册监听，日志说明原因。
+23. 通知投递失败只记 warn，不影响 worker 状态，也不改变 task。
 
 ## 17. 已确认
 
@@ -413,6 +433,7 @@ Phase 10：恢复上限可见性（达到上限的 task 标 blocked + blockedRea
 - 微信设置在入口右侧 chip。
 - 微信长回复/复杂 Markdown 转 .md：默认 800 字，代码块/表格/4 标题/6 链接任一命中。
 - request 是普通会话消息，使用 DSH 支持的消息类型。
+- worker idle 通知默认开启，节流 30 秒；只对 working task 的 executor 触发。
 
 ## 18. 风险
 
@@ -433,17 +454,21 @@ Phase 10：恢复上限可见性（达到上限的 task 标 blocked + blockedRea
 | 欢迎消息伪造 turn 0 | 已用真实 UI 验证正常显示；UI 会计 1 轮 1 步并显示已完成，属可接受的外观副作用 |
 | 临时权限被滥用 | 只能用户明确指令 + userConfirmed；单 worker、单 grant、TTL 上限 24h；task close/启动恢复；审计 |
 | 恢复时覆盖用户手工改动 | 比较当前 override，不一致则跳过并记录 |
+| idle 误判为完成 | 通知只写 turn 已结束；要求 read 确认；等用户输入时标 blocked |
+| idle 通知刷屏/自我唤醒 | 排除 Super；按 worker+task 30 秒节流；只匹配 working task |
+| 通知投递失败 | 只 warn，不重试；worker 状态不受影响 |
 | sandbox override 无法清除 | 写回原 effective mode，行为一致但可能保留同值 override |
 
 ## 19. 总结
 
-全局一个 Super Session，PTC preset（agentPreset=ptc）+ 管理者 prompt、memory.md 和 7 个工具；模型通过 run_code SDK 调用工具；用 task 管理谁做什么，request 就是普通会话消息；带 taskId 的派发自动附一条中性的防误发提示；重启按 task 继续；微信客户端进程内运行，长回复/复杂 Markdown 自动转 .md 文件；新建会话有一条不调用模型的一次性欢迎消息。
+全局一个 Super Session，PTC preset（agentPreset=ptc）+ 管理者 prompt、memory.md 和 7 个工具；模型通过 run_code SDK 调用工具；用 task 管理谁做什么，request 就是普通会话消息；带 taskId 的派发自动附一条中性的防误发提示；worker idle 时自动唤醒 Super（只读事件、30 秒节流）；重启按 task 继续；微信客户端进程内运行，长回复/复杂 Markdown 自动转 .md 文件；新建会话有一条不调用模型的一次性欢迎消息。
 
 ## 20. 实现状态
 
 截至当前版本：
 
-- Phase 0–10 已实现；Phase 0–4 和 Phase 6 通过隔离环境的真实 DSH 验证，Phase 5、Phase 7、Phase 8、Phase 9 和 Phase 10 由单元测试和 smoke 覆盖。
+- Phase 0–11 已实现；Phase 0–4 和 Phase 6 通过隔离环境的真实 DSH 验证，Phase 5、Phase 7、Phase 8、Phase 9、Phase 10 和 Phase 11 由单元测试和 smoke 覆盖。
+- Phase 11 只用 mock 的 agent/status 事件验证，尚未在真实 worker 会话里触发。
 - 临时 worker 权限（审批阶段二）已实现，等待用户在真实会话里首次验证。
 - 微信文件发送链路已实现并用 mock 覆盖，尚未用真实微信账号完成 .md 收发验证。
 
@@ -451,6 +476,7 @@ Phase 10：恢复上限可见性（达到上限的 task 标 blocked + blockedRea
 
 - lib/index.js：Host、SuperStore、7 个工具、manager prompt、启动恢复、HTTP API、approval observer 接线、grant 接线、微信服务接线，以及新建 Super 的 welcome 合成 turn。
 - lib/approvals.mjs：approval/request 只读观察器、pending 列表、TTL/abort/shutdown 清理。
+- lib/worker-idle.mjs：agent/status 只读监听、working task executor 过滤、Super 排除、按 worker+task 节流、配置/环境变量归一化。
 - lib/grants.mjs：临时权限 set/list/reset、原值记录、task close/expiry/startup 恢复、审计、失败重试。
 - lib/client.js：侧边栏入口、瞬时 launcher、入口右侧微信 chip 和登录弹层。
 - lib/wechat/wxweb.mjs、login.mjs、outbound.mjs：复用的文件传输助手协议、扫码登录、串行发送，以及 .md 文件上传/appmsg 发送。
@@ -462,6 +488,7 @@ Phase 10：恢复上限可见性（达到上限的 task 标 blocked + blockedRea
 - test/wechat-file.mjs：Markdown 判定、文件发送、失败回退和 multipart/appmsg 单元测试。
 - test/approvals.mjs：审批观察器单元测试。
 - test/grants.mjs：临时权限单元测试（过期、startup、漂移跳过、恢复失败、审计）。
+- test/worker-idle.mjs：正常触发、Super 排除、非 working/running 不触发、节流、关闭开关、多 task 合并、配置归一化。
 - test/startup.mjs：恢复上限、blocked 状态、更新/成功派发清零、启动异常通知。
 
 已验证：
@@ -474,7 +501,7 @@ Phase 10：恢复上限可见性（达到上限的 task 标 blocked + blockedRea
 - GET /wechat/status 返回 idle；POST /wechat/login 返回 data:image/jpeg 二维码；弹层显示 190×190 二维码。
 - 宽侧边栏中 chip 位于 Super Session 标题右侧；折叠侧边栏不插入。
 - startup 测试覆盖 recoveryCount=3 的 working task：启动后产生一条通知、任务变 blocked 并带 blockedReason，status 可见；通知包含 taskId/executor/goal；更新 task 和成功派发都会把 recoveryCount 清零；pending delivery 重试成功也不会误判为超限；resolveAgent 失败时产生启动失败通知。测试不调用模型。
-- smoke 覆盖 Workspace 挂载、7 个工具注册、request 投递、task 派发防误发提示、quick relay 不加提示、status、read、memory、持久化，以及 welcome 五事件序列和第二次 ensure 不重复；wechat 测试覆盖文本提取、事件过滤、入站去重/回显过滤、失败标记、reconnect skip 和状态视图；approvals 测试覆盖活跃 executor 过滤、始终 next()、abort/TTL/shutdown 清理和 lossless 输出；grants 测试覆盖授权门槛、原值记录、task done 自动恢复、显式 reset、过期、startup、漂移跳过、恢复失败和审计；wechat-file 测试覆盖阈值/代码块/表格/标题/链接、配置/env、文件名、短消息不变、长消息发 .md、失败回退，以及上传和 appmsg 字段。npm test 六个测试全部通过。
+- smoke 覆盖 Workspace 挂载、7 个工具注册、request 投递、task 派发防误发提示、quick relay 不加提示、status、read、memory、持久化，以及 welcome 五事件序列和第二次 ensure 不重复；wechat 测试覆盖文本提取、事件过滤、入站去重/回显过滤、失败标记、reconnect skip 和状态视图；approvals 测试覆盖活跃 executor 过滤、始终 next()、abort/TTL/shutdown 清理和 lossless 输出；grants 测试覆盖授权门槛、原值记录、task done 自动恢复、显式 reset、过期、startup、漂移跳过、恢复失败和审计；wechat-file 测试覆盖阈值/代码块/表格/标题/链接、配置/env、文件名、短消息不变、长消息发 .md、失败回退，以及上传和 appmsg 字段。npm test 七个测试全部通过。
 - 新建 Super 后真实 Web UI 显示欢迎消息；会话界面显示“已完成，用时 1 秒”和“1 轮 1 步”，输入框正常；没有浏览器 runtime error。
 - 审批观察器没有在真实 UI 中触发过；只做了单元测试和 smoke。首次实际审批时需确认 pending 列表和清理行为。
 - welcome 的合成 turn 会被 UI 计入“1 轮 1 步”，并显示“已完成”；这是 assistant 气泡可正常渲染的代价。

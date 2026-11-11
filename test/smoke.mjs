@@ -307,6 +307,7 @@ assert.match(installed.get('super_session_request').description, /ends the curre
 assert.match(installed.get('super_session_request').description, /anti-misdelivery note/)
 assert.match(installed.get('super_session_approval').description, /never approves or denies/)
 assert.match(promptText, /防误发/)
+assert.match(promptText, /\[Worker idle\]/)
 assert.match(promptText, /super_session_approval/)
 assert.match(promptText, /super_session_grant/)
 assert.match(installed.get('super_session_grant').description, /explicitly asks/)

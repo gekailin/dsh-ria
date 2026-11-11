@@ -8,7 +8,7 @@ Super 自己是一个普通的顶层 DSH Session，运行 PTC preset，带管理
 
 ## 当前状态
 
-- Phase 0–10 已实现：单例、PTC 创建、任务、转述、读取、memory、重启恢复（含恢复上限可见性）、侧边栏入口、进程内微信和入口右侧的微信 chip、worker 审批可见性、新会话欢迎消息、任务派发防误发提示、临时 worker 权限调整，以及微信长回复/复杂 Markdown 自动转 .md 文件。
+- Phase 0–11 已实现：单例、PTC 创建、任务、转述、读取、memory、重启恢复（含恢复上限可见性）、侧边栏入口、进程内微信和入口右侧的微信 chip、worker 审批可见性、新会话欢迎消息、任务派发防误发提示、临时 worker 权限调整、微信长回复/复杂 Markdown 自动转 .md 文件，以及 worker 结束 turn 后自动唤醒 Super。
 - 已验证环境：DSH 0.2.2-rc.1，Node 26，真实 Web profile 的隔离副本。
 - 微信入站只接受文本；扫码登录需要在弹层里完成一次，之后 DSH 重启会自动复用凭据。
 
@@ -138,7 +138,7 @@ Super Session 入口标题右侧有一个“微信”chip。点开后可以扫�
 - 恢复失败会标记 `restore_failed`，60 秒后重试；审计里能看到失败原因。
 - 不改 worker 的 tools、prompt 或 preset。
 
-Super 的系统 prompt 要求：需求不明确时先和用户澄清，再下发；不要凭猜测开工；任务要有验收标准；进度按需查询；经验按 case 集总结（需求、错误做法、正确做法），默认只在对话里输出，用户指定路径时才写文件；重启后先 read 再决定是否继续；不要重复新建会话的欢迎消息；任务派发会自动附防误发提示，不要自己再手写一遍；只有用户明确要求时才使用 super_session_grant，绝不自行放宽 worker 权限。
+Super 的系统 prompt 要求：需求不明确时先和用户澄清，再下发；不要凭猜测开工；任务要有验收标准；进度按需查询；经验按 case 集总结（需求、错误做法、正确做法），默认只在对话里输出，用户指定路径时才写文件；重启后先 read 再决定是否继续；收到 `[Worker idle]` 时先 read，确认完成才关任务，等用户输入就标 blocked；不要重复新建会话的欢迎消息；任务派发会自动附防误发提示，不要自己再手写一遍；只有用户明确要求时才使用 super_session_grant，绝不自行放宽 worker 权限。
 
 ## 任务与转述
 
@@ -148,7 +148,7 @@ Super 的系统 prompt 要求：需求不明确时先和用户澄清，再下发
 - 带 taskId 的任务派发，Host 会自动在消息最前面加一条「任务转交 · 防误发」文本：本会话空闲、刚建立或消息相关时正常执行；只有在做另一件明显不同的事或完全对不上时，才先向用户确认、不直接执行。
 - 这条提示是普通用户消息的一部分，不是 system role，也不改 worker 的 system prompt；插件无法强制 worker 一定遵守。
 - 不带 taskId 的 quick relay 不加提示，保持原文，适合“原话转发”和短消息。
-- 进度默认不自动推送；Super 需要时调 status/read，或用户让它查看。
+- worker 的 turn 结束时 Host 会自动通知 Super（见下节）；其余进度不轮询、不自动推送，Super 需要时调 status/read。
 - Super 需要定时唤醒时，使用 DSH 官方 schedule_create；插件不实现调度循环。
 
 ## 重启恢复
@@ -160,6 +160,31 @@ Host 启动后延迟 1.5 秒：
 - 同一 task 连续自动恢复最多 3 次。达到上限后，Host 会把任务标成 `blocked`，写入 `blockedReason`（自动恢复已达上限），并在同一条消息里列出 taskId、executor、goal，要求用户手动处理；不会静默跳过。
 - `recoveryCount` 在 task 被 `super_session_task` 更新或成功派发时归零。因此它统计的是连续无人处理的重启次数；如果 Super 或用户中途接手，额度会重置。
 - startup recovery 本身抛错时，也会向 Super 发送失败通知（错误内容和“需要手动处理”），不只写日志。
+
+## Worker 完成自动唤醒
+
+默认开启。Host 监听 DSH 的 `agent/status` 事件；当某个正在执行的 worker 变回 `idle`，并且它是至少一个 `working` task 的 executor 时，给 Super 发一条普通队列消息。Super 不用轮询，也不会错过 worker 的结束点。
+
+- 只读事件：不读 worker 的 transcript，不改 worker 的 prompt/tools，不往 worker 会话写消息，也不 resume 冷 worker。唯一的动作是唤醒 Super。
+- 排除 Super 自己，避免自我唤醒循环。
+- 只匹配 `status=working` 且 `executor` 等于该 worker 的 task；`open`、`done`、`cancelled`、`blocked` 都不触发。
+- 同一 worker + 同一 task 在 30 秒内只通知一次；多个 task 分别计时。
+- 通知措辞只写“worker X 的 turn 已结束”，并明确要求 Super 用 `super_session_read` 确认，不假设任务完成。
+- `idle` 本身无法区分离线、完成和等待用户输入。Super read 后如果看到 worker 正在向用户提问，应把 task 标成 `blocked` 并报告；如果 worker 在等审批，通常仍是 `running`，不会产生 idle 通知。
+- 通知投递失败只记 warn，不重试；worker 侧状态不受影响。
+
+关闭或调整：
+
+~~~yaml
+- id: super-session
+  config:
+    notifyOnWorkerIdle: false
+    workerIdleThrottleMs: 30000
+~~~
+
+环境变量优先级更高：`DSH_SUPER_SESSION_WORKER_IDLE=0` 一键关闭，`DSH_SUPER_SESSION_WORKER_IDLE_THROTTLE_MS` 调整节流窗口（1 秒–10 分钟）。
+
+日志前缀是 `dsh-super-session: worker-idle:`。`info` 记录已通知、节流跳过和关闭状态，`debug` 记录“无 working task”等其他跳过原因。
 
 ## 状态文件
 
@@ -179,7 +204,7 @@ DSH_HOME/state/super-session/
 前缀：/plugins/dsh-super-session/api
 
 - POST /ensure：创建或打开唯一 Super。
-- GET /state：superSessionId、tasks、pendingDeliveries、grants。
+- GET /state：superSessionId、tasks、pendingDeliveries、grants、workerIdleNotifications（enabled/throttleMs）。
 - GET /health：健康检查。
 - GET /wechat/status：微信登录和连接状态。
 - POST /wechat/login：获取登录二维码。
@@ -194,7 +219,7 @@ DSH_HOME/state/super-session/
 npm test
 ~~~
 
-smoke 使用 mock ctx 覆盖 ensure、Workspace 挂载、7 个工具、request、task 派发防误发提示、quick relay 不加提示、status、read、memory、持久化、grant 的 set/list/reset 与 task 关闭恢复、GET /state 的 grants，以及欢迎消息的五事件序列和第二次 ensure 不重复；wechat 测试覆盖 assistant 文本提取、入口事件过滤、微信入站去重/回显过滤、失败标记、reconnect skip 和状态视图；wechat-file 测试覆盖阈值/代码块/表格/标题/链接判定、配置/env 覆盖、文件名、短消息不变、长消息发 .md、失败回退文本，以及上传 multipart 和 appmsg 的字段/签名/去重；approvals 测试覆盖只记录活跃 executor、始终 next()、abort/超时/shutdown 清理和 lossless 输出；grants 测试覆盖过期、startup、task 缺失/关闭、漂移跳过、恢复失败和审计；startup 测试覆盖达到恢复上限后的通知与 blocked 状态、更新/成功派发清零、以及启动异常通知。
+smoke 使用 mock ctx 覆盖 ensure、Workspace 挂载、7 个工具、request、task 派发防误发提示、quick relay 不加提示、status、read、memory、持久化、grant 的 set/list/reset 与 task 关闭恢复、GET /state 的 grants，以及欢迎消息的五事件序列和第二次 ensure 不重复；wechat 测试覆盖 assistant 文本提取、入口事件过滤、微信入站去重/回显过滤、失败标记、reconnect skip 和状态视图；wechat-file 测试覆盖阈值/代码块/表格/标题/链接判定、配置/env 覆盖、文件名、短消息不变、长消息发 .md、失败回退文本，以及上传 multipart 和 appmsg 的字段/签名/去重；approvals 测试覆盖只记录活跃 executor、始终 next()、abort/超时/shutdown 清理和 lossless 输出；grants 测试覆盖过期、startup、task 缺失/关闭、漂移跳过、恢复失败和审计；startup 测试覆盖达到恢复上限后的通知与 blocked 状态、更新/成功派发清零、以及启动异常通知；worker-idle 测试覆盖正常触发、排除 Super、非 working task/running 状态不触发、按 task 节流、开关关闭，以及提示文本要求 read/不假设完成/等用户输入时标 blocked。
 
 ## 限制
 
@@ -202,7 +227,9 @@ smoke 使用 mock ctx 覆盖 ensure、Workspace 挂载、7 个工具、request�
 - 微信文件上传/发送链路按网页版协议实现并用 mock 覆盖，尚未用真实微信账号完成一次 .md 文件收发验证。
 - 扫码登录和消息收发仍需要真实微信账号验证。
 - 审批可见性只报告 pending，不代批、不自动唤醒 Super；临时权限需要用户明确指令，Super 不能自行判断后提权。
-- 不做 needs_input/failed 的即时自动唤醒；需要时用官方 schedule 或用户回来问。
+- worker 自动唤醒只看 `agent/status` 的 `idle`，不区分“完成”“失败”“等用户输入”；提示措辞不假设完成，需要 Super 再 read。
+- 不做 needs_input/failed 的独立事件级唤醒；需要时用官方 schedule 或用户回来问。
+- worker-idle 通知没有在真实 worker 会话里触发过，只用 mock 事件验证。
 - 不做多实例防双开。
 - 澄清门禁是 prompt 行为，不是 Host 强制状态机。
 - Super 依赖 PTC preset；standard 模式不会作为后备。
@@ -219,5 +246,6 @@ smoke 使用 mock ctx 覆盖 ensure、Workspace 挂载、7 个工具、request�
 - 不自动上传、不遥测。
 - Super 可以读 Session、发消息、建任务；这些能力只在用户明确要求时使用。
 - `approval/request` 监听器只读：记录 pending 后调用 next()，从不返回审批结果。
+- `agent/status` 监听器只读 worker 的 id 和状态，只向 Super 发通知；不 resume、不写 worker。
 - 临时权限只写当前 session 的 sandbox/mode 和 approval policy 投影，不改全局默认，也不改 worker 的 tools/prompt/preset；所有变更写入 audit.jsonl 0600。
 - 删除 Super 不会自动删除 task、memory 和 Workspace；需要时手动清理。

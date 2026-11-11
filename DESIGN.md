@@ -1,6 +1,6 @@
 # dsh-super-session 设计方案
 
-> 状态：v0.24（2026-11-11）
+> 状态：v0.25（2026-11-11）
 > 目标目录：/home/gkl/Desktop/vibe_proj/dsh-super-session
 > Super Session 固定用 PTC preset（agentPreset=ptc）启动，模型只直接看到 run_code + SDK。本文是设计说明；实现状态见第 20 节。
 
@@ -356,6 +356,14 @@ markdownFile 也可以直接写 false 关闭。环境变量优先于 profile 配
 - GET /wechat/status 增加 paused、pausedBy、pauseReason、pausedAt、resumedAt、resumedBy；未暂停时 paused=false，时间字段为 null。
 - 状态写入 wechat/state.json，DSH 重启后保持；带 creds 启动时，Outbound 在创建后立即套用暂停状态。
 
+界面（chip 弹层）：
+
+- 已登录时显示推送状态卡：正常为“推送中”；暂停为“已暂停推送”，并显示来源（“手动”或“自动（非微信通道消息）”）和暂停时间。
+- 卡片右侧是“暂停推送 / 恢复推送”按钮；点击后 POST /wechat/pause，并直接用响应里的 status 刷新界面，不等下一次轮询。
+- 弹层每 2 秒、侧边栏每 15 秒读取 status。发现 paused 由 false 变为 true 且 pausedBy=channel 时，弹层内显示 8 秒轻提示，侧边栏在右下角显示同样文案的浮层；不弹窗、不抢占输入焦点。
+- chip 已登录且暂停时圆点变橙色，标题提示“微信推送已暂停”。
+- 设置页“Super Session”不重复放同一个开关，微信推送只保留 chip 弹层一个控制点。
+
 自动切换：
 
 - 只把 source.kind=user 的真实用户消息当作通道信号。微信入站 requestId 以 wx_ 开头；Web GUI、手机端等其他通道通常是裸 UUID。
@@ -470,6 +478,8 @@ Phase 13：静态 system prompt section 防误发提示（对所有 agent 安装
 
 Phase 14：近期 worker 选择（成功 request 记录 recentWorkers；status 增加 scope=recent 与 title/lastUsedAt；manager prompt 规定默认从近期 worker 里挑，空或不确定时问用户）。
 
+Phase 15：微信暂停推送 UI（chip 弹层显示“推送中 / 已暂停推送”、来源与时间、手动暂停/恢复按钮；自动暂停时弹层内和侧边栏右下角各一条 8 秒轻提示；chip 圆点显示暂停色）。
+
 ## 16. 验收
 
 1. 点击入口只创建一个 Super。
@@ -508,6 +518,7 @@ Phase 14：近期 worker 选择（成功 request 记录 recentWorkers；status �
 33. “近期用过”定义为成功 super_session_request 过的顶层 worker，窗口 7 天、最多 5 个、保留 30 天；task 创建/更新不算，用户手工会话不算。
 34. scope=recent 返回 sessionId、title、cwd、lastUsedAt、lastTaskGoal、lastTaskStatus；scope=sessions 也带 title、lastUsedAt；缺失字段省略且输出 lossless。
 35. 投递失败不更新 recentWorkers；quick relay 成功也更新 lastUsedAt。
+36. 微信弹层显示推送状态（正常“推送中”，暂停“已暂停推送”+ 来源 + 时间），按钮可手动暂停/恢复并立即刷新；自动暂停时只出现轻提示，不弹窗；设置页不重复提供同一开关。
 
 ## 17. 已确认
 
@@ -561,7 +572,8 @@ Phase 14：近期 worker 选择（成功 request 记录 recentWorkers；status �
 
 截至当前版本：
 
-- Phase 0–14 已实现；Phase 0–4、Phase 6 和 Phase 13 通过隔离环境的真实 DSH 验证，Phase 5、Phase 7、Phase 8、Phase 9、Phase 10、Phase 11、Phase 12 和 Phase 14 由单元测试和 smoke 覆盖。
+- Phase 0–15 已实现；Phase 0–4、Phase 6 和 Phase 13 通过隔离环境的真实 DSH 验证，Phase 5、Phase 7、Phase 8、Phase 9、Phase 10、Phase 11、Phase 12、Phase 14 和 Phase 15 由单元测试和 smoke 覆盖。
+- Phase 15 的暂停状态卡、手动开关和自动暂停轻提示没有在真实微信账号下走完整链路；弹层只在已登录时显示状态卡，隔离 profile 无法伪造成已登录。
 - Phase 14 的近期 worker 记录、scope=recent 候选字段、空窗口和无 lastUsedAt 字段的 lossless 输出由 smoke 覆盖；挑选行为本身是 prompt 约束，未用真实模型验证。
 - Phase 13 的设置页已在隔离 DSH 里真实点击：设置导航出现 Super Session；开关默认勾选，关闭后显示“当前：已关闭”且 GET /settings 返回 false，重新打开后恢复 true；截图 docs/ui-settings.png。system prompt section 的安装、开关和空文本同时由单元测试与 smoke 覆盖。
 - Phase 11 只用 mock 的 agent/status 事件验证，尚未在真实 worker 会话里触发。
@@ -576,7 +588,7 @@ Phase 14：近期 worker 选择（成功 request 记录 recentWorkers；status �
 - lib/approvals.mjs：approval/request 只读观察器、pending 列表、TTL/abort/shutdown 清理。
 - lib/worker-idle.mjs：agent/status 只读监听、working task executor 过滤、Super 排除、按 worker+task 节流、配置/环境变量归一化。
 - lib/grants.mjs：临时权限 set/list/reset、原值记录、task close/expiry/startup 恢复、审计、失败重试。
-- lib/client.js：侧边栏入口、瞬时 launcher、入口右侧微信 chip 和登录弹层、设置页 Super Session section。
+- lib/client.js：侧边栏入口、瞬时 launcher、入口右侧微信 chip 和登录弹层（含推送状态卡、暂停/恢复按钮、自动暂停轻提示）、设置页 Super Session section。
 - lib/wechat/wxweb.mjs、login.mjs、outbound.mjs：复用的文件传输助手协议、扫码登录、串行发送，以及 .md 文件上传/appmsg 发送。
 - lib/wechat/markdown.mjs：长度/代码块/表格/标题/链接判定、配置归一化、文件名。
 - lib/wechat/service.mjs：进程内连接、assistant 文本回传、长回复转文件/失败回退、入站去重、Super 投递、重连积压处理、暂停状态与按通道自动切换。
@@ -624,6 +636,6 @@ Phase 14：近期 worker 选择（成功 request 记录 recentWorkers；status �
 - 微信 .md 文件发送只按网页版协议 mock 验证；真实账号的文件上传/下载尚未验证。
 - .md 文件发送失败回退文本时，若文本仍超过 4 块，会按原有文本切块策略截断。
 - 恢复上限在启动时判定；如果给 Super 的通知本身发送失败，只记录日志，任务仍会保持 blocked，等待用户或下次启动处理。
-- 微信暂停目前只有 HTTP 接口和 status 字段，chip 弹层还没有暂停按钮和暂停状态指示。
+- 微信暂停 UI 只在 chip 弹层已登录时出现；自动暂停提示依赖 2 秒/15 秒轮询，最迟约 15 秒才在侧边栏出现。真实微信账号未验证暂停期间的连接保持。
 - 暂停不能撤回已经在发送中的那一条；只保证后续排队消息不发出。
 - 近期 worker 只记录 Super 成功派发过的会话；用户手工使用不计入。挑选是 prompt 约束，Host 不强制，也未用真实模型验证是否符合预期。

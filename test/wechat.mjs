@@ -28,13 +28,13 @@ function makeService(ctx, dir, overrides = {}) {
   return new WechatService({
     ctx,
     stateDir: dir,
-    ensureSuper: async () => 'super-1',
-    getSuperId: () => 'super-1',
+    ensureRia: async () => 'ria-1',
+    getRiaId: () => 'ria-1',
     ...overrides,
   })
 }
 
-const dir = await mkdtemp(join(tmpdir(), 'dsh-super-session-wechat-'))
+const dir = await mkdtemp(join(tmpdir(), 'dsh-ria-wechat-'))
 try {
   assert.equal(assistantText({ data: { message: { content: [
     { type: 'tool', text: 'ignored' },
@@ -53,12 +53,12 @@ try {
     service.outbound = { async enqueue(text) { sent.push(text); return 'id' } }
     const handler = ctx.handlers.get('session/event')
     assert.equal(typeof handler, 'function')
-    handler({ header: { id: 'super-1' } }, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'hello' }] } } })
+    handler({ header: { id: 'ria-1' } }, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'hello' }] } } })
     await new Promise(resolve => setTimeout(resolve, 0))
     assert.deepEqual(sent, ['hello'])
     handler({ header: { id: 'other' } }, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'nope' }] } } })
-    handler({ header: { id: 'super-1' } }, { type: 'assistant/message', data: { interrupted: true, message: { content: [{ type: 'text', text: 'partial' }] } } })
-    handler({ header: { id: 'super-1' } }, { type: 'tool/call', data: {} })
+    handler({ header: { id: 'ria-1' } }, { type: 'assistant/message', data: { interrupted: true, message: { content: [{ type: 'text', text: 'partial' }] } } })
+    handler({ header: { id: 'ria-1' } }, { type: 'tool/call', data: {} })
     await new Promise(resolve => setTimeout(resolve, 0))
     assert.deepEqual(sent, ['hello'])
     dispose()
@@ -78,7 +78,7 @@ try {
 
     await bridge.handle({ id: 'msg-2', to: 'filehelper', type: 1, text: ' raw text ' })
     assert.equal(ctx.prompts.length, 1)
-    assert.equal(ctx.prompts[0].sessionId, 'super-1')
+    assert.equal(ctx.prompts[0].sessionId, 'ria-1')
     assert.equal(ctx.prompts[0].mode, 'queue')
     assert.deepEqual(ctx.prompts[0].content, [{ type: 'text', text: ' raw text ' }])
     assert.equal(ctx.signals[0] instanceof AbortSignal, true)
@@ -170,6 +170,14 @@ try {
     assert.equal(isImageMessage({ type: '3' }), true)
     assert.equal(isImageMessage({ type: 1 }), false)
     await assert.rejects(() => imagePartFromMessage({ type: 3 }), /reserved but not implemented/)
+
+    const sentTexts = []
+    const withPrefix = new Outbound({ async send(text) { sentTexts.push(text); return 'id' } })
+    await withPrefix.enqueue('hello')
+    assert.deepEqual(sentTexts, ['🐚 hello'])
+    sentTexts.length = 0
+    await withPrefix.enqueue('plain', { prefix: false })
+    assert.deepEqual(sentTexts, ['plain'])
 
     const outbound = new Outbound({ async send() { return 'id' }, async sendFile() { return 'id' } })
     await assert.rejects(() => outbound.enqueueImage({ name: 'a.jpg', buffer: Buffer.from('x') }), /reserved but not implemented/)

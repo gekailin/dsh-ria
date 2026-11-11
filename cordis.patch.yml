@@ -1,9 +1,9 @@
-# dsh-super-session bundle layer: inserts the host plugin. The profile can
+# dsh-ria bundle layer: inserts the host plugin. The profile can
 # override the state directory with:
 #
-#   - id: super-session
+#   - id: ria
 #     config:
-#       stateDir: /absolute/path/to/state/super-session
+#       stateDir: /absolute/path/to/state/ria
 - insert:
-    - id: super-session
-      name: dsh-super-session
+    - id: ria
+      name: dsh-ria

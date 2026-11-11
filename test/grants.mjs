@@ -4,11 +4,11 @@ import { join } from 'node:path'
 import assert from 'node:assert/strict'
 import { GrantService } from '../lib/grants.mjs'
 
-const stateDir = mkdtempSync(join(tmpdir(), 'dsh-super-session-grants-'))
+const stateDir = mkdtempSync(join(tmpdir(), 'dsh-ria-grants-'))
 const grants = []
 const tasks = [{ taskId: 'task-1', goal: 'work', executor: 'session-w', status: 'working' }]
 const store = {
-  superSessionId: 'session-super',
+  riaSessionId: 'session-ria',
   grants: () => grants,
   grant: grantId => grants.find(item => item.grantId === grantId),
   addGrant(grant) { grants.push(grant); return grant },

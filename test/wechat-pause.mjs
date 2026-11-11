@@ -20,15 +20,15 @@ function makeService(ctx, dir, logs) {
   return new WechatService({
     ctx,
     stateDir: dir,
-    ensureSuper: async () => 'super-1',
-    getSuperId: () => 'super-1',
+    ensureRia: async () => 'ria-1',
+    getRiaId: () => 'ria-1',
     log: (level, message) => logs.push({ level, message }),
   })
 }
 
 function dispatch(service, rpcId, kind = 'user') {
   service.onSessionEvent(
-    { header: { id: 'super-1' } },
+    { header: { id: 'ria-1' } },
     { type: 'user/message', data: { source: { kind, rpcId }, content: [{ type: 'text', text: 'hello' }] } },
   )
 }
@@ -37,7 +37,7 @@ async function readState(dir) {
   return JSON.parse(await readFile(join(dir, 'wechat', 'state.json'), 'utf8'))
 }
 
-const dir = await mkdtemp(join(tmpdir(), 'dsh-super-session-pause-'))
+const dir = await mkdtemp(join(tmpdir(), 'dsh-ria-pause-'))
 try {
   // Manual pause persists, and manual resume persists too.
   {
@@ -196,7 +196,7 @@ try {
     service.session = { client: {} }
     service.setPaused(true, { by: 'manual', reason: '事件测试' })
     service.onSessionEvent(
-      { header: { id: 'super-1' } },
+      { header: { id: 'ria-1' } },
       { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'assistant reply' }] } } },
     )
     await tick()

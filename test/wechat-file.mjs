@@ -26,14 +26,14 @@ function makeService(ctx, dir, overrides = {}) {
   return new WechatService({
     ctx,
     stateDir: dir,
-    ensureSuper: async () => 'session-12345678',
-    getSuperId: () => 'session-12345678',
+    ensureRia: async () => 'session-12345678',
+    getRiaId: () => 'session-12345678',
     markdownFile: { enabled: true, charThreshold: 80, codeBlock: true, table: true, headingCount: 4, linkCount: 6 },
     ...overrides,
   })
 }
 
-const dir = await mkdtemp(join(tmpdir(), 'dsh-super-session-wechat-file-'))
+const dir = await mkdtemp(join(tmpdir(), 'dsh-ria-wechat-file-'))
 try {
   assert.equal(DEFAULT_MARKDOWN_FILE_OPTIONS.charThreshold, 800)
   assert.equal(normalizeMarkdownFileOptions(false).enabled, false)
@@ -42,24 +42,24 @@ try {
     charThreshold: 80,
   })
   assert.equal(normalizeMarkdownFileOptions({}, {
-    DSH_SUPER_SESSION_MD_FILE: '0',
-    DSH_SUPER_SESSION_MD_THRESHOLD: '5000',
-    DSH_SUPER_SESSION_MD_CODE: 'no',
-    DSH_SUPER_SESSION_MD_TABLE: 'yes',
-    DSH_SUPER_SESSION_MD_HEADINGS: '9',
-    DSH_SUPER_SESSION_MD_LINKS: '2',
+    DSH_RIA_MD_FILE: '0',
+    DSH_RIA_MD_THRESHOLD: '5000',
+    DSH_RIA_MD_CODE: 'no',
+    DSH_RIA_MD_TABLE: 'yes',
+    DSH_RIA_MD_HEADINGS: '9',
+    DSH_RIA_MD_LINKS: '2',
   }).enabled, false)
   assert.equal(normalizeMarkdownFileOptions({}, {
-    DSH_SUPER_SESSION_MD_THRESHOLD: '5000',
-    DSH_SUPER_SESSION_MD_HEADINGS: '9',
-    DSH_SUPER_SESSION_MD_LINKS: '2',
+    DSH_RIA_MD_THRESHOLD: '5000',
+    DSH_RIA_MD_HEADINGS: '9',
+    DSH_RIA_MD_LINKS: '2',
   }).charThreshold, 5000)
   assert.equal(normalizeMarkdownFileOptions({}, {
-    DSH_SUPER_SESSION_MD_HEADINGS: '9',
-    DSH_SUPER_SESSION_MD_LINKS: '2',
+    DSH_RIA_MD_HEADINGS: '9',
+    DSH_RIA_MD_LINKS: '2',
   }).headingCount, 9)
   assert.equal(normalizeMarkdownFileOptions({}, {
-    DSH_SUPER_SESSION_MD_LINKS: '2',
+    DSH_RIA_MD_LINKS: '2',
   }).linkCount, 2)
 
   assert.equal(decideMarkdownFile('short and simple', { charThreshold: 80 }).file, false)
@@ -77,8 +77,8 @@ try {
   assert.equal(decideMarkdownFile(links, { charThreshold: 80 }).file, true)
   assert.deepEqual(decideMarkdownFile(links, { charThreshold: 80 }).reasons, ['links'])
   assert.equal(decideMarkdownFile('x'.repeat(100), { charThreshold: 80, enabled: false }).file, false)
-  assert.equal(markdownFileName('session-12345678', new Date(2026, 10, 11, 7, 30, 15)), 'super-12345678-20261111-073015.md')
-  assert.equal(markdownFileName('', new Date(2026, 10, 11, 7, 30, 15)), 'super-super-20261111-073015.md')
+  assert.equal(markdownFileName('session-12345678', new Date(2026, 10, 11, 7, 30, 15)), 'ria-12345678-20261111-073015.md')
+  assert.equal(markdownFileName('', new Date(2026, 10, 11, 7, 30, 15)), 'ria-ria-20261111-073015.md')
 
   {
     const events = []
@@ -120,7 +120,7 @@ try {
     service.forwardAssistant(long)
     await wait()
     assert.equal(files.length, 1)
-    assert.match(files[0].name, /^super-12345678-\d{8}-\d{6}\.md$/)
+    assert.match(files[0].name, /^ria-12345678-\d{8}-\d{6}\.md$/)
     assert.equal(files[0].mime, 'text/markdown')
     assert.equal(files[0].buffer.toString(), long)
     assert.match(texts[1], /已转为 Markdown 文件发送/)

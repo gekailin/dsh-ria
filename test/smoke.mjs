@@ -5,11 +5,11 @@ import { join } from 'node:path'
 import assert from 'node:assert/strict'
 import { apply } from '../lib/index.js'
 
-const stateDir = mkdtempSync(join(tmpdir(), 'dsh-super-session-test-'))
+const stateDir = mkdtempSync(join(tmpdir(), 'dsh-ria-test-'))
 const installed = new Map()
 const prompts = []
 let created = false
-let superId = 'session-super'
+let riaId = 'session-ria'
 
 const workerEvents = []
 const guardSections = []
@@ -35,29 +35,29 @@ const worker = {
     },
   },
 }
-const superEvents = []
-let superTurn = 7
-let failSuperSnapshot = false
-const superAgent = {
-  id: superId,
+const riaEvents = []
+let riaTurn = 7
+let failRiaSnapshot = false
+const riaAgent = {
+  id: riaId,
   ctx: {
     tools: { register(definition) { installed.set(definition.name, definition); return () => {} } },
     systemPrompt: {
       section(section) {
         installed.set('prompt:' + section.name, section)
-        if (section.name === 'dsh-super-session:dispatch-guard') recordGuard('super', section)
+        if (section.name === 'dsh-ria:dispatch-guard') recordGuard('ria', section)
         return () => {}
       },
     },
   },
   session: {
     snapshotEvents() {
-      if (failSuperSnapshot) throw new Error('snapshot failed')
-      return [{ type: 'turn/start', data: { turn: superTurn } }, { type: 'step/start', data: { turn: superTurn, step: 1 } }]
+      if (failRiaSnapshot) throw new Error('snapshot failed')
+      return [{ type: 'turn/start', data: { turn: riaTurn } }, { type: 'step/start', data: { turn: riaTurn, step: 1 } }]
     },
     append(type, data, options) {
-      superEvents.push({ type, data, options })
-      return { seq: superEvents.length - 1, time: 1 }
+      riaEvents.push({ type, data, options })
+      return { seq: riaEvents.length - 1, time: 1 }
     },
   },
 }
@@ -67,7 +67,7 @@ const effects = []
 const failPrompts = new Set()
 const workspaceAttachments = []
 const workspace = {
-  id: 'workspace-super',
+  id: 'workspace-ria',
   path: stateDir,
   async attachSession(sessionId) { workspaceAttachments.push(sessionId) },
 }
@@ -91,7 +91,7 @@ const ctx = {
   workspaceRegistry: {
     async create(path, title) {
       assert.equal(path, stateDir)
-      assert.equal(title, 'Super Session')
+      assert.equal(title, 'Ria')
       return workspace
     },
   },
@@ -125,21 +125,21 @@ const ctx = {
       assert.equal(request.workspaceId, workspace.id)
       assert.equal(request.cwd, undefined)
       created = true
-      superId = String(request.sessionId)
-      superAgent.id = superId
-      for (const listener of [...(listeners.get('agent/created') || [])]) await listener({ agent: superAgent })
-      await workspace.attachSession(superId)
-      return { sessionId: superId, agentPreset: request.agentPreset }
+      riaId = String(request.sessionId)
+      riaAgent.id = riaId
+      for (const listener of [...(listeners.get('agent/created') || [])]) await listener({ agent: riaAgent })
+      await workspace.attachSession(riaId)
+      return { sessionId: riaId, agentPreset: request.agentPreset }
     },
     async resolveAgent(id) {
       const value = String(id)
-      if (value === superId) return { agent: superAgent }
+      if (value === riaId) return { agent: riaAgent }
       if (value === 'session-worker') return { agent: worker }
       return { error: { code: 'session/not-found', message: 'not found' } }
     },
     async list() {
       return { items: [
-        { sessionId: superId, running: false, blank: false, updatedAt: 1, cwd: stateDir },
+        { sessionId: riaId, running: false, blank: false, updatedAt: 1, cwd: stateDir },
         { sessionId: 'session-worker', running: true, blank: false, updatedAt: 2, cwd: '/work/worker', projections: { values: { title: 'Worker One' } } },
         { sessionId: 'session-child', running: false, blank: false, updatedAt: 3, cwd: '/tmp', parentSessionId: 'session-worker', origin: 'subagent' },
         { sessionId: 'session-worker-2', running: false, blank: true, updatedAt: 4, projections: { values: { title: 'Worker Two' } } },
@@ -152,7 +152,7 @@ const ctx = {
     },
     async state() { return { cursor: 1, active: false, running: true, queue: 0, pendingInput: [] } },
     async events() { return { records: [], hasMore: false, cursor: 0 } },
-    async rename() { return { title: 'Super Session', seq: 1 } },
+    async rename() { return { title: 'Ria', seq: 1 } },
   },
 }
 
@@ -195,117 +195,117 @@ function request(method, path, payload) {
   return done.then(body => ({ status: res.statusCode, body: JSON.parse(body) }))
 }
 
-const ensured = await request('POST', '/plugins/dsh-super-session/api/ensure')
+const ensured = await request('POST', '/plugins/dsh-ria/api/ensure')
 assert.equal(ensured.status, 200)
-assert.equal(ensured.body.sessionId, superId)
+assert.equal(ensured.body.sessionId, riaId)
 assert.equal(created, true)
-assert.deepEqual(workspaceAttachments, [superId])
-assert.deepEqual(superEvents.map(event => event.type), ['turn/start', 'step/start', 'assistant/message', 'step/end', 'turn/end'])
-assert.equal(superEvents[0].data.turn, 1)
-assert.equal(superEvents[2].data.turn, 1)
-assert.equal(superEvents[2].data.step, 1)
-assert.equal(superEvents[2].data.message.role, 'assistant')
-assert.equal(superEvents[2].data.message.source.kind, 'model')
-assert.equal(superEvents[2].options.surfaceOp, 'append')
-assert.match(superEvents[2].data.message.content[0].text, /选择模型/)
-assert.match(superEvents[2].data.message.content[0].text, /danger-full-access/)
-assert.match(superEvents[2].data.message.content[0].text, /权限设置/)
-assert.equal(superEvents[4].data.reason.kind, 'completed')
-const initialSettings = await request('GET', '/plugins/dsh-super-session/api/settings')
+assert.deepEqual(workspaceAttachments, [riaId])
+assert.deepEqual(riaEvents.map(event => event.type), ['turn/start', 'step/start', 'assistant/message', 'step/end', 'turn/end'])
+assert.equal(riaEvents[0].data.turn, 1)
+assert.equal(riaEvents[2].data.turn, 1)
+assert.equal(riaEvents[2].data.step, 1)
+assert.equal(riaEvents[2].data.message.role, 'assistant')
+assert.equal(riaEvents[2].data.message.source.kind, 'model')
+assert.equal(riaEvents[2].options.surfaceOp, 'append')
+assert.match(riaEvents[2].data.message.content[0].text, /选择模型/)
+assert.match(riaEvents[2].data.message.content[0].text, /danger-full-access/)
+assert.match(riaEvents[2].data.message.content[0].text, /权限设置/)
+assert.equal(riaEvents[4].data.reason.kind, 'completed')
+const initialSettings = await request('GET', '/plugins/dsh-ria/api/settings')
 assert.equal(initialSettings.status, 200)
 assert.deepEqual(initialSettings.body, { dispatchGuard: true })
 assertLossless(initialSettings.body)
 const workerGuard = guardSections.find(item => item.agentId === 'worker')
-const superGuard = guardSections.find(item => item.agentId === 'super')
-assert.ok(workerGuard && superGuard)
+const riaGuard = guardSections.find(item => item.agentId === 'ria')
+assert.ok(workerGuard && riaGuard)
 assert.match(workerGuard.section.text(), /ask the user to confirm/)
-assert.doesNotMatch(workerGuard.section.text(), /super session/i)
+assert.doesNotMatch(workerGuard.section.text(), /\bRia\b/i)
 assert.match(workerGuard.section.text(), /clearly unrelated/)
-assert.equal(superGuard.section.text(), workerGuard.section.text())
-const guardOff = await request('POST', '/plugins/dsh-super-session/api/settings', { dispatchGuard: false })
+assert.equal(riaGuard.section.text(), workerGuard.section.text())
+const guardOff = await request('POST', '/plugins/dsh-ria/api/settings', { dispatchGuard: false })
 assert.equal(guardOff.status, 200)
 assert.deepEqual(guardOff.body, { dispatchGuard: false })
 assert.equal(workerGuard.section.text(), '')
-assert.equal(superGuard.section.text(), '')
-const guardOn = await request('POST', '/plugins/dsh-super-session/api/settings', { dispatchGuard: true })
+assert.equal(riaGuard.section.text(), '')
+const guardOn = await request('POST', '/plugins/dsh-ria/api/settings', { dispatchGuard: true })
 assert.equal(guardOn.status, 200)
 assert.deepEqual(guardOn.body, { dispatchGuard: true })
 assert.match(workerGuard.section.text(), /ask the user to confirm/)
-assert.doesNotMatch(workerGuard.section.text(), /super session/i)
-const badGuard = await request('POST', '/plugins/dsh-super-session/api/settings', { dispatchGuard: 'yes' })
+assert.doesNotMatch(workerGuard.section.text(), /\bRia\b/i)
+const badGuard = await request('POST', '/plugins/dsh-ria/api/settings', { dispatchGuard: 'yes' })
 assert.equal(badGuard.status, 400)
-const reopened = await request('POST', '/plugins/dsh-super-session/api/ensure')
+const reopened = await request('POST', '/plugins/dsh-ria/api/ensure')
 assert.equal(reopened.body.created, false)
-assert.equal(superEvents.length, 5)
-assert.deepEqual(workspaceAttachments, [superId, superId])
-assert.ok(installed.has('super_session_task'))
-assert.ok(installed.has('super_session_status'))
-assert.ok(installed.has('super_session_request'))
-assert.ok(installed.has('super_session_read'))
-assert.ok(installed.has('super_session_memory'))
-assert.ok(installed.has('super_session_approval'))
-assert.ok(installed.has('super_session_grant'))
-assert.ok(installed.has('prompt:super-session-manager'))
+assert.equal(riaEvents.length, 5)
+assert.deepEqual(workspaceAttachments, [riaId, riaId])
+assert.ok(installed.has('ria_task'))
+assert.ok(installed.has('ria_status'))
+assert.ok(installed.has('ria_request'))
+assert.ok(installed.has('ria_read'))
+assert.ok(installed.has('ria_memory'))
+assert.ok(installed.has('ria_approval'))
+assert.ok(installed.has('ria_grant'))
+assert.ok(installed.has('prompt:ria-manager'))
 
 let concluded = 0
 const call = async (name, args) => installed.get(name).execute(args, {
-  agent: superAgent,
+  agent: riaAgent,
   signal: new AbortController().signal,
   concludeTurn() { concluded += 1 },
 })
-const recentEmpty = await call('super_session_status', { scope: 'recent' })
+const recentEmpty = await call('ria_status', { scope: 'recent' })
 assert.deepEqual(recentEmpty.workers, [])
 assert.equal(recentEmpty.windowDays, 7)
 assert.equal(recentEmpty.limit, 5)
 assertLossless(recentEmpty)
 
-const task = await call('super_session_task', { goal: 'fix tests', acceptance: 'green', executor: 'session-worker' })
+const task = await call('ria_task', { goal: 'fix tests', acceptance: 'green', executor: 'session-worker' })
 assert.equal(task.task.taskId.startsWith('task_'), true)
 concluded = 0
 const promptsBeforeNoteErrors = prompts.length
 await assert.rejects(
-  () => call('super_session_request', { targetSessionIds: ['session-worker'], message: 'no note', taskId: task.task.taskId }),
+  () => call('ria_request', { targetSessionIds: ['session-worker'], message: 'no note', taskId: task.task.taskId }),
   /requires a non-empty note/,
 )
 await assert.rejects(
-  () => call('super_session_request', { targetSessionIds: ['session-worker'], message: 'blank note', taskId: task.task.taskId, note: '   ' }),
+  () => call('ria_request', { targetSessionIds: ['session-worker'], message: 'blank note', taskId: task.task.taskId, note: '   ' }),
   /requires a non-empty note/,
 )
 await assert.rejects(
-  () => call('super_session_request', { targetSessionIds: ['session-worker'], message: 'long note', taskId: task.task.taskId, note: 'x'.repeat(501) }),
+  () => call('ria_request', { targetSessionIds: ['session-worker'], message: 'long note', taskId: task.task.taskId, note: 'x'.repeat(501) }),
   /maximum is 500/,
 )
 assert.equal(prompts.length, promptsBeforeNoteErrors)
 assert.equal(concluded, 0)
-const eventsBeforeTaskDispatch = superEvents.length
+const eventsBeforeTaskDispatch = riaEvents.length
 const dispatchNote = '已把“修复测试”交给 Worker One，请它先检查现有用例；完成后我会向你汇报。'
-const requestResult = await call('super_session_request', { targetSessionIds: ['session-worker'], message: 'please fix', taskId: task.task.taskId, note: dispatchNote })
+const requestResult = await call('ria_request', { targetSessionIds: ['session-worker'], message: 'please fix', taskId: task.task.taskId, note: dispatchNote })
 assert.equal(requestResult.results[0].ok, true)
 assert.equal(concluded, 1)
 assert.equal(prompts.at(-1).content.length, 1)
 assert.equal(prompts.at(-1).content[0].text, 'please fix')
 assert.equal(prompts.at(-1).requestId.startsWith('req_'), true)
-assert.equal(superEvents.length, eventsBeforeTaskDispatch)
-const notesAtTurn = await request('GET', '/plugins/dsh-super-session/api/dispatch-notes?sessionId=' + encodeURIComponent(superId) + '&turn=' + superTurn)
+assert.equal(riaEvents.length, eventsBeforeTaskDispatch)
+const notesAtTurn = await request('GET', '/plugins/dsh-ria/api/dispatch-notes?sessionId=' + encodeURIComponent(riaId) + '&turn=' + riaTurn)
 assert.equal(notesAtTurn.status, 200)
 assert.equal(notesAtTurn.body.notes.length, 1)
 const storedNote = notesAtTurn.body.notes[0]
-assert.equal(storedNote.turn, superTurn)
-assert.equal(storedNote.sessionId, superId)
+assert.equal(storedNote.turn, riaTurn)
+assert.equal(storedNote.sessionId, riaId)
 assert.equal(storedNote.note, dispatchNote)
 assert.equal(storedNote.isTask, true)
 assert.equal(storedNote.taskId, task.task.taskId)
 assert.equal(typeof storedNote.at, 'number')
 assertLossless(notesAtTurn.body)
 assert.deepEqual(wechatNotes, [{ note: dispatchNote, options: { isTask: true } }])
-const notesWrongSession = await request('GET', '/plugins/dsh-super-session/api/dispatch-notes?sessionId=session-worker&turn=' + superTurn)
+const notesWrongSession = await request('GET', '/plugins/dsh-ria/api/dispatch-notes?sessionId=session-worker&turn=' + riaTurn)
 assert.deepEqual(notesWrongSession.body, { notes: [] })
-const notesAll = await request('GET', '/plugins/dsh-super-session/api/dispatch-notes?sessionId=' + encodeURIComponent(superId))
+const notesAll = await request('GET', '/plugins/dsh-ria/api/dispatch-notes?sessionId=' + encodeURIComponent(riaId))
 assert.equal(notesAll.body.notes.length, 1)
-const persistedState = JSON.parse(readFileSync(join(stateDir, 'super.json'), 'utf8'))
+const persistedState = JSON.parse(readFileSync(join(stateDir, 'ria.json'), 'utf8'))
 assert.equal(persistedState.dispatchNotes.length, 1)
 assert.equal(persistedState.dispatchNotes[0].note, dispatchNote)
-const recentAfterTask = await call('super_session_status', { scope: 'recent' })
+const recentAfterTask = await call('ria_status', { scope: 'recent' })
 assert.equal(recentAfterTask.workers.length, 1)
 assert.equal(recentAfterTask.workers[0].sessionId, 'session-worker')
 assert.equal(recentAfterTask.workers[0].title, 'Worker One')
@@ -317,71 +317,71 @@ assert.equal(typeof recentAfterTask.workers[0].lastUsedAt, 'number')
 assertLossless(recentAfterTask)
 const lastUsedBeforeQuick = recentAfterTask.workers[0].lastUsedAt
 concluded = 0
-const eventsBeforeQuick = superEvents.length
-const quickRequest = await call('super_session_request', { targetSessionIds: ['session-worker'], message: 'just checking' })
+const eventsBeforeQuick = riaEvents.length
+const quickRequest = await call('ria_request', { targetSessionIds: ['session-worker'], message: 'just checking' })
 assert.equal(quickRequest.results[0].ok, true)
 assert.equal('taskId' in quickRequest.results[0], false)
 assert.equal(concluded, 1)
 assert.equal(prompts.at(-1).content.length, 1)
 assert.equal(prompts.at(-1).content[0].text, 'just checking')
-assert.equal(superEvents.length, eventsBeforeQuick)
+assert.equal(riaEvents.length, eventsBeforeQuick)
 assert.equal(wechatNotes.length, 1)
 assertLossless(quickRequest)
-const notesAfterQuick = await request('GET', '/plugins/dsh-super-session/api/dispatch-notes?sessionId=' + encodeURIComponent(superId) + '&turn=' + superTurn)
+const notesAfterQuick = await request('GET', '/plugins/dsh-ria/api/dispatch-notes?sessionId=' + encodeURIComponent(riaId) + '&turn=' + riaTurn)
 assert.equal(notesAfterQuick.body.notes.length, 1)
 const quickNote = '只是转述一句话给 Worker One。'
-const quickWithNote = await call('super_session_request', { targetSessionIds: ['session-worker'], message: 'quick note', note: quickNote })
+const quickWithNote = await call('ria_request', { targetSessionIds: ['session-worker'], message: 'quick note', note: quickNote })
 assert.equal(quickWithNote.results[0].ok, true)
-const notesAfterQuickWithNote = await request('GET', '/plugins/dsh-super-session/api/dispatch-notes?sessionId=' + encodeURIComponent(superId) + '&turn=' + superTurn)
+const notesAfterQuickWithNote = await request('GET', '/plugins/dsh-ria/api/dispatch-notes?sessionId=' + encodeURIComponent(riaId) + '&turn=' + riaTurn)
 assert.equal(notesAfterQuickWithNote.body.notes.length, 2)
 assert.equal(notesAfterQuickWithNote.body.notes[1].isTask, false)
 assert.equal(notesAfterQuickWithNote.body.notes[1].note, quickNote)
 assert.equal('taskId' in notesAfterQuickWithNote.body.notes[1], false)
 assert.deepEqual(wechatNotes[1], { note: quickNote, options: { isTask: false } })
 assertLossless(notesAfterQuickWithNote.body)
-const recentAfterQuick = await call('super_session_status', { scope: 'recent' })
+const recentAfterQuick = await call('ria_status', { scope: 'recent' })
 assert.equal(recentAfterQuick.workers.length, 1)
 assert.equal(recentAfterQuick.workers[0].lastUsedAt >= lastUsedBeforeQuick, true)
 assert.equal(recentAfterQuick.workers[0].lastTaskId, task.task.taskId)
 assertLossless(recentAfterQuick)
 concluded = 0
-const eventsBeforeSnapshotFailure = superEvents.length
-const notesBeforeSnapshotFailure = (await request('GET', '/plugins/dsh-super-session/api/dispatch-notes?sessionId=' + encodeURIComponent(superId))).body.notes.length
-failSuperSnapshot = true
+const eventsBeforeSnapshotFailure = riaEvents.length
+const notesBeforeSnapshotFailure = (await request('GET', '/plugins/dsh-ria/api/dispatch-notes?sessionId=' + encodeURIComponent(riaId))).body.notes.length
+failRiaSnapshot = true
 let snapshotFailure
 try {
-  snapshotFailure = await call('super_session_request', { targetSessionIds: ['session-worker'], message: 'note display failure', taskId: task.task.taskId, note: '展示失败也要继续派发。' })
+  snapshotFailure = await call('ria_request', { targetSessionIds: ['session-worker'], message: 'note display failure', taskId: task.task.taskId, note: '展示失败也要继续派发。' })
 } finally {
-  failSuperSnapshot = false
+  failRiaSnapshot = false
 }
 assert.equal(snapshotFailure.results[0].ok, true)
 assert.equal(concluded, 1)
-assert.equal(superEvents.length, eventsBeforeSnapshotFailure)
-const notesAfterSnapshotFailure = await request('GET', '/plugins/dsh-super-session/api/dispatch-notes?sessionId=' + encodeURIComponent(superId))
+assert.equal(riaEvents.length, eventsBeforeSnapshotFailure)
+const notesAfterSnapshotFailure = await request('GET', '/plugins/dsh-ria/api/dispatch-notes?sessionId=' + encodeURIComponent(riaId))
 assert.equal(notesAfterSnapshotFailure.body.notes.length, notesBeforeSnapshotFailure)
 assert.deepEqual(wechatNotes[2], { note: '展示失败也要继续派发。', options: { isTask: true } })
 assertLossless(snapshotFailure)
 const originalSendDispatchNote = service.wechat.sendDispatchNote
 service.wechat.sendDispatchNote = async () => { throw new Error('wechat unavailable') }
 concluded = 0
-const wechatFailure = await call('super_session_request', { targetSessionIds: ['session-worker'], message: 'wechat note failure', taskId: task.task.taskId, note: '微信发送失败也要继续派发。' })
+const wechatFailure = await call('ria_request', { targetSessionIds: ['session-worker'], message: 'wechat note failure', taskId: task.task.taskId, note: '微信发送失败也要继续派发。' })
 assert.equal(wechatFailure.results[0].ok, true)
 assert.equal(concluded, 1)
 await new Promise(resolve => setImmediate(resolve))
 service.wechat.sendDispatchNote = originalSendDispatchNote
 assertLossless(wechatFailure)
 concluded = 0
-const partialRequest = await call('super_session_request', { targetSessionIds: ['session-worker', 'session-child'], message: 'partial' })
+const partialRequest = await call('ria_request', { targetSessionIds: ['session-worker', 'session-child'], message: 'partial' })
 assert.equal(partialRequest.results.filter(item => item.ok).length, 1)
 assert.equal(concluded, 0)
 assertLossless(partialRequest)
-const approvals = await call('super_session_approval', {})
+const approvals = await call('ria_approval', {})
 assert.deepEqual(approvals, { pending: [], count: 0 })
 assertLossless(approvals)
-const status = await call('super_session_status', { scope: 'tasks' })
+const status = await call('ria_status', { scope: 'tasks' })
 assert.equal(status.tasks[0].status, 'working')
 assertLossless(status)
-const sessions = await call('super_session_status', { scope: 'sessions' })
+const sessions = await call('ria_status', { scope: 'sessions' })
 assert.deepEqual(sessions.sessions.map(item => item.sessionId), ['session-worker', 'session-worker-2'])
 assertLossless(sessions)
 assert.equal('parentSessionId' in sessions.sessions[0], false)
@@ -391,16 +391,16 @@ assert.equal(typeof sessions.sessions[0].lastUsedAt, 'number')
 assert.equal(sessions.sessions[1].title, 'Worker Two')
 assert.equal('cwd' in sessions.sessions[1], false)
 assert.equal('lastUsedAt' in sessions.sessions[1], false)
-const sessionStatus = await call('super_session_status', { scope: 'sessions', sessionId: 'session-worker' })
+const sessionStatus = await call('ria_status', { scope: 'sessions', sessionId: 'session-worker' })
 assert.equal(sessionStatus.session.sessionId, 'session-worker')
 assertLossless(sessionStatus)
-const read = await call('super_session_read', { sessionId: 'session-worker', limit: 10 })
+const read = await call('ria_read', { sessionId: 'session-worker', limit: 10 })
 assert.equal(read.messages[0].text, 'worker says done')
 await assert.rejects(
-  () => call('super_session_grant', { action: 'set', sessionId: 'session-worker', sandboxMode: 'danger-full-access' }),
+  () => call('ria_grant', { action: 'set', sessionId: 'session-worker', sandboxMode: 'danger-full-access' }),
   /userConfirmed=true/,
 )
-const grant = await call('super_session_grant', {
+const grant = await call('ria_grant', {
   action: 'set',
   sessionId: 'session-worker',
   taskId: task.task.taskId,
@@ -419,11 +419,11 @@ assert.equal(grant.grant.after.approvalPolicy, 'never')
 assert.equal(permissions.sandboxOverride, 'danger-full-access')
 assert.equal(permissions.approvalOverride, 'never')
 assertLossless(grant)
-const activeGrants = await call('super_session_grant', { action: 'list' })
+const activeGrants = await call('ria_grant', { action: 'list' })
 assert.equal(activeGrants.count, 1)
 assert.equal(activeGrants.grants[0].grantId, grant.grant.grantId)
 assertLossless(activeGrants)
-const paused = await request('POST', '/plugins/dsh-super-session/api/wechat/pause', { paused: true, reason: 'smoke' })
+const paused = await request('POST', '/plugins/dsh-ria/api/wechat/pause', { paused: true, reason: 'smoke' })
 assert.equal(paused.status, 200)
 assert.equal(paused.body.paused, true)
 assert.equal(paused.body.pausedBy, 'manual')
@@ -431,37 +431,37 @@ assert.equal(paused.body.pauseReason, 'smoke')
 assert.equal(typeof paused.body.pausedAt, 'string')
 assert.ok(!Number.isNaN(Date.parse(paused.body.pausedAt)))
 assert.equal(paused.body.resumedAt, null)
-const pausedStatus = await request('GET', '/plugins/dsh-super-session/api/wechat/status')
+const pausedStatus = await request('GET', '/plugins/dsh-ria/api/wechat/status')
 assert.equal(pausedStatus.body.paused, true)
 assert.equal(pausedStatus.body.pausedBy, 'manual')
 assert.equal(pausedStatus.body.pausedAt, paused.body.pausedAt)
 assert.equal(pausedStatus.body.pauseReason, 'smoke')
-const resumed = await request('POST', '/plugins/dsh-super-session/api/wechat/pause', { paused: false })
+const resumed = await request('POST', '/plugins/dsh-ria/api/wechat/pause', { paused: false })
 assert.equal(resumed.status, 200)
 assert.equal(resumed.body.paused, false)
 assert.equal(resumed.body.pausedBy, null)
 assert.equal(resumed.body.pausedAt, null)
 assert.equal(typeof resumed.body.resumedAt, 'string')
 assert.equal(resumed.body.resumedBy, 'manual')
-const resumedStatus = await request('GET', '/plugins/dsh-super-session/api/wechat/status')
+const resumedStatus = await request('GET', '/plugins/dsh-ria/api/wechat/status')
 assert.equal(resumedStatus.body.paused, false)
 assert.equal(resumedStatus.body.pausedBy, null)
 assert.equal(resumedStatus.body.pausedAt, null)
-const badPause = await request('POST', '/plugins/dsh-super-session/api/wechat/pause', { paused: 'yes' })
+const badPause = await request('POST', '/plugins/dsh-ria/api/wechat/pause', { paused: 'yes' })
 assert.equal(badPause.status, 400)
-const httpState = await request('GET', '/plugins/dsh-super-session/api/state')
+const httpState = await request('GET', '/plugins/dsh-ria/api/state')
 assert.equal(httpState.status, 200)
 assert.equal(httpState.body.grants.length, 1)
 assert.equal(httpState.body.grants[0].grantId, grant.grant.grantId)
 assert.deepEqual(httpState.body.settings, { dispatchGuard: true })
-const closedTask = await call('super_session_task', { taskId: task.task.taskId, status: 'done' })
+const closedTask = await call('ria_task', { taskId: task.task.taskId, status: 'done' })
 assert.equal(closedTask.task.status, 'done')
 assert.equal(permissions.sandboxOverride, 'workspace-write')
 assert.equal(permissions.approvalOverride, 'ask')
-const restoredGrants = await call('super_session_grant', { action: 'list' })
+const restoredGrants = await call('ria_grant', { action: 'list' })
 assert.equal(restoredGrants.count, 0)
 assertLossless(restoredGrants)
-const secondGrant = await call('super_session_grant', {
+const secondGrant = await call('ria_grant', {
   action: 'set',
   sessionId: 'session-worker',
   approvalPolicy: 'never',
@@ -469,50 +469,50 @@ const secondGrant = await call('super_session_grant', {
   userConfirmed: true,
 })
 assert.equal(permissions.approvalOverride, 'never')
-const reset = await call('super_session_grant', { action: 'reset', grantId: secondGrant.grant.grantId })
+const reset = await call('ria_grant', { action: 'reset', grantId: secondGrant.grant.grantId })
 assert.equal(reset.restored, true)
 assert.deepEqual(reset.restoredFields, ['approvalPolicy'])
 assert.equal(permissions.approvalOverride, 'ask')
 assertLossless(reset)
 await assert.rejects(
-  () => call('super_session_grant', { action: 'reset', grantId: secondGrant.grant.grantId }),
+  () => call('ria_grant', { action: 'reset', grantId: secondGrant.grant.grantId }),
   /grant not found/,
 )
 const audit = readFileSync(join(stateDir, 'audit.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line))
 assert.ok(audit.some(item => item.event === 'grant/set' && item.grantId === grant.grant.grantId))
 assert.ok(audit.some(item => item.event === 'grant/restored' && item.trigger === 'task-done'))
 assert.ok(audit.some(item => item.event === 'grant/restored' && item.trigger === 'explicit-reset'))
-await call('super_session_memory', { action: 'remember', key: 'language', text: 'Chinese' })
-const memory = await call('super_session_memory', { action: 'read' })
+await call('ria_memory', { action: 'remember', key: 'language', text: 'Chinese' })
+const memory = await call('ria_memory', { action: 'read' })
 assert.match(memory.text, /language/)
-const promptText = installed.get('prompt:super-session-manager').text()
+const promptText = installed.get('prompt:ria-manager').text()
 assert.match(promptText, /Chinese/)
-assert.match(promptText, /Super Session id/)
+assert.match(promptText, /Ria session id/)
 assert.match(promptText, /End the current turn immediately/)
 assert.match(promptText, /who received the task/)
 assert.match(promptText, /what the user will see next/)
 assert.match(promptText, /MUST include note/)
 assert.match(promptText, /quick relay without taskId does not need note/)
 assert.match(promptText, /do not rely on assistant text/)
-assert.match(installed.get('super_session_status').description, /never waits/)
-assert.match(installed.get('super_session_status').description, /scope=recent/)
-assert.match(installed.get('super_session_status').description, /lastUsedAt/)
-assert.match(installed.get('super_session_status').description, /lastTaskGoal/)
-assert.match(installed.get('super_session_request').description, /ends the current turn/)
-assert.match(installed.get('super_session_request').description, /anti-misdelivery constraint/)
-assert.match(installed.get('super_session_request').description, /adds no message prefix/)
-assert.match(installed.get('super_session_request').description, /note is REQUIRED/)
-assert.match(installed.get('super_session_request').description, /missing, blank, or over-500-character note is an error/)
-assert.match(installed.get('super_session_request').description, /who received the task/)
-assert.match(installed.get('super_session_request').description, /what the user will see next/)
-assert.match(installed.get('super_session_request').description, /maximum 500 characters/i)
-assert.match(installed.get('super_session_approval').description, /never approves or denies/)
+assert.match(installed.get('ria_status').description, /never waits/)
+assert.match(installed.get('ria_status').description, /scope=recent/)
+assert.match(installed.get('ria_status').description, /lastUsedAt/)
+assert.match(installed.get('ria_status').description, /lastTaskGoal/)
+assert.match(installed.get('ria_request').description, /ends the current turn/)
+assert.match(installed.get('ria_request').description, /anti-misdelivery constraint/)
+assert.match(installed.get('ria_request').description, /adds no message prefix/)
+assert.match(installed.get('ria_request').description, /note is REQUIRED/)
+assert.match(installed.get('ria_request').description, /missing, blank, or over-500-character note is an error/)
+assert.match(installed.get('ria_request').description, /who received the task/)
+assert.match(installed.get('ria_request').description, /what the user will see next/)
+assert.match(installed.get('ria_request').description, /maximum 500 characters/i)
+assert.match(installed.get('ria_approval').description, /never approves or denies/)
 assert.match(promptText, /anti-misdelivery constraint/)
 assert.match(promptText, /does not add any prefix/)
 assert.match(promptText, /\[Worker idle\]/)
-assert.match(promptText, /super_session_approval/)
-assert.match(promptText, /super_session_grant/)
-assert.match(installed.get('super_session_grant').description, /explicitly asks/)
+assert.match(promptText, /ria_approval/)
+assert.match(promptText, /ria_grant/)
+assert.match(installed.get('ria_grant').description, /explicitly asks/)
 assert.match(promptText, /host-generated assistant welcome/)
 assert.match(promptText, /scope="recent"/)
 assert.match(promptText, /up to 5 workers/)
@@ -520,8 +520,8 @@ assert.match(promptText, /last 7 days/)
 assert.match(promptText, /ask the user which session/)
 assert.match(promptText, /Creating or updating a task does not count/)
 
-const state = JSON.parse(readFileSync(join(stateDir, 'super.json'), 'utf8'))
-assert.equal(state.superSessionId, superId)
+const state = JSON.parse(readFileSync(join(stateDir, 'ria.json'), 'utf8'))
+assert.equal(state.riaSessionId, riaId)
 assert.equal(state.tasks[0].goal, 'fix tests')
 assert.equal(state.deliveries.length, 0)
 assert.equal(state.grants.length, 0)
@@ -529,16 +529,16 @@ assert.equal(typeof state.recentWorkers['session-worker'].lastUsedAt, 'number')
 assert.equal(state.recentWorkers['session-worker'].lastTaskId, task.task.taskId)
 assert.equal('session-worker-2' in state.recentWorkers, false)
 
-const beforeFailedUse = (await call('super_session_status', { scope: 'recent' })).workers[0].lastUsedAt
+const beforeFailedUse = (await call('ria_status', { scope: 'recent' })).workers[0].lastUsedAt
 failPrompts.add('session-worker')
 concluded = 0
-const failedRequest = await call('super_session_request', { targetSessionIds: ['session-worker'], message: 'do not deliver' })
+const failedRequest = await call('ria_request', { targetSessionIds: ['session-worker'], message: 'do not deliver' })
 assert.equal(failedRequest.results[0].ok, false)
 assert.equal('taskId' in failedRequest.results[0], false)
 assert.match(failedRequest.results[0].error, /prompt failed/)
 assert.equal(concluded, 0)
 assertLossless(failedRequest)
-const afterFailedUse = await call('super_session_status', { scope: 'recent' })
+const afterFailedUse = await call('ria_status', { scope: 'recent' })
 assert.equal(afterFailedUse.workers[0].lastUsedAt, beforeFailedUse)
 assertLossless(afterFailedUse)
 failPrompts.delete('session-worker')

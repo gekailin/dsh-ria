@@ -33,7 +33,7 @@ function setup(overrides = {}) {
     },
   }
   const store = {
-    superSessionId: 'session-super',
+    riaSessionId: 'session-ria',
     activeTasks: () => tasks,
   }
   const observer = new ApprovalObserver({ ctx, store, ttlMs: 10000, ...overrides })
@@ -79,7 +79,7 @@ function setup(overrides = {}) {
   const { observer, invoke } = setup()
   let nextCalls = 0
   const next = async () => { nextCalls += 1; return 'unavailable' }
-  await invoke({ agent: { id: 'session-super' }, toolName: 'bash' }, next)
+  await invoke({ agent: { id: 'session-ria' }, toolName: 'bash' }, next)
   await invoke({ agent: { id: 'session-unknown' }, toolName: 'bash' }, next)
   await invoke({ toolName: 'bash' }, next)
   assert.equal(nextCalls, 3)

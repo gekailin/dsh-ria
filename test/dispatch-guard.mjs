@@ -60,7 +60,7 @@ assert.match(a.sections[0].text(), /clearly unrelated/)
 assert.match(a.sections[0].text(), /ask the user to confirm/)
 assert.match(a.sections[0].text(), /proceed normally/)
 assert.doesNotMatch(a.sections[0].text(), /^#/m)
-assert.doesNotMatch(a.sections[0].text(), /super session/i)
+assert.doesNotMatch(a.sections[0].text(), /\bRia\b/i)
 assert.equal(warnings.length, 1)
 assert.match(warnings[0].message, /agent-broken/)
 

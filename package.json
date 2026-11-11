@@ -1,12 +1,13 @@
 {
-  "name": "dsh-super-session",
+  "name": "dsh-ria",
   "version": "0.1.0",
-  "description": "A globally unique Super Session for DeepSeek Harness: clarifies and relays requirements, manages tasks, monitors workers, and keeps user memory.",
+  "description": "Ria for DeepSeek Harness: one resident manager that relays requests, tracks tasks, watches workers, and keeps your memory.",
   "keywords": [
     "dsh",
     "dsh-plugin",
     "deepseek-harness",
     "cordis",
+    "ria",
     "session",
     "manager"
   ],

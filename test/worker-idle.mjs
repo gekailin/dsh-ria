@@ -3,7 +3,7 @@ import { normalizeWorkerIdleOptions, WorkerIdleWatcher } from '../lib/worker-idl
 
 const settle = () => new Promise(resolve => setTimeout(resolve, 10))
 
-function setup({ tasks = [], options = {}, superId = 'session-super' } = {}) {
+function setup({ tasks = [], options = {}, riaId = 'session-ria' } = {}) {
   let handler
   let clock = 1_000
   const prompts = []
@@ -25,8 +25,8 @@ function setup({ tasks = [], options = {}, superId = 'session-super' } = {}) {
   const watcher = new WorkerIdleWatcher({
     ctx,
     store: { tasks: () => tasks },
-    ensureSuper: async () => superId,
-    getSuperId: () => superId,
+    ensureRia: async () => riaId,
+    getRiaId: () => riaId,
     log: (level, message) => logs.push(level + ': ' + message),
     now: () => clock,
     options,
@@ -58,22 +58,22 @@ const workerTask = (overrides = {}) => ({
   await settle()
   assert.equal(h.prompts.length, 1)
   const request = h.prompts[0]
-  assert.equal(request.sessionId, 'session-super')
+  assert.equal(request.sessionId, 'session-ria')
   assert.equal(request.mode, 'queue')
   const text = request.content[0].text
   assert.match(text, /\[Worker idle\]/)
   assert.match(text, /session-worker 的 turn 已结束/)
   assert.match(text, /taskId=task_1/)
   assert.match(text, /finish the report/)
-  assert.match(text, /super_session_read/)
+  assert.match(text, /ria_read/)
   assert.match(text, /不要假设已完成/)
   assert.match(text, /blockedReason/)
-  assert.match(h.logs.join('\n'), /notify Super: session-worker idle for task_1/)
+  assert.match(h.logs.join('\n'), /notify Ria: session-worker idle for task_1/)
 }
 
 {
-  const h = setup({ tasks: [workerTask({ executor: 'session-super' })] })
-  h.emit({ agent: { id: 'session-super' }, status: 'idle' })
+  const h = setup({ tasks: [workerTask({ executor: 'session-ria' })] })
+  h.emit({ agent: { id: 'session-ria' }, status: 'idle' })
   await settle()
   assert.equal(h.prompts.length, 0)
 }
@@ -134,10 +134,10 @@ const workerTask = (overrides = {}) => ({
 {
   assert.deepEqual(normalizeWorkerIdleOptions({}, {}), { enabled: true, throttleMs: 30_000 })
   assert.equal(normalizeWorkerIdleOptions({ notifyOnWorkerIdle: false }, {}).enabled, false)
-  assert.equal(normalizeWorkerIdleOptions({ notifyOnWorkerIdle: true }, { DSH_SUPER_SESSION_WORKER_IDLE: '0' }).enabled, false)
-  assert.equal(normalizeWorkerIdleOptions({}, { DSH_SUPER_SESSION_WORKER_IDLE: 'off' }).enabled, false)
+  assert.equal(normalizeWorkerIdleOptions({ notifyOnWorkerIdle: true }, { DSH_RIA_WORKER_IDLE: '0' }).enabled, false)
+  assert.equal(normalizeWorkerIdleOptions({}, { DSH_RIA_WORKER_IDLE: 'off' }).enabled, false)
   assert.equal(normalizeWorkerIdleOptions({ workerIdleThrottleMs: 5 }, {}).throttleMs, 1_000)
-  assert.equal(normalizeWorkerIdleOptions({}, { DSH_SUPER_SESSION_WORKER_IDLE_THROTTLE_MS: '900000' }).throttleMs, 600_000)
+  assert.equal(normalizeWorkerIdleOptions({}, { DSH_RIA_WORKER_IDLE_THROTTLE_MS: '900000' }).throttleMs, 600_000)
 }
 
 console.log('worker-idle ok')

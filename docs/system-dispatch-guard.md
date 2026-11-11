@@ -1,29 +1,29 @@
 # 系统级「任务转交 · 防误发」提示调研
 
-状态：已实施（DESIGN v0.29）。调研基线为 commit e2cac28；最终采用静态 system prompt section + 设置页开关，不再按 task 动态判断，也不再插入消息前缀。v0.29 把 section 文本收敛为简短英文，无标题，不提 Super Session 或其他会话名。目标是把 super_session_request 在任务派发时逐条插入的防误发文本，改为 DSH 系统级的通用行为约束。
+状态：已实施（DESIGN v0.29）。调研基线为 commit e2cac28；最终采用静态 system prompt section + 设置页开关，不再按 task 动态判断，也不再插入消息前缀。v0.29 把 section 文本收敛为简短英文，无标题，不提 Ria 或其他会话名。目标是把 ria_request 在任务派发时逐条插入的防误发文本，改为 DSH 系统级的通用行为约束。
 
 ## 0. 结论
 
 最终实施：给每个 agent 注册一个 agent 作用域的静态 system prompt section；同时删除 task 派发时的整段消息前缀。
 
-- 注入点：agent.ctx.systemPrompt.section，section 名称 dsh-super-session:dispatch-guard，order 4100。
+- 注入点：agent.ctx.systemPrompt.section，section 名称 dsh-ria:dispatch-guard，order 4100。
 - 生效范围：所有 agent 都安装，文本是通用提示；用户明确接受「对所有 agent 生效」，因为它对普通会话无害。不再按 task 或 executor 动态判断。
-- 开关：设置页「设置 > Super Session」提供 dispatchGuard 开关，默认打开。关闭后 section 的 text 返回空字符串，DSH 的 renderPrompt 丢弃空 section。
+- 开关：设置页「设置 > Ria」提供 dispatchGuard 开关，默认打开。关闭后 section 的 text 返回空字符串，DSH 的 renderPrompt 丢弃空 section。
 - 注册时机：插件 apply 时遍历 ctx.agents.list() 补装；同时监听 agent/created。冷 worker 在 agent/created 时、排队消息释放前完成注册。
 - 清理：section 返回 disposer；agent/disposed 和插件卸载时 dispose，按 agent id 去重。注册失败只 warn，不阻断插件加载。
 - 前缀：已删除。task 派发和 quick relay 的 content 都原样发送，不加任何前缀或标记。
-- 微信：微信入站消息进入 Super，不直接进 worker；防误发由 worker 的系统提示提供，所以 UI 和微信入口最终一致。quick relay 仍然保持原文。
+- 微信：微信入站消息进入 Ria，不直接进 worker；防误发由 worker 的系统提示提供，所以 UI 和微信入口最终一致。quick relay 仍然保持原文。
 - 不改 worker preset、不改 AGENTS.md、不写 session 历史、不依赖 developer message。preset 无法给已开始会话换绑，AGENTS.md 是 user 角色且范围过大，developer message 没有自由文本 API。
 
 ## 1. 现状与问题
 
 改造前实现（历史，相关前缀已删除）：
 
-- /home/gkl/Desktop/vibe_proj/dsh-super-session/lib/index.js:29 曾定义 DISPATCH_GUARD_TEXT。
-- /home/gkl/Desktop/vibe_proj/dsh-super-session/lib/index.js:678：
+- /home/gkl/Desktop/vibe_proj/dsh-ria/lib/index.js:29 曾定义 DISPATCH_GUARD_TEXT。
+- /home/gkl/Desktop/vibe_proj/dsh-ria/lib/index.js:678：
   const outboundContent = taskId ? [{ type: 'text', text: DISPATCH_GUARD_TEXT }, ...content] : content
-- /home/gkl/Desktop/vibe_proj/dsh-super-session/lib/index.js:702-704 把 outboundContent 写入 delivery 并调用 sessionController.prompt。
-- /home/gkl/Desktop/vibe_proj/dsh-super-session/lib/index.js:706 成功后才把 task 置为 working。
+- /home/gkl/Desktop/vibe_proj/dsh-ria/lib/index.js:702-704 把 outboundContent 写入 delivery 并调用 sessionController.prompt。
+- /home/gkl/Desktop/vibe_proj/dsh-ria/lib/index.js:706 成功后才把 task 置为 working。
 - quick relay（不带 taskId）保持原文；带 taskId 才加整段提示。
 
 问题不在投递可靠性，而在提示的形态：
@@ -92,7 +92,7 @@ preset 是子插件列表，只能在空白会话上绑定；用户已有的 wor
 - /home/gkl/.nvm/versions/node/v26.2.0/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-session/lib/types/index.d.ts:43 定义 session/created。
 - /home/gkl/.nvm/versions/node/v26.2.0/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-session/lib/index.js:1909 发出事件。
 
-session/created 发生在 agent 和 system prompt 作用域建立之前，拿不到 agent.ctx，也无法判断这条 session 之后会不会被 Super 派发。结论：不可行。
+session/created 发生在 agent 和 system prompt 作用域建立之前，拿不到 agent.ctx，也无法判断这条 session 之后会不会被 Ria 派发。结论：不可行。
 
 ### 2.6 developer / system message
 
@@ -108,14 +108,14 @@ session/created 发生在 agent 和 system prompt 作用域建立之前，拿不
 
 位置：dsh-system-prompt 的 personaPrefix / personaSuffix 是部署级配置，所有 agent 共用。不能只对被派发的 worker 生效。结论：不采用。
 
-### 2.8 prompt source 是否能区分 Super
+### 2.8 prompt source 是否能区分 Ria
 
 位置：/home/gkl/.nvm/versions/node/v26.2.0/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-api-session-controller/lib/index.js:4048
 
 - prompt() 在 :4054 构造 source = { kind: 'user', rpcId: request.requestId, ... }。
-- UI 用户消息和 Super 的 request 都走同一个 API，source 都是 user-rpc；模型看到的没有来源标记。
+- UI 用户消息和 Ria 的 request 都走同一个 API，source 都是 user-rpc；模型看到的没有来源标记。
 
-所以不能靠「Super 的消息自动带特殊 source」来让 worker 识别，除非在内容里加标记。结论：系统提示方案不依赖 source 标记。
+所以不能靠「Ria 的消息自动带特殊 source」来让 worker 识别，除非在内容里加标记。结论：系统提示方案不依赖 source 标记。
 
 ### 2.9 system-prompt context（备选，不推荐）
 
@@ -127,7 +127,7 @@ ctx.systemPrompt.context 可以注册 agent 作用域的动态 context，但渲�
 
 实施时改为静态方案，实际在 lib/dispatch-guard.mjs 增加：
 
-- 名称：dsh-super-session:dispatch-guard
+- 名称：dsh-ria:dispatch-guard
 - order：4100（在工具说明之后、TOOLS_SDK 5000 之前；避免和内置 section 的固定 order 冲突）
 - interpolate：false
 - text：一个函数；settings.dispatchGuard 为 true 时返回固定文本，否则返回空字符串。
@@ -135,10 +135,10 @@ ctx.systemPrompt.context 可以注册 agent 作用域的动态 context，但渲�
 原调研曾建议按 task 动态判断：遍历 store.tasks()，只对 status 为 open/working/blocked 且 executor 等于 agent id 的 agent 输出文本。用户最终决定不这样做，理由是：
 
 - 提示是通用行为约束，对所有 agent 都无害；
-- 静态文本不依赖 task 状态，不会因为 Super 忘记更新 task 而多留或少留；
+- 静态文本不依赖 task 状态，不会因为 Ria 忘记更新 task 而多留或少留；
 - 动态判断会让 system prompt 随 task 状态变化，增加 prompt cache 抖动和实现复杂度。
 
-因此最终实现不安 executor 过滤，也不在 Super 自己身上做例外；所有 agent 都安装同一个静态 section。
+因此最终实现不安 executor 过滤，也不在 Ria 自己身上做例外；所有 agent 都安装同一个静态 section。
 
 ### 3.2 注册与生命周期
 
@@ -151,7 +151,7 @@ ctx.systemPrompt.context 可以注册 agent 作用域的动态 context，但渲�
 
 ### 3.3 文本措辞
 
-去掉「这条消息前面有一段提示」的假设，改成对「最新一条用户消息」的判断。v0.29 的实际实现是一段简短英文，没有标题，不提 Super Session 或其他会话名：
+去掉「这条消息前面有一段提示」的假设，改成对「最新一条用户消息」的判断。v0.29 的实际实现是一段简短英文，没有标题，不提 Ria 或其他会话名：
 
 The latest message may not belong to this session's current work. If it is clearly unrelated to what the session is doing, ask the user to confirm before acting on it; if the session is idle or the message is relevant, proceed normally.
 
@@ -173,7 +173,7 @@ The latest message may not belong to this session's current work. If it is clear
 已有 live worker：
 
 - 插件 apply 遍历 agents.list() 后立即生效；下一步系统提示就包含 section。
-- 是否出现与 task 无关；开关打开就出现，开关状态从 super.json 恢复。
+- 是否出现与 task 无关；开关打开就出现，开关状态从 ria.json 恢复。
 
 冷 worker：
 
@@ -188,7 +188,7 @@ The latest message may not belong to this session's current work. If it is clear
 重启：
 
 - 插件重新 apply，遍历 live agents 或等待 agent/created，section 重新注册。
-- 开关状态从 super.json 的 settings.dispatchGuard 恢复，不依赖 task 状态。
+- 开关状态从 ria.json 的 settings.dispatchGuard 恢复，不依赖 task 状态。
 - 不需要把提示写进 session 文件，也不需要改 worker 配置。
 
 升级/重装：
@@ -207,7 +207,7 @@ The latest message may not belong to this session's current work. If it is clear
 
 ### 3.7 与微信入口的一致性
 
-- 微信入站消息进入 Super，不直接进 worker；Super 仍是唯一派发者。
+- 微信入站消息进入 Ria，不直接进 worker；Ria 仍是唯一派发者。
 - 防误发挂在「带 taskId 的派发」上，与任务来源是 UI 还是微信无关。
 - 所以微信来源的任务和 UI 来源的任务得到同一条系统提示，不存在入口不一致。
 - quick relay 仍然原文转发，不带提示；如果用户希望微信 quick relay 也带提示，那是另一个产品决定，不应混进本次系统级改造。
@@ -216,7 +216,7 @@ The latest message may not belong to this session's current work. If it is clear
 
 | 方案 | 侵入性 | 可靠性 | 上下文开销 | 重启后保持 | 升级/重装回退 | 实现复杂度 | 精确归因 |
 |---|---|---|---|---|---|---|---|
-| agent 作用域 system prompt section（推荐） | 低：内存注册，不改 session/preset/文件 | 高：system 角色，每步组装 | 开关打开时每个 system prompt 一小段；关闭为 0 | 是：重新注册，开关从 super.json 恢复 | 代码级，无需回退配置 | 低到中 | 无：通用提示，不区分消息 |
+| agent 作用域 system prompt section（推荐） | 低：内存注册，不改 session/preset/文件 | 高：system 角色，每步组装 | 开关打开时每个 system prompt 一小段；关闭为 0 | 是：重新注册，开关从 ria.json 恢复 | 代码级，无需回退配置 | 低到中 | 无：通用提示，不区分消息 |
 | 保留整段消息前缀 | 低：只改消息内容 | 高：每条派发都可见 | 每条派发重复一段 | 是：delivery 里保存了 content | 代码级 | 低 | 高：每条消息自带说明 |
 | 改 worker preset | 高：整套 preset 差异 | 高：preset 内可写系统提示 | 取决于 preset | 是：session 保存 preset id | 需要迁移/重建 | 中到高 | 高 |
 | AGENTS.md / CLAUDE.md | 中高：写文件，影响范围大 | 中：user 角色 reminder | 每个相关 session 都带 | 是：文件持久化 | 文件需手动清理 | 中 | 低：无法按 task 开关 |
@@ -237,10 +237,10 @@ The latest message may not belong to this session's current work. If it is clear
 2. DispatchGuard.install 调 agent.ctx.systemPrompt.section，name 固定，order 4100，interpolate=false，text 根据 settings.dispatchGuard 返回静态文本或空字符串；disposer 存进 Map，按 agent id 去重。
 3. lib/index.js 的 apply 中调用 dispatchGuard.installAll()，订阅 agent/created 与 agent/disposed，并在 ctx.effect cleanup 统一 dispose。
 4. 删除 toolRequest 里的 outboundContent 拼接；delivery 和 prompt 直接使用 content。
-5. 更新 manager prompt 和 super_session_request 的工具描述：防误发由 worker 系统提示提供，不加消息前缀，模型不要手写。
+5. 更新 manager prompt 和 ria_request 的工具描述：防误发由 worker 系统提示提供，不加消息前缀，模型不要手写。
 6. 补测试：
    - test/dispatch-guard.mjs 覆盖安装、agent/created 与 disposed、重复安装、开关文本、失败 warning、shutdown；
-   - test/smoke.mjs 覆盖 worker 和 Super 都安装 section、默认文本、POST /settings 关闭后 text 为空、再次打开恢复、非法值 400、GET /state 的 settings；
+   - test/smoke.mjs 覆盖 worker 和 Ria 都安装 section、默认文本、POST /settings 关闭后 text 为空、再次打开恢复、非法值 400、GET /state 的 settings；
    - task 派发 content 只有一段原文；quick relay 也只有一段原文。
 7. README.md、DESIGN.md 第 6 节、设置页、Phase 13、验收和实现状态已更新。
 8. 设置页已在隔离 DSH 中真实点击验证；section 安装、开关和空文本同时由单元测试和 smoke 覆盖。

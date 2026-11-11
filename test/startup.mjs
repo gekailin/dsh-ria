@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import assert from 'node:assert/strict'
@@ -309,6 +309,29 @@ try {
   assert.equal(savedFlight.tickets[0].origin.kind, 'legacy_inflight')
 } finally {
   rmSync(flightDir, { recursive: true, force: true })
+}
+
+// Loading a v1 state keeps the recent-worker hint (stored as lastTaskId) and
+// writes an exact byte-for-byte backup before the first migrated save.
+{
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-ria-startup-migrate-'))
+  try {
+    writeState(dir, [])
+    const file = join(dir, 'ria.json')
+    const raw = JSON.parse(readFileSync(file, 'utf8'))
+    raw.recentWorkers = { 'session-old': { lastUsedAt: 1794400000000, lastTaskId: 'task_old' } }
+    writeFileSync(file, JSON.stringify(raw, null, 2))
+    const before = readFileSync(file)
+    const h = harness({ stateDir: dir })
+    await new RiaService(h.ctx, dir).startup()
+    const saved = JSON.parse(readFileSync(file, 'utf8'))
+    assert.equal(saved.recentWorkers['session-old'].lastTicketId, 'task_old')
+    assert.equal(saved.recentWorkers['session-old'].lastTaskId, undefined)
+    assert.equal(saved.schemaVersion, 2)
+    assert.equal(readFileSync(join(dir, 'ria.json.v1.bak')).equals(before), true)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 }
 
 console.log('startup ok')

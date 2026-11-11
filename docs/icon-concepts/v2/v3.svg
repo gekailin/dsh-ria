@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+  <title>三滴错落</title>
+  <g transform="translate(15.8 15.2) rotate(18) scale(0.95)">
+    <path d="M0 5.6 C0 5.6 -3.8 1.0 -3.8 -2.0 C-3.8 -4.3 -2.1 -5.9 0 -5.9 C2.1 -5.9 3.8 -4.3 3.8 -2.0 C3.8 1.0 0 5.6 0 5.6 Z" fill="currentColor" stroke="none"/>
+  </g>
+  <g transform="translate(8.8 9.2) rotate(4) scale(0.64)">
+    <path d="M0 5.6 C0 5.6 -3.8 1.0 -3.8 -2.0 C-3.8 -4.3 -2.1 -5.9 0 -5.9 C2.1 -5.9 3.8 -4.3 3.8 -2.0 C3.8 1.0 0 5.6 0 5.6 Z" fill="currentColor" stroke="none"/>
+  </g>
+  <g transform="translate(4.2 4.8) rotate(-16) scale(0.42)">
+    <path d="M0 5.6 C0 5.6 -3.8 1.0 -3.8 -2.0 C-3.8 -4.3 -2.1 -5.9 0 -5.9 C2.1 -5.9 3.8 -4.3 3.8 -2.0 C3.8 1.0 0 5.6 0 5.6 Z" fill="currentColor" stroke="none"/>
+  </g>
+</svg>

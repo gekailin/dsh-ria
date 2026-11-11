@@ -253,7 +253,7 @@ const reopened = await request('POST', '/plugins/dsh-ria/api/ensure')
 assert.equal(reopened.body.created, false)
 assert.equal(riaEvents.length, 0)
 assert.deepEqual(workspaceAttachments, [riaId, riaId])
-assert.ok(installed.has('ria_task'))
+assert.ok(installed.has('ria_ticket'))
 assert.ok(installed.has('ria_status'))
 assert.ok(installed.has('ria_request'))
 assert.ok(installed.has('ria_read'))
@@ -274,27 +274,31 @@ assert.equal(recentEmpty.windowDays, 7)
 assert.equal(recentEmpty.limit, 5)
 assertLossless(recentEmpty)
 
-const task = await call('ria_task', { goal: 'fix tests', acceptance: 'green', executor: 'session-worker' })
-assert.equal(task.task.taskId.startsWith('task_'), true)
+const ticket = await call('ria_ticket', { goal: 'fix tests', acceptance: 'green', executor: 'session-worker' })
+assert.equal(ticket.ticket.ticketId.startsWith('ticket_'), true)
 concluded = 0
 const promptsBeforeNoteErrors = prompts.length
 await assert.rejects(
-  () => call('ria_request', { targetSessionIds: ['session-worker'], message: 'no note', taskId: task.task.taskId }),
+  () => call('ria_request', { targetSessionIds: ['session-worker'], message: 'no ticket', note: 'x' }),
+  /ticketId is required/,
+)
+await assert.rejects(
+  () => call('ria_request', { targetSessionIds: ['session-worker'], message: 'no note', ticketId: ticket.ticket.ticketId }),
   /requires a non-empty note/,
 )
 await assert.rejects(
-  () => call('ria_request', { targetSessionIds: ['session-worker'], message: 'blank note', taskId: task.task.taskId, note: '   ' }),
+  () => call('ria_request', { targetSessionIds: ['session-worker'], message: 'blank note', ticketId: ticket.ticket.ticketId, note: '   ' }),
   /requires a non-empty note/,
 )
 await assert.rejects(
-  () => call('ria_request', { targetSessionIds: ['session-worker'], message: 'long note', taskId: task.task.taskId, note: 'x'.repeat(501) }),
+  () => call('ria_request', { targetSessionIds: ['session-worker'], message: 'long note', ticketId: ticket.ticket.ticketId, note: 'x'.repeat(501) }),
   /maximum is 500/,
 )
 assert.equal(prompts.length, promptsBeforeNoteErrors)
 assert.equal(concluded, 0)
 const eventsBeforeTaskDispatch = riaEvents.length
 const dispatchNote = '已把“修复测试”交给 Worker One，请它先检查现有用例；完成后我会向你汇报。'
-const requestResult = await call('ria_request', { targetSessionIds: ['session-worker'], message: 'please fix', taskId: task.task.taskId, note: dispatchNote })
+const requestResult = await call('ria_request', { targetSessionIds: ['session-worker'], message: 'please fix', ticketId: ticket.ticket.ticketId, note: dispatchNote })
 assert.equal(requestResult.results[0].ok, true)
 assert.equal(concluded, 1)
 assert.equal(prompts.at(-1).content.length, 1)
@@ -308,8 +312,8 @@ const storedNote = notesAtTurn.body.notes[0]
 assert.equal(storedNote.turn, riaTurn)
 assert.equal(storedNote.sessionId, riaId)
 assert.equal(storedNote.note, dispatchNote)
-assert.equal(storedNote.isTask, true)
-assert.equal(storedNote.taskId, task.task.taskId)
+assert.equal(storedNote.isTicket, true)
+assert.equal(storedNote.ticketId, ticket.ticket.ticketId)
 assert.equal(typeof storedNote.at, 'number')
 assertLossless(notesAtTurn.body)
 assert.deepEqual(wechatNotes, [{ note: dispatchNote, options: { isTask: true } }])
@@ -325,47 +329,18 @@ assert.equal(recentAfterTask.workers.length, 1)
 assert.equal(recentAfterTask.workers[0].sessionId, 'session-worker')
 assert.equal(recentAfterTask.workers[0].title, 'Worker One')
 assert.equal(recentAfterTask.workers[0].cwd, stateDir)
-assert.equal(recentAfterTask.workers[0].lastTaskId, task.task.taskId)
-assert.equal(recentAfterTask.workers[0].lastTaskGoal, 'fix tests')
-assert.equal(recentAfterTask.workers[0].lastTaskStatus, 'working')
+assert.equal(recentAfterTask.workers[0].lastTicketId, ticket.ticket.ticketId)
+assert.equal(recentAfterTask.workers[0].lastTicketGoal, 'fix tests')
+assert.equal(recentAfterTask.workers[0].lastTicketStatus, 'working')
 assert.equal(typeof recentAfterTask.workers[0].lastUsedAt, 'number')
 assertLossless(recentAfterTask)
-const lastUsedBeforeQuick = recentAfterTask.workers[0].lastUsedAt
-concluded = 0
-const eventsBeforeQuick = riaEvents.length
-const quickRequest = await call('ria_request', { targetSessionIds: ['session-worker'], message: 'just checking' })
-assert.equal(quickRequest.results[0].ok, true)
-assert.equal('taskId' in quickRequest.results[0], false)
-assert.equal(concluded, 1)
-assert.equal(prompts.at(-1).content.length, 1)
-assert.equal(prompts.at(-1).content[0].text, 'just checking')
-assert.equal(riaEvents.length, eventsBeforeQuick)
-assert.equal(wechatNotes.length, 1)
-assertLossless(quickRequest)
-const notesAfterQuick = await request('GET', '/plugins/dsh-ria/api/dispatch-notes?sessionId=' + encodeURIComponent(riaId) + '&turn=' + riaTurn)
-assert.equal(notesAfterQuick.body.notes.length, 1)
-const quickNote = '只是转述一句话给 Worker One。'
-const quickWithNote = await call('ria_request', { targetSessionIds: ['session-worker'], message: 'quick note', note: quickNote })
-assert.equal(quickWithNote.results[0].ok, true)
-const notesAfterQuickWithNote = await request('GET', '/plugins/dsh-ria/api/dispatch-notes?sessionId=' + encodeURIComponent(riaId) + '&turn=' + riaTurn)
-assert.equal(notesAfterQuickWithNote.body.notes.length, 2)
-assert.equal(notesAfterQuickWithNote.body.notes[1].isTask, false)
-assert.equal(notesAfterQuickWithNote.body.notes[1].note, quickNote)
-assert.equal('taskId' in notesAfterQuickWithNote.body.notes[1], false)
-assert.deepEqual(wechatNotes[1], { note: quickNote, options: { isTask: false } })
-assertLossless(notesAfterQuickWithNote.body)
-const recentAfterQuick = await call('ria_status', { scope: 'recent' })
-assert.equal(recentAfterQuick.workers.length, 1)
-assert.equal(recentAfterQuick.workers[0].lastUsedAt >= lastUsedBeforeQuick, true)
-assert.equal(recentAfterQuick.workers[0].lastTaskId, task.task.taskId)
-assertLossless(recentAfterQuick)
 concluded = 0
 const eventsBeforeSnapshotFailure = riaEvents.length
 const notesBeforeSnapshotFailure = (await request('GET', '/plugins/dsh-ria/api/dispatch-notes?sessionId=' + encodeURIComponent(riaId))).body.notes.length
 failRiaSnapshot = true
 let snapshotFailure
 try {
-  snapshotFailure = await call('ria_request', { targetSessionIds: ['session-worker'], message: 'note display failure', taskId: task.task.taskId, note: '展示失败也要继续派发。' })
+  snapshotFailure = await call('ria_request', { targetSessionIds: ['session-worker'], message: 'note display failure', ticketId: ticket.ticket.ticketId, note: '展示失败也要继续派发。' })
 } finally {
   failRiaSnapshot = false
 }
@@ -374,27 +349,27 @@ assert.equal(concluded, 1)
 assert.equal(riaEvents.length, eventsBeforeSnapshotFailure)
 const notesAfterSnapshotFailure = await request('GET', '/plugins/dsh-ria/api/dispatch-notes?sessionId=' + encodeURIComponent(riaId))
 assert.equal(notesAfterSnapshotFailure.body.notes.length, notesBeforeSnapshotFailure)
-assert.deepEqual(wechatNotes[2], { note: '展示失败也要继续派发。', options: { isTask: true } })
+assert.deepEqual(wechatNotes[1], { note: '展示失败也要继续派发。', options: { isTask: true } })
 assertLossless(snapshotFailure)
 const originalSendDispatchNote = service.wechat.sendDispatchNote
 service.wechat.sendDispatchNote = async () => { throw new Error('wechat unavailable') }
 concluded = 0
-const wechatFailure = await call('ria_request', { targetSessionIds: ['session-worker'], message: 'wechat note failure', taskId: task.task.taskId, note: '微信发送失败也要继续派发。' })
+const wechatFailure = await call('ria_request', { targetSessionIds: ['session-worker'], message: 'wechat note failure', ticketId: ticket.ticket.ticketId, note: '微信发送失败也要继续派发。' })
 assert.equal(wechatFailure.results[0].ok, true)
 assert.equal(concluded, 1)
 await new Promise(resolve => setImmediate(resolve))
 service.wechat.sendDispatchNote = originalSendDispatchNote
 assertLossless(wechatFailure)
 concluded = 0
-const partialRequest = await call('ria_request', { targetSessionIds: ['session-worker', 'session-child'], message: 'partial' })
+const partialRequest = await call('ria_request', { targetSessionIds: ['session-worker', 'session-child'], message: 'partial', ticketId: ticket.ticket.ticketId, note: '部分目标不会收到。' })
 assert.equal(partialRequest.results.filter(item => item.ok).length, 1)
 assert.equal(concluded, 0)
 assertLossless(partialRequest)
 const approvals = await call('ria_approval', {})
 assert.deepEqual(approvals, { pending: [], count: 0 })
 assertLossless(approvals)
-const status = await call('ria_status', { scope: 'tasks' })
-assert.equal(status.tasks[0].status, 'working')
+const status = await call('ria_status', { scope: 'tickets' })
+assert.equal(status.tickets[0].status, 'working')
 assertLossless(status)
 const sessions = await call('ria_status', { scope: 'sessions' })
 assert.deepEqual(sessions.sessions.map(item => item.sessionId), ['session-worker', 'session-worker-2', 'session-archived', 'session-no-workspace', 'session-seeded'])
@@ -411,7 +386,13 @@ assert.equal('lastUsedAt' in sessions.sessions[1], false)
 assert.equal(sessions.sessions[4].parentSessionId, 'session-worker')
 // A seeded session keeps a parentSessionId; it must still be dispatchable.
 concluded = 0
-const seededDispatch = await call('ria_request', { targetSessionIds: ['session-seeded'], message: 'seeded worker check' })
+const seededTicket = await call('ria_ticket', { goal: 'seeded check', executor: 'session-seeded' })
+const seededDispatch = await call('ria_request', {
+  targetSessionIds: ['session-seeded'],
+  message: 'seeded worker check',
+  ticketId: seededTicket.ticket.ticketId,
+  note: '已交给 seeded worker 检查。',
+})
 assert.equal(seededDispatch.results[0].ok, true)
 assert.equal(concluded, 1)
 assert.equal(prompts.at(-1).sessionId, 'session-seeded')
@@ -421,29 +402,35 @@ assert.equal(sessionStatus.session.sessionId, 'session-worker')
 assertLossless(sessionStatus)
 
 // Dispatch preflight: archived, missing-workspace, and missing-session targets
-// are rejected before delivery and leave task/recent-worker state untouched.
+// are rejected before delivery and leave ticket/recent-worker state untouched.
 concluded = 0
 const preflightPromptsBefore = prompts.length
-const archivedTask = await call('ria_task', { goal: 'archived target', acceptance: 'never runs', executor: 'session-archived' })
+const archivedTicket = await call('ria_ticket', { goal: 'archived target', acceptance: 'never runs', executor: 'session-archived' })
 const archivedDispatch = await call('ria_request', {
   targetSessionIds: ['session-archived'],
   message: 'should not arrive',
-  taskId: archivedTask.task.taskId,
+  ticketId: archivedTicket.ticket.ticketId,
   note: '不会真的派发。',
 })
 assert.equal(archivedDispatch.results[0].ok, false)
 assert.equal(archivedDispatch.results[0].code, 'session_archived')
-assert.equal(archivedDispatch.results[0].taskId, archivedTask.task.taskId)
+assert.equal(archivedDispatch.results[0].ticketId, archivedTicket.ticket.ticketId)
 assert.match(archivedDispatch.results[0].message, /session-archived/)
 assert.equal(prompts.length, preflightPromptsBefore)
 assert.equal(concluded, 0)
 assertLossless(archivedDispatch)
-const tasksAfterArchived = await call('ria_status', { scope: 'tasks' })
-assert.equal(tasksAfterArchived.tasks.find(item => item.taskId === archivedTask.task.taskId).status, 'open')
+const ticketsAfterArchived = await call('ria_status', { scope: 'tickets' })
+assert.equal(ticketsAfterArchived.tickets.find(item => item.ticketId === archivedTicket.ticket.ticketId).status, 'open')
 const recentAfterArchived = await call('ria_status', { scope: 'recent' })
 assert.equal(recentAfterArchived.workers.some(item => item.sessionId === 'session-archived'), false)
 
-const noWorkspaceDispatch = await call('ria_request', { targetSessionIds: ['session-no-workspace'], message: 'nope' })
+const noWorkspaceTicket = await call('ria_ticket', { goal: 'no workspace target', executor: 'session-no-workspace' })
+const noWorkspaceDispatch = await call('ria_request', {
+  targetSessionIds: ['session-no-workspace'],
+  message: 'nope',
+  ticketId: noWorkspaceTicket.ticket.ticketId,
+  note: '不会真的派发。',
+})
 assert.equal(noWorkspaceDispatch.results[0].ok, false)
 assert.equal(noWorkspaceDispatch.results[0].code, 'workspace_missing')
 assert.match(noWorkspaceDispatch.results[0].message, /session-no-workspace/)
@@ -451,19 +438,28 @@ assert.match(noWorkspaceDispatch.results[0].message, /工作目录/)
 assert.equal(prompts.length, preflightPromptsBefore)
 assert.equal(concluded, 0)
 
-const missingDispatch = await call('ria_request', { targetSessionIds: ['session-nope'], message: 'nope' })
+const missingTicket = await call('ria_ticket', { goal: 'missing target', executor: 'session-nope' })
+const missingDispatch = await call('ria_request', {
+  targetSessionIds: ['session-nope'],
+  message: 'nope',
+  ticketId: missingTicket.ticket.ticketId,
+  note: '不会真的派发。',
+})
 assert.equal(missingDispatch.results[0].ok, false)
 assert.equal(missingDispatch.results[0].code, 'session_missing')
 assert.match(missingDispatch.results[0].message, /session-nope/)
 assert.equal(prompts.length, preflightPromptsBefore)
 
 const mixedPromptsBefore = prompts.length
+const mixedTicket = await call('ria_ticket', { goal: 'mixed targets', executor: 'session-worker' })
 const mixed = await call('ria_request', {
-  targetSessionIds: ['session-worker', 'session-archived', 'session-no-workspace', 'session-nope'],
+  targetSessionIds: ['session-worker', 'session-child'],
   message: 'mixed',
+  ticketId: mixedTicket.ticket.ticketId,
+  note: '部分目标不会收到。',
 })
 assert.equal(mixed.results[0].ok, true)
-assert.deepEqual(mixed.results.slice(1).map(item => item.code), ['session_archived', 'workspace_missing', 'session_missing'])
+assert.deepEqual(mixed.results.slice(1).map(item => item.code), ['not_top_level'])
 assert.equal(prompts.length, mixedPromptsBefore + 1)
 assert.equal(prompts.at(-1).sessionId, 'session-worker')
 assert.equal(concluded, 0)
@@ -482,7 +478,7 @@ await assert.rejects(
 const grant = await call('ria_grant', {
   action: 'set',
   sessionId: 'session-worker',
-  taskId: task.task.taskId,
+  ticketId: ticket.ticket.ticketId,
   sandboxMode: 'danger-full-access',
   approvalPolicy: 'never',
   ttlSeconds: 600,
@@ -533,8 +529,8 @@ assert.equal(httpState.status, 200)
 assert.equal(httpState.body.grants.length, 1)
 assert.equal(httpState.body.grants[0].grantId, grant.grant.grantId)
 assert.deepEqual(httpState.body.settings, { dispatchGuard: true, progressCards: false })
-const closedTask = await call('ria_task', { taskId: task.task.taskId, status: 'done' })
-assert.equal(closedTask.task.status, 'done')
+const closedTask = await call('ria_ticket', { ticketId: ticket.ticket.ticketId, status: 'done' })
+assert.equal(closedTask.ticket.status, 'done')
 assert.equal(permissions.sandboxOverride, 'workspace-write')
 assert.equal(permissions.approvalOverride, 'ask')
 const restoredGrants = await call('ria_grant', { action: 'list' })
@@ -559,7 +555,7 @@ await assert.rejects(
 )
 const audit = readFileSync(join(stateDir, 'audit.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line))
 assert.ok(audit.some(item => item.event === 'grant/set' && item.grantId === grant.grant.grantId))
-assert.ok(audit.some(item => item.event === 'grant/restored' && item.trigger === 'task-done'))
+assert.ok(audit.some(item => item.event === 'grant/restored' && item.trigger === 'ticket-done'))
 assert.ok(audit.some(item => item.event === 'grant/restored' && item.trigger === 'explicit-reset'))
 await call('ria_memory', { action: 'remember', key: 'language', text: 'Chinese' })
 const memory = await call('ria_memory', { action: 'read' })
@@ -570,19 +566,19 @@ assert.match(promptText, /Ria session id/)
 assert.match(promptText, /End the current turn immediately/)
 assert.match(promptText, /Every request the user hands you must be carried to an end/)
 assert.match(promptText, /call ria_resolve once per listed ticket/)
-assert.match(promptText, /Never use ria_task to edit an intake/)
-assert.match(promptText, /When a worker refuses a task, or the user cancels\/stops a worker turn/)
+assert.match(promptText, /Never use ria_ticket to edit an intake/)
+assert.match(promptText, /When a worker refuses a ticket, or the user cancels\/stops a worker turn/)
 assert.match(promptText, /Never silently reassign the work, re-send it, or switch to another approach on your own/)
-assert.match(promptText, /mark the task blocked with blockedReason and wait for instructions/)
-assert.match(promptText, /who received the task/)
+assert.match(promptText, /mark the ticket blocked with blockedReason and wait for instructions/)
+assert.match(promptText, /who received the ticket/)
 assert.match(promptText, /what the user will see next/)
 assert.match(promptText, /MUST include note/)
-assert.match(promptText, /quick relay without taskId does not need note/)
+assert.match(promptText, /ticketId is required/)
 assert.match(promptText, /do not rely on assistant text/)
 assert.match(installed.get('ria_status').description, /never waits/)
 assert.match(installed.get('ria_status').description, /scope=recent/)
 assert.match(installed.get('ria_status').description, /lastUsedAt/)
-assert.match(installed.get('ria_status').description, /lastTaskGoal/)
+assert.match(installed.get('ria_status').description, /lastTicketGoal/)
 assert.match(installed.get('ria_read').description, /lastTurn/)
 assert.match(installed.get('ria_read').description, /aborted\(user\)/)
 assert.match(installed.get('ria_request').description, /ends the current turn/)
@@ -590,7 +586,7 @@ assert.match(installed.get('ria_request').description, /anti-misdelivery constra
 assert.match(installed.get('ria_request').description, /adds no message prefix/)
 assert.match(installed.get('ria_request').description, /note is REQUIRED/)
 assert.match(installed.get('ria_request').description, /missing, blank, or over-500-character note is an error/)
-assert.match(installed.get('ria_request').description, /who received the task/)
+assert.match(installed.get('ria_request').description, /who received the ticket/)
 assert.match(installed.get('ria_request').description, /what the user will see next/)
 assert.match(installed.get('ria_request').description, /maximum 500 characters/i)
 assert.match(installed.get('ria_approval').description, /never approves or denies/)
@@ -605,7 +601,7 @@ assert.match(promptText, /scope="recent"/)
 assert.match(promptText, /up to 5 workers/)
 assert.match(promptText, /last 7 days/)
 assert.match(promptText, /ask the user which session/)
-assert.match(promptText, /Creating or updating a task does not count/)
+assert.match(promptText, /Creating or updating a ticket does not count/)
 assert.match(promptText, /ria_spawn/)
 assert.match(promptText, /absolute directory/)
 assert.match(promptText, /attachments/)
@@ -618,15 +614,16 @@ assert.equal(state.tickets[0].goal, 'fix tests')
 assert.equal(state.deliveries.length, 0)
 assert.equal(state.grants.length, 0)
 assert.equal(typeof state.recentWorkers['session-worker'].lastUsedAt, 'number')
-assert.equal(state.recentWorkers['session-worker'].lastTaskId, task.task.taskId)
+assert.equal(state.recentWorkers['session-worker'].lastTicketId, mixedTicket.ticket.ticketId)
 assert.equal('session-worker-2' in state.recentWorkers, false)
 
 const beforeFailedUse = (await call('ria_status', { scope: 'recent' })).workers[0].lastUsedAt
 failPrompts.add('session-worker')
 concluded = 0
-const failedRequest = await call('ria_request', { targetSessionIds: ['session-worker'], message: 'do not deliver' })
+const failedTicket = await call('ria_ticket', { goal: 'delivery failure', executor: 'session-worker' })
+const failedRequest = await call('ria_request', { targetSessionIds: ['session-worker'], message: 'do not deliver', ticketId: failedTicket.ticket.ticketId, note: '投递会失败。' })
 assert.equal(failedRequest.results[0].ok, false)
-assert.equal('taskId' in failedRequest.results[0], false)
+assert.equal(failedRequest.results[0].ticketId, failedTicket.ticket.ticketId)
 assert.match(failedRequest.results[0].error, /prompt failed/)
 assert.equal(concluded, 0)
 assertLossless(failedRequest)

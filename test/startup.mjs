@@ -103,23 +103,23 @@ try {
   assert.equal(againHarness.prompts.length, 0)
 
   const statusTool = first.tools.get('ria_status')
-  const snapshot = await statusTool.execute({ scope: 'tasks' }, { signal: new AbortController().signal })
-  assert.equal(snapshot.tasks[0].status, 'blocked')
-  assert.match(snapshot.tasks[0].blockedReason, /自动恢复已达上限/)
+  const snapshot = await statusTool.execute({ scope: 'tickets' }, { signal: new AbortController().signal })
+  assert.equal(snapshot.tickets[0].status, 'blocked')
+  assert.match(snapshot.tickets[0].blockedReason, /自动恢复已达上限/)
 
-  const taskTool = first.tools.get('ria_task')
-  assert.ok(taskTool)
+  const ticketTool = first.tools.get('ria_ticket')
+  assert.ok(ticketTool)
   const exec = { signal: new AbortController().signal, concludeTurn() {} }
-  const updated = await taskTool.execute({ taskId: 'task_exhausted', status: 'working' }, exec)
-  assert.equal(updated.task.status, 'working')
-  assert.equal(updated.task.recoveryCount, 0)
-  assert.equal(updated.task.blockedReason, '')
+  const updated = await ticketTool.execute({ ticketId: 'task_exhausted', status: 'open' }, exec)
+  assert.equal(updated.ticket.status, 'open')
+  assert.equal(updated.ticket.recoveryCount, 0)
+  assert.equal(updated.ticket.blockedReason, '')
 
-  service.store.updateTask('task_exhausted', { recoveryCount: 2 })
+  service.store.updateTicket('task_exhausted', { recovery: { count: 2 } })
   const requestTool = first.tools.get('ria_request')
-  const dispatched = await requestTool.execute({ targetSessionIds: ['session-worker'], message: 'continue', taskId: 'task_exhausted', note: '已让 Worker 继续执行未完成任务。' }, exec)
+  const dispatched = await requestTool.execute({ targetSessionIds: ['session-worker'], message: 'continue', ticketId: 'task_exhausted', note: '已让 Worker 继续执行未完成任务。' }, exec)
   assert.equal(dispatched.results[0].ok, true)
-  assert.equal(service.store.task('task_exhausted').recovery.count, 0)
+  assert.equal(service.store.ticket('task_exhausted').recovery.count, 0)
 
   const retryDir = mkdtempSync(join(tmpdir(), 'dsh-ria-startup-retry-'))
   try {
@@ -141,9 +141,9 @@ try {
     assert.equal(third.prompts.length, 2)
     assert.equal(third.prompts[0].sessionId, 'session-worker')
     assert.equal(third.prompts[1].sessionId, 'session-ria')
-    assert.equal(retried.store.task('task_retry').status, 'working')
-    assert.equal(retried.store.task('task_retry').recovery.count, 1)
-    assert.equal(retried.store.task('task_retry').blockedReason, '')
+    assert.equal(retried.store.ticket('task_retry').status, 'working')
+    assert.equal(retried.store.ticket('task_retry').recovery.count, 1)
+    assert.equal(retried.store.ticket('task_retry').blockedReason, '')
   } finally {
     rmSync(retryDir, { recursive: true, force: true })
   }

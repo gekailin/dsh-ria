@@ -134,7 +134,7 @@ function capture(fixture, id, text, turn) {
 
     const untouchable = capture(fixture, 'm-task-on-intake', '还在 intake', 12).ticket
     await assert.rejects(
-      () => fixture.call('ria_task', { taskId: untouchable.ticketId, goal: '改 intake' }),
+      () => fixture.call('ria_ticket', { ticketId: untouchable.ticketId, goal: '改 intake' }),
       error => error.code === 'intake_requires_resolve',
     )
   } finally {

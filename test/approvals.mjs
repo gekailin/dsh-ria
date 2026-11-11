@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import { ApprovalObserver } from '../lib/approvals.mjs'
 
-const tasks = [
-  { taskId: 'task_1', executor: 'session-worker', status: 'working' },
-  { taskId: 'task_2', executor: 'session-other', status: 'open' },
+const tickets = [
+  { ticketId: 'task_1', executor: 'session-worker', status: 'working' },
+  { ticketId: 'task_2', executor: 'session-other', status: 'open' },
 ]
 
 function assertLossless(value, path = 'value') {
@@ -34,7 +34,7 @@ function setup(overrides = {}) {
   }
   const store = {
     riaSessionId: 'session-ria',
-    activeTasks: () => tasks,
+    activeTickets: () => tickets,
   }
   const observer = new ApprovalObserver({ ctx, store, ttlMs: 10000, ...overrides })
   const dispose = observer.subscribe()
@@ -65,7 +65,7 @@ function setup(overrides = {}) {
   assertLossless(during)
   const item = during[0]
   assert.equal(item.workerSessionId, 'session-worker')
-  assert.equal(item.taskId, 'task_1')
+  assert.equal(item.ticketId, 'task_1')
   assert.equal(item.toolName, 'bash')
   assert.equal(item.callId, 'call_1')
   assert.equal(item.reason, 'write outside workspace')

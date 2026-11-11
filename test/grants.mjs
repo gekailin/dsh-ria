@@ -6,7 +6,7 @@ import { GrantService } from '../lib/grants.mjs'
 
 const stateDir = mkdtempSync(join(tmpdir(), 'dsh-ria-grants-'))
 const grants = []
-const tasks = [{ taskId: 'task-1', goal: 'work', executor: 'session-w', status: 'working' }]
+const tickets = [{ ticketId: 'task-1', goal: 'work', executor: 'session-w', status: 'working' }]
 const store = {
   riaSessionId: 'session-ria',
   grants: () => grants,
@@ -22,7 +22,7 @@ const store = {
     const index = grants.findIndex(item => item.grantId === grantId)
     if (index >= 0) grants.splice(index, 1)
   },
-  task: taskId => tasks.find(item => item.taskId === taskId),
+  ticket: ticketId => tickets.find(item => item.ticketId === ticketId),
 }
 
 const permissions = {
@@ -73,7 +73,7 @@ const service = new GrantService({
 
 const created = await service.set({
   sessionId: 'session-w',
-  taskId: 'task-1',
+  ticketId: 'task-1',
   sandboxMode: 'danger-full-access',
   approvalPolicy: 'never',
   userConfirmed: true,
@@ -112,14 +112,14 @@ assert.equal(permissions.sandboxOverride, 'read-only')
 assert.equal(grants.length, 0)
 
 permissions.sandboxOverride = 'workspace-write'
-tasks.push({ taskId: 'task-2', goal: 'orphan', executor: 'session-w', status: 'working' })
+tickets.push({ ticketId: 'task-2', goal: 'orphan', executor: 'session-w', status: 'working' })
 const orphan = await service.set({
   sessionId: 'session-w',
-  taskId: 'task-2',
+  ticketId: 'task-2',
   sandboxMode: 'danger-full-access',
   userConfirmed: true,
 })
-tasks.splice(tasks.findIndex(item => item.taskId === 'task-2'), 1)
+tickets.splice(tickets.findIndex(item => item.ticketId === 'task-2'), 1)
 await service.reconcile()
 assert.equal(grants.length, 0)
 assert.equal(permissions.sandboxOverride, 'workspace-write')
@@ -139,7 +139,7 @@ service.shutdown()
 const audit = readFileSync(join(stateDir, 'audit.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line))
 assert.ok(audit.some(item => item.event === 'grant/restored' && item.trigger === 'expired'))
 assert.ok(audit.some(item => item.event === 'grant/restored' && item.trigger === 'startup'))
-assert.ok(audit.some(item => item.event === 'grant/restored' && item.trigger === 'task-done' && item.grantId === orphan.grantId))
+assert.ok(audit.some(item => item.event === 'grant/restored' && item.trigger === 'ticket-done' && item.grantId === orphan.grantId))
 assert.ok(audit.some(item => item.event === 'grant/restored' && item.trigger === 'manual-test' && item.skipped.includes('sandboxMode')))
 assert.ok(audit.some(item => item.event === 'grant/restore_failed' && item.trigger === 'manual-test'))
 

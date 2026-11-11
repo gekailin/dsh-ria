@@ -188,14 +188,14 @@ function finish(store, ticketId, summary = 'done') {
     const store = fixture.service.store
     const source = open(store)
     const target = open(store)
-    const moved = store.addDelivery({ targetSessionId: 'session-worker', requestId: 'req_keep', taskId: source.ticketId, content: [{ type: 'text', text: 'hi' }] })
-    const other = store.addDelivery({ targetSessionId: 'session-worker', requestId: 'req_other', taskId: target.ticketId, content: [{ type: 'text', text: 'other' }] })
+    const moved = store.addDelivery({ targetSessionId: 'session-worker', requestId: 'req_keep', ticketId: source.ticketId, content: [{ type: 'text', text: 'hi' }] })
+    const other = store.addDelivery({ targetSessionId: 'session-worker', requestId: 'req_other', ticketId: target.ticketId, content: [{ type: 'text', text: 'other' }] })
     const result = store.mergeTicket(source.ticketId, target.ticketId)
     assert.equal(result.ok, true)
     assert.equal(result.movedDeliveries, 1)
-    assert.equal(store.delivery(moved.deliveryId).taskId, target.ticketId)
+    assert.equal(store.delivery(moved.deliveryId).ticketId, target.ticketId)
     assert.equal(store.delivery(moved.deliveryId).requestId, 'req_keep')
-    assert.equal(store.delivery(other.deliveryId).taskId, target.ticketId)
+    assert.equal(store.delivery(other.deliveryId).ticketId, target.ticketId)
   } finally {
     fixture.cleanup()
   }

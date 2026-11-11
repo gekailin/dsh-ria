@@ -3,7 +3,7 @@ import { normalizeWorkerIdleOptions, WorkerIdleWatcher } from '../lib/worker-idl
 
 const settle = () => new Promise(resolve => setTimeout(resolve, 10))
 
-function setup({ tasks = [], options = {}, riaId = 'session-ria', updateTask } = {}) {
+function setup({ tickets = [], options = {}, riaId = 'session-ria', transitionTicket } = {}) {
   let handler
   let clock = 1_000
   const prompts = []
@@ -24,7 +24,7 @@ function setup({ tasks = [], options = {}, riaId = 'session-ria', updateTask } =
   }
   const watcher = new WorkerIdleWatcher({
     ctx,
-    store: { tasks: () => tasks, ...(updateTask ? { updateTask } : {}) },
+    store: { tickets: () => tickets, transitionTicket: transitionTicket || (() => ({ ok: true })) },
     ensureRia: async () => riaId,
     getRiaId: () => riaId,
     log: (level, message) => logs.push(level + ': ' + message),
@@ -43,8 +43,8 @@ function setup({ tasks = [], options = {}, riaId = 'session-ria', updateTask } =
   }
 }
 
-const workerTask = (overrides = {}) => ({
-  taskId: 'task_1',
+const workerTicket = (overrides = {}) => ({
+  ticketId: 'ticket_1',
   goal: 'finish the report',
   acceptance: 'tests pass',
   executor: 'session-worker',
@@ -53,7 +53,7 @@ const workerTask = (overrides = {}) => ({
 })
 
 {
-  const h = setup({ tasks: [workerTask()] })
+  const h = setup({ tickets: [workerTicket()] })
   h.emit({ agent: { id: 'session-worker' }, status: 'idle' })
   await settle()
   assert.equal(h.prompts.length, 1)
@@ -63,37 +63,37 @@ const workerTask = (overrides = {}) => ({
   const text = request.content[0].text
   assert.match(text, /\[Worker idle\]/)
   assert.match(text, /session-worker 的 turn 已结束/)
-  assert.match(text, /taskId=task_1/)
+  assert.match(text, /ticketId=ticket_1/)
   assert.match(text, /finish the report/)
   assert.match(text, /ria_read/)
   assert.match(text, /不要假设已完成/)
   assert.match(text, /blockedReason/)
-  assert.match(h.logs.join('\n'), /notify Ria: session-worker idle for task_1/)
+  assert.match(h.logs.join('\n'), /notify Ria: session-worker idle for ticket_1/)
 }
 
 {
-  const h = setup({ tasks: [workerTask({ executor: 'session-ria' })] })
+  const h = setup({ tickets: [workerTicket({ executor: 'session-ria' })] })
   h.emit({ agent: { id: 'session-ria' }, status: 'idle' })
   await settle()
   assert.equal(h.prompts.length, 0)
 }
 
 {
-  const h = setup({ tasks: [workerTask({ status: 'done' })] })
+  const h = setup({ tickets: [workerTicket({ status: 'done' })] })
   h.emit({ agent: { id: 'session-worker' }, status: 'idle' })
   await settle()
   assert.equal(h.prompts.length, 0)
 }
 
 {
-  const h = setup({ tasks: [workerTask()] })
+  const h = setup({ tickets: [workerTicket()] })
   h.emit({ agent: { id: 'session-worker' }, status: 'running' })
   await settle()
   assert.equal(h.prompts.length, 0)
 }
 
 {
-  const h = setup({ tasks: [workerTask()] })
+  const h = setup({ tickets: [workerTicket()] })
   h.emit({ agent: { id: 'session-worker' }, status: 'idle' })
   await settle()
   h.emit({ agent: { id: 'session-worker' }, status: 'idle' })
@@ -108,7 +108,7 @@ const workerTask = (overrides = {}) => ({
 
 {
   const updates = []
-  const h = setup({ tasks: [workerTask()], updateTask: (taskId, patch) => updates.push({ taskId, patch }) })
+  const h = setup({ tickets: [workerTicket()], transitionTicket: (ticketId, to, patch) => { updates.push({ ticketId, to, patch }); return { ok: true } } })
   h.emit({
     agent: { id: 'session-worker', session: { snapshotEvents: () => [{ type: 'turn/end', data: { turn: 3, reason: { kind: 'completed' } } }] } },
     status: 'idle',
@@ -122,13 +122,14 @@ const workerTask = (overrides = {}) => ({
 }
 
 {
-  const task = workerTask()
+  const ticket = workerTicket()
   const updates = []
   const h = setup({
-    tasks: [task],
-    updateTask: (taskId, patch) => {
-      updates.push({ taskId, patch })
-      Object.assign(task, patch)
+    tickets: [ticket],
+    transitionTicket: (ticketId, to, patch) => {
+      updates.push({ ticketId, to, patch })
+      ticket.status = to
+      return { ok: true, ticket }
     },
   })
   h.emit({
@@ -145,16 +146,16 @@ const workerTask = (overrides = {}) => ({
   assert.match(text, /向用户报告并询问下一步/)
   assert.doesNotMatch(text, /发送 continuation/)
   assert.equal(updates.length, 1)
-  assert.equal(updates[0].taskId, 'task_1')
-  assert.equal(updates[0].patch.status, 'blocked')
+  assert.equal(updates[0].ticketId, 'ticket_1')
+  assert.equal(updates[0].to, 'blocked')
   assert.match(updates[0].patch.blockedReason, /用户取消了 worker turn/)
-  assert.equal(task.status, 'blocked')
-  assert.match(h.logs.join('\n'), /user cancelled turn on session-worker; blocked task_1/)
+  assert.equal(ticket.status, 'blocked')
+  assert.match(h.logs.join('\n'), /user cancelled turn on session-worker; blocked ticket_1/)
 }
 
 {
   const updates = []
-  const h = setup({ tasks: [workerTask()], updateTask: (taskId, patch) => updates.push({ taskId, patch }) })
+  const h = setup({ tickets: [workerTicket()], transitionTicket: (ticketId, to, patch) => { updates.push({ ticketId, to, patch }); return { ok: true } } })
   h.emit({
     agent: { id: 'session-worker', session: { snapshotEvents: () => [{ type: 'turn/end', data: { turn: 5, reason: { kind: 'aborted', reason: { kind: 'disposed' } } } }] } },
     status: 'idle',
@@ -168,21 +169,21 @@ const workerTask = (overrides = {}) => ({
 }
 
 {
-  const h = setup({ tasks: [workerTask()], options: { notifyOnWorkerIdle: false } })
+  const h = setup({ tickets: [workerTicket()], options: { notifyOnWorkerIdle: false } })
   assert.equal(h.hasHandler(), false)
   assert.match(h.logs.join('\n'), /disabled/)
 }
 
 {
-  const tasks = [workerTask(), workerTask({ taskId: 'task_2', goal: 'second' })]
-  const h = setup({ tasks })
+  const tickets = [workerTicket(), workerTicket({ ticketId: 'ticket_2', goal: 'second' })]
+  const h = setup({ tickets })
   h.emit({ agent: { id: 'session-worker' }, status: 'idle' })
   await settle()
   assert.equal(h.prompts.length, 1)
   const text = h.prompts[0].content[0].text
-  assert.match(text, /taskId=task_1/)
-  assert.match(text, /taskId=task_2/)
-  tasks.length = 1
+  assert.match(text, /ticketId=ticket_1/)
+  assert.match(text, /ticketId=ticket_2/)
+  tickets.length = 1
   h.emit({ agent: { id: 'session-worker' }, status: 'idle' })
   await settle()
   assert.equal(h.prompts.length, 1)

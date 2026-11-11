@@ -1,6 +1,6 @@
 # dsh-super-session 设计方案
 
-> 状态：v0.27（2026-11-11）
+> 状态：v0.28（2026-11-11）
 > 目标目录：/home/gkl/Desktop/vibe_proj/dsh-super-session
 > Super Session 固定用 PTC preset（agentPreset=ptc）启动，模型只直接看到 run_code + SDK。本文是设计说明；实现状态见第 20 节。
 
@@ -395,6 +395,20 @@ markdownFile 也可以直接写 false 关闭。环境变量优先于 profile 配
 - 丢弃：warn，dropped outbound while paused: 后接 JSON，字段为 at、superSessionId、to（filehelper）、kind（assistant/system/text/file）、pausedBy、reason；text 另有 chars、preview，file 另有 name、bytes。
 - 自动暂停被手动暂停拦下：info，auto pause ignored: manual pause is active。
 
+### 11.3 派发 note 同步到微信
+
+turn-tail 卡片是插件 client 渲染的，微信桥只转发 assistant/message 文本，因此卡片本身不会到微信。派发成功后，Host 额外把同一段 note 作为一条普通文本放进 WechatService 的 outbound 队列，与卡片并存。
+
+- 触发点：super_session_request 成功（所有目标都被 Host 接受）且 note 通过校验。任务派发和带 note 的 quick relay 都触发；没有 note 的 quick relay 不产生微信消息。
+- 格式：任务为“📌 任务已派发：<note>”，quick relay 为“📌 消息已转交：<note>”。只加一行前缀，不包长模板，note 原文不改。
+- quick relay 有 note 也推送：网页端同样会显示“消息已转交”卡片，微信侧保持同样的确认；没有 note 时本来就没有卡片，也不应该凭空多一条微信。
+- 通道：调用 WechatService.sendDispatchNote，内部走 deliverAssistant -> Outbound.enqueue，因此和普通回复共用串行队列、markdown/长度判定和暂停开关；发送失败不写 outbox。
+- 暂停：入队前检查 state.paused；已暂停则丢弃并记 dropped outbound while paused，kind=dispatch-note，不绕过。暂停竞态由 deliverAssistant/PauseError 兜底，同样记日志。
+- 未登录：没有 outbound 时跳过并记 info（WeChat is not connected; skipped dispatch note），不影响派发。
+- 失败：只记 warn（could not send dispatch note to WeChat: ...），不影响 super_session_request 的成功结果，也不影响 concludeTurn。微信通知不写 outbox 重试，避免事后补发一条已经过时的派发确认。
+- 长度：前缀加 note 后按现有规则判断，阈值按包含前缀的完整文本计算；note 上限 500 字，默认 800 字阈值下不会转 .md，若配置更低阈值则照常转文件。
+- 与 turn-tail 卡片的关系：网页显示卡片、微信收到文本是预期双份；两处使用同一个标题语义和同一段 note 原文，措辞一致。
+
 ## 12. 状态文件
 
 ~~~text
@@ -487,6 +501,8 @@ Phase 15：微信暂停推送 UI（chip 弹层显示“推送中 / 已暂停推�
 
 Phase 16：note 硬约束（带 taskId 的 request 必须传 note，最多 500 字；缺失/空白/超长直接报错且不投递；Host 在 concludeTurn 前把 note 记录到 super.json，由 client 在 conversation.chat.turnTail 渲染可见卡片，失败只 warn；quick relay 不受影响）。
 
+Phase 17：派发 note 同步微信（task note 发“📌 任务已派发：<note>”，带 note 的 quick relay 发“📌 消息已转交：<note>”；走现有 outbound 队列和暂停门禁；未登录跳过；发送失败只 warn，不影响派发和 concludeTurn）。
+
 ## 16. 验收
 
 1. 点击入口只创建一个 Super。
@@ -526,6 +542,7 @@ Phase 16：note 硬约束（带 taskId 的 request 必须传 note，最多 500 �
 34. scope=recent 返回 sessionId、title、cwd、lastUsedAt、lastTaskGoal、lastTaskStatus；scope=sessions 也带 title、lastUsedAt；缺失字段省略且输出 lossless。
 35. 投递失败不更新 recentWorkers；quick relay 成功也更新 lastUsedAt。
 36. 微信弹层显示推送状态（正常“推送中”，暂停“已暂停推送”+ 来源 + 时间），按钮可手动暂停/恢复并立即刷新；自动暂停时只出现轻提示，不弹窗；设置页不重复提供同一开关。
+37. 带 note 的 task 派发成功后，微信收到一条“📌 任务已派发：<note>”；带 note 的 quick relay 收到“📌 消息已转交：<note>”；无 note 的 quick relay 不产生微信消息。note 走现有 outbound 队列：暂停时丢弃并记日志，未登录跳过，发送失败只 warn，不影响派发和 concludeTurn。网页卡片与微信文本并存，使用同一段 note 原文。
 
 ## 17. 已确认
 
@@ -540,6 +557,7 @@ Phase 16：note 硬约束（带 taskId 的 request 必须传 note，最多 500 �
 - 微信暂停默认不启用；手动 pause 优先于自动 pause；微信入站总是恢复。
 - 防误发提示使用静态 system prompt section，对所有 agent 生效；任务消息不加前缀。
 - 设置页提供 dispatchGuard 开关，默认打开。
+- 派发 note 同时写 super.json（网页卡片）和微信 outbound（文本）；quick relay 有 note 也推送，没有则不推。
 
 ## 18. 风险
 
@@ -572,16 +590,20 @@ Phase 16：note 硬约束（带 taskId 的 request 必须传 note，最多 500 �
 | system prompt section 是行为约束 | 模型仍可能忽略；设置页只开关提示，不改变 worker 的 tools/preset/历史，也不做硬拦截 |
 | 插件重载残留同名 section | apply 统一 dispose；按 agent id 去重；安装失败只 warn，不阻断加载 |
 | 手动暂停被自动覆盖 | manual 优先；只有微信入站能清除 manual，并明确记录 resumedBy |
+| 微信 note 与网页卡片看起来重复 | 预期双份：网页是卡片、微信是文本；使用同一标题语义和同一段 note 原文，不是重复推送 |
+| 微信 note 发送失败或未登录 | 只 warn 或记 info 跳过；不进 outbox 重试，不影响派发和 concludeTurn |
+| 微信 note 绕过暂停开关 | 统一走 deliverAssistant -> Outbound.enqueue；暂停时丢弃并记 kind=dispatch-note 日志 |
 
 ## 19. 总结
 
-全局一个 Super Session，PTC preset（agentPreset=ptc）+ 管理者 prompt、memory.md 和 7 个工具；模型通过 run_code SDK 调用工具；用 task 管理谁做什么，request 就是普通会话消息；通过可开关的 agent system prompt section 提供通用防误发提示，任务消息不加前缀；带 taskId 派发必须提供 note，Host 记录后由 client 在 turn 末尾显示卡片，然后结束本轮；worker idle 时自动唤醒 Super（只读事件、30 秒节流）；重启按 task 继续；微信客户端进程内运行，长回复/复杂 Markdown 自动转 .md 文件；推送可暂停（手动或按消息通道自动切换），暂停只停出站、连接保持；新建会话有一条不调用模型的一次性欢迎消息。
+全局一个 Super Session，PTC preset（agentPreset=ptc）+ 管理者 prompt、memory.md 和 7 个工具；模型通过 run_code SDK 调用工具；用 task 管理谁做什么，request 就是普通会话消息；通过可开关的 agent system prompt section 提供通用防误发提示，任务消息不加前缀；带 taskId 派发必须提供 note，Host 记录后由 client 在 turn 末尾显示卡片，并把同一段 note 以“📌 任务已派发”文本同步微信（带 note 的 quick relay 为“📌 消息已转交”），然后结束本轮；worker idle 时自动唤醒 Super（只读事件、30 秒节流）；重启按 task 继续；微信客户端进程内运行，长回复/复杂 Markdown 自动转 .md 文件；推送可暂停（手动或按消息通道自动切换），暂停只停出站、连接保持；新建会话有一条不调用模型的一次性欢迎消息。
 
 ## 20. 实现状态
 
 截至当前版本：
 
-- Phase 0–16 已实现；Phase 0–4、Phase 6、Phase 13 和 Phase 16 的 turn-tail 卡片通过隔离环境的真实 DSH 验证，其余阶段由单元测试和 smoke 覆盖。Phase 16 的截图使用手工写入 super.json 的 note 验证渲染；真实 toolRequest 写入路径由 smoke 覆盖。
+- Phase 0–17 已实现；Phase 0–4、Phase 6、Phase 13 和 Phase 16 的 turn-tail 卡片通过隔离环境的真实 DSH 验证，其余阶段由单元测试和 smoke 覆盖。Phase 16 的截图使用手工写入 super.json 的 note 验证渲染；真实 toolRequest 写入路径由 smoke 覆盖。
+- Phase 17 的微信 note 镜像由 test/wechat.mjs 和 smoke 覆盖：task/quick 格式、暂停丢弃日志、恢复后发送、未登录跳过、发送异常不影响派发和 concludeTurn；没有用真实微信账号验证实际收件。
 - Phase 15 的暂停状态卡、手动开关和自动暂停轻提示没有在真实微信账号下走完整链路；弹层只在已登录时显示状态卡，隔离 profile 无法伪造成已登录。
 - Phase 14 的近期 worker 记录、scope=recent 候选字段、空窗口和无 lastUsedAt 字段的 lossless 输出由 smoke 覆盖；挑选行为本身是 prompt 约束，未用真实模型验证。
 - Phase 13 的设置页已在隔离 DSH 里真实点击：设置导航出现 Super Session；开关默认勾选，关闭后显示“当前：已关闭”且 GET /settings 返回 false，重新打开后恢复 true；截图 docs/ui-settings.png。system prompt section 的安装、开关和空文本同时由单元测试与 smoke 覆盖。
@@ -600,12 +622,12 @@ Phase 16：note 硬约束（带 taskId 的 request 必须传 note，最多 500 �
 - lib/client.js：侧边栏入口、瞬时 launcher、入口右侧微信 chip 和登录弹层（含推送状态卡、暂停/恢复按钮、自动暂停轻提示）、设置页 Super Session section、conversation.chat.turnTail 派发 note 卡片。
 - lib/wechat/wxweb.mjs、login.mjs、outbound.mjs：复用的文件传输助手协议、扫码登录、串行发送，以及 .md 文件上传/appmsg 发送。
 - lib/wechat/markdown.mjs：长度/代码块/表格/标题/链接判定、配置归一化、文件名。
-- lib/wechat/service.mjs：进程内连接、assistant 文本回传、长回复转文件/失败回退、入站去重、Super 投递、重连积压处理、暂停状态与按通道自动切换。
+- lib/wechat/service.mjs：进程内连接、assistant 文本回传、派发 note 文本镜像、长回复转文件/失败回退、入站去重、Super 投递、重连积压处理、暂停状态与按通道自动切换。
 - lib/wechat/request-ids.mjs：wx_ / host_ requestId 前缀与来源判定。
 - lib/wechat/outbound.mjs：串行发送、暂停门禁、排队丢弃、在途完成。
 - cordis.patch.yml：插件 patch。
-- test/smoke.mjs：Host 流程 smoke；近期 worker 记录、scope=recent/sessions 字段、空窗口、失败不更新、prompt 规则与 lossless 断言；dispatch-notes 按 session/turn 过滤、错误 session 空列表、note 持久化、snapshot 读取失败仍派发。
-- test/wechat.mjs：微信服务单元测试。
+- test/smoke.mjs：Host 流程 smoke；近期 worker 记录、scope=recent/sessions 字段、空窗口、失败不更新、prompt 规则与 lossless 断言；dispatch-notes 按 session/turn 过滤、错误 session 空列表、note 持久化、snapshot 读取失败仍派发；派发 note 的微信镜像调用与失败隔离。
+- test/wechat.mjs：微信服务单元测试，含派发 note 的 task/quick 格式、暂停丢弃、恢复发送、未登录跳过和发送异常。
 - test/wechat-file.mjs：Markdown 判定、文件发送、失败回退和 multipart/appmsg 单元测试。
 - test/wechat-pause.mjs：手动暂停/恢复、自动按通道切换、合成消息过滤、manual 优先级、队列竞态、丢弃日志、重启持久化。
 - test/approvals.mjs：审批观察器单元测试。

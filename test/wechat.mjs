@@ -119,6 +119,48 @@ try {
   }
 
   {
+    const logs = []
+    const sent = []
+    const ctx = fakeCtx()
+    const service = makeService(ctx, dir, { log: (level, message) => logs.push({ level, message }) })
+    service.session = { client: { sentIds: new Set() } }
+    service.outbound = { async enqueue(text) { sent.push(text); return 'id' } }
+
+    assert.equal(await service.sendDispatchNote('已把任务交给 Worker One。', { isTask: true }), true)
+    assert.deepEqual(sent, ['📌 任务已派发：已把任务交给 Worker One。'])
+    assert.equal(await service.sendDispatchNote('转述一句话给 Worker One。', { isTask: false }), true)
+    assert.equal(sent[1], '📌 消息已转交：转述一句话给 Worker One。')
+
+    service.setPaused(true, { by: 'manual', reason: '测试暂停' })
+    const beforePause = sent.length
+    assert.equal(await service.sendDispatchNote('暂停期间不要发。', { isTask: true }), false)
+    assert.equal(sent.length, beforePause)
+    const dropped = logs.find(item => /dropped outbound while paused/.test(item.message))
+    assert.ok(dropped)
+    assert.match(dropped.message, /dispatch-note/)
+    assert.match(dropped.message, /测试暂停/)
+
+    service.setPaused(false, { by: 'manual', reason: '测试恢复' })
+    assert.equal(await service.sendDispatchNote('恢复后发送。', { isTask: true }), true)
+    assert.equal(sent.at(-1), '📌 任务已派发：恢复后发送。')
+
+    const offlineLogs = []
+    const offline = makeService(fakeCtx(), dir, { log: (level, message) => offlineLogs.push({ level, message }) })
+    assert.equal(await offline.sendDispatchNote('未登录时不要发。', { isTask: true }), false)
+    assert.ok(offlineLogs.some(item => item.level === 'info' && /not connected/.test(item.message) && /dispatch note/.test(item.message)))
+    assert.equal(offlineLogs.some(item => /dropped outbound/.test(item.message)), false)
+  }
+
+  {
+    const logs = []
+    const service = makeService(fakeCtx(), dir, { log: (level, message) => logs.push({ level, message }) })
+    service.session = { client: {} }
+    service.outbound = { async enqueue() { throw new Error('send failed') } }
+    assert.equal(await service.sendDispatchNote('发送失败。', { isTask: true }), false)
+    assert.ok(logs.some(item => item.level === 'warn' && /could not send dispatch note/.test(item.message) && /send failed/.test(item.message)))
+  }
+
+  {
     const ctx = fakeCtx()
     const service = makeService(ctx, dir)
     assert.equal(service.statusView().loggedIn, false)

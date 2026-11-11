@@ -8,7 +8,7 @@ Super 自己是一个普通的顶层 DSH Session，运行 PTC preset，带管理
 
 ## 当前状态
 
-- Phase 0–16 已实现：单例、PTC 创建、任务、转述、读取、memory、重启恢复（含恢复上限可见性）、侧边栏入口、进程内微信和入口右侧的微信 chip、worker 审批可见性、新会话欢迎消息、系统 prompt 防误发提示与设置页开关、临时 worker 权限调整、微信长回复/复杂 Markdown 自动转 .md 文件，worker 结束 turn 后自动唤醒 Super，微信推送的暂停/恢复，以及暂停状态和手动开关的 UI，带 taskId 派发的 note 硬约束与可见的 turn-tail 派发卡片。
+- Phase 0–17 已实现：单例、PTC 创建、任务、转述、读取、memory、重启恢复（含恢复上限可见性）、侧边栏入口、进程内微信和入口右侧的微信 chip、worker 审批可见性、新会话欢迎消息、系统 prompt 防误发提示与设置页开关、临时 worker 权限调整、微信长回复/复杂 Markdown 自动转 .md 文件，worker 结束 turn 后自动唤醒 Super，微信推送的暂停/恢复，以及暂停状态和手动开关的 UI，带 taskId 派发的 note 硬约束与可见的 turn-tail 派发卡片，以及同步到微信的派发确认文本。
 - 已验证环境：DSH 0.2.2-rc.1，Node 26，真实 Web profile 的隔离副本。
 - 微信入站只接受文本；扫码登录需要在弹层里完成一次，之后 DSH 重启会自动复用凭据。
 
@@ -70,6 +70,7 @@ Super Session 入口标题右侧有一个“微信”chip。点开后可以扫�
 - 凭据和去重/待发状态在 `DSH_HOME/state/super-session/wechat/`，文件权限 0600。
 - 微信发来的文本原样作为普通用户消息进入 Super，不加前缀，也不直接进 worker。
 - Super 的每条 assistant 文本回复都会同步回微信；暂停推送时除外。
+- 带 note 的派发/转述成功后，note 也会作为一条普通微信文本推送（见下文“派发 note 卡片”），同样受暂停开关约束。
 - 入站只处理文本；图片和文件仍建议直接在 Super Session 界面发送。
 - 出站长回复或复杂 Markdown 时，默认改发完整的 .md 文件；短消息和简单文本保持原样。
 - DSH 重启后如有 creds 会自动重连；待发文本超过 10 条时只补发最后 10 条，并先提示跳过了多少条。
@@ -125,7 +126,7 @@ Super Session 入口标题右侧有一个“微信”chip。点开后可以扫�
 |---|---|
 | super_session_task | 建/改任务。字段：goal、acceptance、executor（self 或一个顶层 worker sessionId）、status（open/working/blocked/done/cancelled）、blockedReason。一个任务只有一个 executor。每次更新都会把 recoveryCount 归零。 |
 | super_session_status | 查看任务和可管理的顶层 Session。可带 scope=tasks、scope=sessions 或 scope=recent。scope=sessions 带 title、cwd、updatedAt、lastUsedAt；scope=recent 返回最近 7 天成功派发过的最多 5 个顶层 worker，按 lastUsedAt 倒序，带 sessionId、title、cwd、lastUsedAt、lastTaskGoal、lastTaskStatus。不会 resume 冷会话。 |
-| super_session_request | 把消息发给一个或多个 worker。mode=queue 或 steer；content 支持 text/image/file；带 taskId 时 executor 必须匹配，且必须传 note（一句话，最多 500 字）。Host 把 note 记录到 super.json，由插件 client 在 Super 会话当前轮次末尾显示成可见卡片，不进入模型上下文；缺 note、空白或超长会直接报错且不投递。Host 不加消息前缀；防误发提示由 agent system prompt section 提供。 |
+| super_session_request | 把消息发给一个或多个 worker。mode=queue 或 steer；content 支持 text/image/file；带 taskId 时 executor 必须匹配，且必须传 note（一句话，最多 500 字）。Host 把 note 记录到 super.json，由插件 client 在 Super 会话当前轮次末尾显示成可见卡片，不进入模型上下文；同时把 note 作为“📌 任务已派发：<note>”推送到微信（quick relay 为“📌 消息已转交：<note>”）。缺 note、空白或超长会直接报错且不投递。Host 不加消息前缀；防误发提示由 agent system prompt section 提供。 |
 | super_session_read | 读某个 Session 的近期消息。live 用 snapshotEvents，冷会话用持久化 events，不 resume。 |
 | super_session_approval | 列出正在等待审批的 worker（仅限有 active task 的 executor）。只读：不批准、不拒绝、不替 UI answerer 作答。 |
 | super_session_grant | 临时调整一个 worker 的 sandbox mode 和/或 approval policy。action=set/list/reset；set 必须带 userConfirmed=true，并记录原值、到期时间、审计，任务结束或 reset 时恢复。 |
@@ -163,7 +164,7 @@ Super Session 入口标题右侧有一个“微信”chip。点开后可以扫�
 - 恢复失败会标记 `restore_failed`，60 秒后重试；审计里能看到失败原因。
 - 不改 worker 的 tools、prompt 或 preset。
 
-Super 的系统 prompt 要求：需求不明确时先和用户澄清，再下发；不要凭猜测开工；任务要有验收标准；进度按需查询；经验按 case 集总结（需求、错误做法、正确做法），默认只在对话里输出，用户指定路径时才写文件；重启后先 read 再决定是否继续；收到 `[Worker idle]` 时先 read，确认完成才关任务，等用户输入就标 blocked；不要重复新建会话的欢迎消息；防误发提示由 agent system prompt section 提供，任务消息本身不加前缀；带 taskId 派发必须提供 note（一两句话：派给谁、做什么、用户接下来看到什么），Host 会把它显示成 Super 会话当前轮次末尾的卡片；缺 note 或空白会直接报错、不投递，也不会结束本轮；成功派发后立即结束本轮，不再 sleep/poll；只有用户明确要求时才使用 super_session_grant，绝不自行放宽 worker 权限；用户没指定 worker 时只从 scope=recent 的近期 worker 里挑，近期没有合适的就先问用户，不遍历全部会话、不凭空挑。
+Super 的系统 prompt 要求：需求不明确时先和用户澄清，再下发；不要凭猜测开工；任务要有验收标准；进度按需查询；经验按 case 集总结（需求、错误做法、正确做法），默认只在对话里输出，用户指定路径时才写文件；重启后先 read 再决定是否继续；收到 `[Worker idle]` 时先 read，确认完成才关任务，等用户输入就标 blocked；不要重复新建会话的欢迎消息；防误发提示由 agent system prompt section 提供，任务消息本身不加前缀；带 taskId 派发必须提供 note（一两句话：派给谁、做什么、用户接下来看到什么），Host 会把它显示成 Super 会话当前轮次末尾的卡片，并同步一条微信文本；缺 note 或空白会直接报错、不投递，也不会结束本轮；成功派发后立即结束本轮，不再 sleep/poll；只有用户明确要求时才使用 super_session_grant，绝不自行放宽 worker 权限；用户没指定 worker 时只从 scope=recent 的近期 worker 里挑，近期没有合适的就先问用户，不遍历全部会话、不凭空挑。
 
 ## 任务与转述
 
@@ -175,15 +176,20 @@ Super 的系统 prompt 要求：需求不明确时先和用户澄清，再下发
 - 卡片不属于 turn process，不会被完成后的流程折叠隐藏；它不进入模型上下文，也不依赖 session log；重启后仍能从 super.json 读到。
 - note 缺失、纯空白或超过 500 字时，工具直接报错，消息不投递、不 concludeTurn。展示 note 失败只记 warn，不阻断已经成功的派发。
 - quick relay（不带 taskId）不需要 note；如果提供了 note，会显示一条“消息已转交”卡片（同样受 500 字限制），否则不产生卡片。它的消息仍然原样转发。
+- 同一个 note 也会在派发成功后进入微信 outbound 队列。任务派发发送“📌 任务已派发：<note>”，quick relay 发送“📌 消息已转交：<note>”。quick relay 有 note 也推送，因为网页端同样会显示卡片；没有 note 的 quick relay 不产生微信消息。
+- 微信文本会带前缀后再走现有 markdown/长度判定（阈值按包含前缀的完整文本计算）；note 最多 500 字，默认 800 字阈值下不会转成 .md，若配置了更低阈值则按同一规则处理。
+- 暂停时按现有规则丢弃并记日志（kind=dispatch-note）；微信未登录时跳过并记 info；发送失败只 warn，不影响派发，也不影响 concludeTurn。
 - 早期实现用 `command/run` + `command/done`，但 DSH 把 turn 内 command 节点当作 process member，turn 完成后默认折叠，真实 UI 看不到。现已移除该路径。
 - 该 section 是静态通用文本，对所有 agent 生效，内容不针对具体消息，因此对普通会话无害；它不修改 worker 的消息历史、tools 或 preset。设置页可以关闭它，关闭后 section 文本为空，DSH 会直接丢弃空 section。
 - 带 taskId 的 task 派发和不带 taskId 的 quick relay 都保持原文，不加提示；quick relay 适合“原话转发”和短消息。
 - worker 的 turn 结束时 Host 会自动通知 Super（见下节）；其余进度不轮询、不自动推送，Super 需要时调 status/read。
 - Super 需要定时唤醒时，使用 DSH 官方 schedule_create；插件不实现调度循环。
 
-### 派发 note 卡片
+### 派发 note 卡片与微信确认
 
 ![Super 会话中任务派发后的 turn-tail 卡片](docs/ui-dispatch-note.png)
+
+网页端在 Super 当前轮次末尾显示“任务已派发 / 消息已转交”卡片；微信端同时收到一条以同样标题开头的文本。两处共用同一个 note 原文，措辞一致；网页看到卡片、微信收到文本是预期行为，不是重复发送。
 
 ## 任务转交提示与设置页
 
@@ -267,7 +273,7 @@ DSH_HOME/state/super-session/
 npm test
 ~~~
 
-smoke 使用 mock ctx 覆盖 ensure、Workspace 挂载、7 个工具、request、task 派发与 quick relay 都不加前缀、dispatch guard section 安装到 worker 和 Super、GET/POST /settings 与 GET /state 的 settings、status、read、memory、持久化、grant 的 set/list/reset 与 task 关闭恢复，以及欢迎消息的五事件序列和第二次 ensure 不重复；近期 worker 覆盖空列表、task 派发后候选的 title/cwd/lastUsedAt/lastTaskGoal/lastTaskStatus、quick relay 只更新时间、失败请求不更新、scope=sessions 字段、super.json 持久化和 lossless；dispatch-guard 测试覆盖 installAll、agent/created 与 disposed、重复安装、开关关闭时 text 为空、注册失败只 warn 和 shutdown；wechat 测试覆盖 assistant 文本提取、入口事件过滤、微信入站去重/回显过滤、失败标记、reconnect skip 和状态视图；wechat-file 测试覆盖阈值/代码块/表格/标题/链接判定、配置/env 覆盖、文件名、短消息不变、长消息发 .md、失败回退文本，以及上传 multipart 和 appmsg 的字段/签名/去重；approvals 测试覆盖只记录活跃 executor、始终 next()、abort/超时/shutdown 清理和 lossless 输出；grants 测试覆盖过期、startup、task 缺失/关闭、漂移跳过、恢复失败和审计；startup 测试覆盖达到恢复上限后的通知与 blocked 状态、更新/成功派发清零、以及启动异常通知；worker-idle 测试覆盖正常触发、排除 Super、非 working task/running 状态不触发、按 task 节流、开关关闭，以及提示文本要求 read/不假设完成/等用户输入时标 blocked；wechat-pause 测试覆盖手动开关与持久化、非微信消息自动暂停、微信入站自动恢复、host_/schedule 合成消息不触发、manual 优先级、暂停时不出站且丢日志、排队丢弃而在途完成、重启保持，以及恢复后补发 outbox；smoke 还验证 pause/unpause 往返后 pausedAt、resumedAt、pausedBy 和重复读取 status 的字段一致；以及 dispatch-notes 按 session/turn 过滤、错误 session 返回空列表、note 持久化、无 note 的 quick relay 不记录、snapshot 读取失败不影响派发和 concludeTurn。
+smoke 使用 mock ctx 覆盖 ensure、Workspace 挂载、7 个工具、request、task 派发与 quick relay 都不加前缀、dispatch guard section 安装到 worker 和 Super、GET/POST /settings 与 GET /state 的 settings、status、read、memory、持久化、grant 的 set/list/reset 与 task 关闭恢复，以及欢迎消息的五事件序列和第二次 ensure 不重复；近期 worker 覆盖空列表、task 派发后候选的 title/cwd/lastUsedAt/lastTaskGoal/lastTaskStatus、quick relay 只更新时间、失败请求不更新、scope=sessions 字段、super.json 持久化和 lossless；dispatch-guard 测试覆盖 installAll、agent/created 与 disposed、重复安装、开关关闭时 text 为空、注册失败只 warn 和 shutdown；wechat 测试覆盖 assistant 文本提取、入口事件过滤、微信入站去重/回显过滤、失败标记、reconnect skip 和状态视图；wechat-file 测试覆盖阈值/代码块/表格/标题/链接判定、配置/env 覆盖、文件名、短消息不变、长消息发 .md、失败回退文本，以及上传 multipart 和 appmsg 的字段/签名/去重；approvals 测试覆盖只记录活跃 executor、始终 next()、abort/超时/shutdown 清理和 lossless 输出；grants 测试覆盖过期、startup、task 缺失/关闭、漂移跳过、恢复失败和审计；startup 测试覆盖达到恢复上限后的通知与 blocked 状态、更新/成功派发清零、以及启动异常通知；worker-idle 测试覆盖正常触发、排除 Super、非 working task/running 状态不触发、按 task 节流、开关关闭，以及提示文本要求 read/不假设完成/等用户输入时标 blocked；wechat-pause 测试覆盖手动开关与持久化、非微信消息自动暂停、微信入站自动恢复、host_/schedule 合成消息不触发、manual 优先级、暂停时不出站且丢日志、排队丢弃而在途完成、重启保持，以及恢复后补发 outbox；smoke 还验证 pause/unpause 往返后 pausedAt、resumedAt、pausedBy 和重复读取 status 的字段一致；以及 dispatch-notes 按 session/turn 过滤、错误 session 返回空列表、note 持久化、无 note 的 quick relay 不记录、snapshot 读取失败不影响派发和 concludeTurn；wechat 和 smoke 还覆盖派发 note 的微信镜像：task/quick 格式、暂停时丢弃并记日志、恢复后发送、未登录跳过、发送异常不影响派发与 concludeTurn。
 
 ## 限制
 
@@ -276,7 +282,7 @@ smoke 使用 mock ctx 覆盖 ensure、Workspace 挂载、7 个工具、request�
 - 暂停不能撤回已经在发送中的消息；只能保证之后排队的消息不发出。
 - 暂停期间的连接保持和真实收发没有用真实微信账号验证，只做了单元测试和 HTTP smoke。
 - 微信文件上传/发送链路按网页版协议实现并用 mock 覆盖，尚未用真实微信账号完成一次 .md 文件收发验证。
-- 扫码登录和消息收发仍需要真实微信账号验证。
+- 扫码登录、消息收发和派发 note 的微信镜像仍需要真实微信账号验证。
 - 审批可见性只报告 pending，不代批、不自动唤醒 Super；临时权限需要用户明确指令，Super 不能自行判断后提权。
 - worker 自动唤醒只看 `agent/status` 的 `idle`，不区分“完成”“失败”“等用户输入”；提示措辞不假设完成，需要 Super 再 read。
 - 不做 needs_input/failed 的独立事件级唤醒；需要时用官方 schedule 或用户回来问。

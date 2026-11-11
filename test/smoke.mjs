@@ -168,7 +168,12 @@ function assertLossless(value, path = '$') {
   JSON.stringify(value)
 }
 
-apply(ctx, { stateDir })
+const service = apply(ctx, { stateDir })
+const wechatNotes = []
+service.wechat.sendDispatchNote = async (note, options) => {
+  wechatNotes.push({ note, options })
+  return true
+}
 
 function request(method, path, payload) {
   const req = new EventEmitter()
@@ -290,6 +295,7 @@ assert.equal(storedNote.isTask, true)
 assert.equal(storedNote.taskId, task.task.taskId)
 assert.equal(typeof storedNote.at, 'number')
 assertLossless(notesAtTurn.body)
+assert.deepEqual(wechatNotes, [{ note: dispatchNote, options: { isTask: true } }])
 const notesWrongSession = await request('GET', '/plugins/dsh-super-session/api/dispatch-notes?sessionId=session-worker&turn=' + superTurn)
 assert.deepEqual(notesWrongSession.body, { notes: [] })
 const notesAll = await request('GET', '/plugins/dsh-super-session/api/dispatch-notes?sessionId=' + encodeURIComponent(superId))
@@ -317,6 +323,7 @@ assert.equal(concluded, 1)
 assert.equal(prompts.at(-1).content.length, 1)
 assert.equal(prompts.at(-1).content[0].text, 'just checking')
 assert.equal(superEvents.length, eventsBeforeQuick)
+assert.equal(wechatNotes.length, 1)
 assertLossless(quickRequest)
 const notesAfterQuick = await request('GET', '/plugins/dsh-super-session/api/dispatch-notes?sessionId=' + encodeURIComponent(superId) + '&turn=' + superTurn)
 assert.equal(notesAfterQuick.body.notes.length, 1)
@@ -328,6 +335,7 @@ assert.equal(notesAfterQuickWithNote.body.notes.length, 2)
 assert.equal(notesAfterQuickWithNote.body.notes[1].isTask, false)
 assert.equal(notesAfterQuickWithNote.body.notes[1].note, quickNote)
 assert.equal('taskId' in notesAfterQuickWithNote.body.notes[1], false)
+assert.deepEqual(wechatNotes[1], { note: quickNote, options: { isTask: false } })
 assertLossless(notesAfterQuickWithNote.body)
 const recentAfterQuick = await call('super_session_status', { scope: 'recent' })
 assert.equal(recentAfterQuick.workers.length, 1)
@@ -349,7 +357,17 @@ assert.equal(concluded, 1)
 assert.equal(superEvents.length, eventsBeforeSnapshotFailure)
 const notesAfterSnapshotFailure = await request('GET', '/plugins/dsh-super-session/api/dispatch-notes?sessionId=' + encodeURIComponent(superId))
 assert.equal(notesAfterSnapshotFailure.body.notes.length, notesBeforeSnapshotFailure)
+assert.deepEqual(wechatNotes[2], { note: '展示失败也要继续派发。', options: { isTask: true } })
 assertLossless(snapshotFailure)
+const originalSendDispatchNote = service.wechat.sendDispatchNote
+service.wechat.sendDispatchNote = async () => { throw new Error('wechat unavailable') }
+concluded = 0
+const wechatFailure = await call('super_session_request', { targetSessionIds: ['session-worker'], message: 'wechat note failure', taskId: task.task.taskId, note: '微信发送失败也要继续派发。' })
+assert.equal(wechatFailure.results[0].ok, true)
+assert.equal(concluded, 1)
+await new Promise(resolve => setImmediate(resolve))
+service.wechat.sendDispatchNote = originalSendDispatchNote
+assertLossless(wechatFailure)
 concluded = 0
 const partialRequest = await call('super_session_request', { targetSessionIds: ['session-worker', 'session-child'], message: 'partial' })
 assert.equal(partialRequest.results.filter(item => item.ok).length, 1)

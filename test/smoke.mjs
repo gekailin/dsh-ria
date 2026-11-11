@@ -27,7 +27,10 @@ const worker = {
   id: 'session-worker',
   ctx: { tools: { register: () => () => {} }, systemPrompt: { section(section) { return recordGuard('worker', section) } } },
   session: {
-    snapshotEvents: () => [{ type: 'assistant/message', seq: 2, data: { message: { content: [{ type: 'text', text: 'worker says done' }] } } }],
+    snapshotEvents: () => [
+      { type: 'assistant/message', seq: 2, data: { message: { content: [{ type: 'text', text: 'worker says done' }] } } },
+      { type: 'turn/end', seq: 3, data: { turn: 4, reason: { kind: 'aborted', reason: { kind: 'user' } } } },
+    ],
     append(type, data) {
       workerEvents.push({ type, data })
       if (type === 'sandbox/mode') permissions.sandboxOverride = data.mode
@@ -137,6 +140,8 @@ const ctx = {
       const value = String(id)
       if (value === riaId) return { agent: riaAgent }
       if (value === 'session-worker') return { agent: worker }
+      // The writer-held path forces ria_read to fall back to sessionController.events().
+      if (value === 'session-seeded') return { error: { code: 'session/writer-held', message: 'held by another writer' } }
       return { error: { code: 'session/not-found', message: 'not found' } }
     },
     async list() {
@@ -157,7 +162,19 @@ const ctx = {
       return { accepted: true }
     },
     async state() { return { cursor: 1, active: false, running: true, queue: 0, pendingInput: [] } },
-    async events() { return { records: [], hasMore: false, cursor: 0 } },
+    async events(request) {
+      if (request.address && request.address.sessionId === 'session-seeded') {
+        return {
+          records: [
+            { type: 'event', event: { type: 'assistant/message', seq: 2, data: { message: { content: [{ type: 'text', text: 'cold worker says done' }] } } } },
+            { type: 'event', event: { type: 'turn/end', seq: 3, data: { turn: 2, reason: { kind: 'completed' } } } },
+          ],
+          hasMore: false,
+          cursor: 4,
+        }
+      }
+      return { records: [], hasMore: false, cursor: 0 }
+    },
     async rename() { return { title: 'Ria', seq: 1 } },
   },
 }
@@ -453,6 +470,11 @@ assert.equal(concluded, 0)
 assertLossless(mixed)
 const read = await call('ria_read', { sessionId: 'session-worker', limit: 10 })
 assert.equal(read.messages[0].text, 'worker says done')
+assert.deepEqual(read.lastTurn, { outcome: 'aborted(user)', turn: 4 })
+const coldRead = await call('ria_read', { sessionId: 'session-seeded', limit: 10 })
+assert.equal(coldRead.live, false)
+assert.equal(coldRead.messages[0].text, 'cold worker says done')
+assert.deepEqual(coldRead.lastTurn, { outcome: 'completed', turn: 2 })
 await assert.rejects(
   () => call('ria_grant', { action: 'set', sessionId: 'session-worker', sandboxMode: 'danger-full-access' }),
   /userConfirmed=true/,
@@ -548,6 +570,9 @@ assert.match(promptText, /Ria session id/)
 assert.match(promptText, /End the current turn immediately/)
 assert.match(promptText, /Every request the user hands you must be carried to an end/)
 assert.match(promptText, /done, cancelled, or blocked with a reason/)
+assert.match(promptText, /When a worker refuses a task, or the user cancels\/stops a worker turn/)
+assert.match(promptText, /Never silently reassign the work, re-send it, or switch to another approach on your own/)
+assert.match(promptText, /mark the task blocked with blockedReason and wait for instructions/)
 assert.match(promptText, /who received the task/)
 assert.match(promptText, /what the user will see next/)
 assert.match(promptText, /MUST include note/)
@@ -557,6 +582,8 @@ assert.match(installed.get('ria_status').description, /never waits/)
 assert.match(installed.get('ria_status').description, /scope=recent/)
 assert.match(installed.get('ria_status').description, /lastUsedAt/)
 assert.match(installed.get('ria_status').description, /lastTaskGoal/)
+assert.match(installed.get('ria_read').description, /lastTurn/)
+assert.match(installed.get('ria_read').description, /aborted\(user\)/)
 assert.match(installed.get('ria_request').description, /ends the current turn/)
 assert.match(installed.get('ria_request').description, /anti-misdelivery constraint/)
 assert.match(installed.get('ria_request').description, /adds no message prefix/)

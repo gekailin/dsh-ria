@@ -255,12 +255,14 @@ ria_read 只读最近消息，默认 30 条，最多 100 条，不 resume 冷会
 
 Host 监听 agent/status（payload 为 { agent, status }）。当 status 变为 idle，且该 session 是至少一个 working task 的 executor 时，给 Ria 发一条 mode=queue 的普通消息。
 
-- 只读：不读 worker transcript，不写 worker，不改 worker prompt/tools，不 resume 冷 worker；唯一动作是 ensure Ria 并 prompt Ria。
+- 只读：从 worker 事件日志读取最后一个 turn/end 的 reason，不写 worker，不改 worker prompt/tools，不 resume 冷 worker；动作是 ensure Ria 并 prompt Ria，且在 aborted(user) 时把对应 working task 标为 blocked。
 - 排除 Ria 自身，避免自我唤醒循环。
 - 只匹配 status=working 的 task；open/done/cancelled/blocked 不触发。
 - 节流键是 workerSessionId + taskId，默认 30 秒；多 task 分别计时，同一次事件只发一条消息。
-- 文本固定以 [Worker idle] 开头，只写“turn 已结束”，要求 Ria 先 read 确认，不假设完成；等用户输入/决定时标 blocked，继续时发 continuation。
-- idle 无法区分完成、失败和等用户输入；审批 pending 通常仍为 running，因此不会产生 idle 通知。
+- 文本固定以 [Worker idle] 开头，写“turn 已结束”和最后一轮 turn/end 的 outcome（completed、blocked、error、aborted(user) 等），要求 Ria 先 read 确认，不假设完成；等用户输入/决定时标 blocked，继续时发 continuation。
+- 最后一轮是 aborted(user)（用户手动取消/叫停）时，通知改为“必须停下来等用户决定”，不再建议 continuation；Host 同步把对应 working task 标为 blocked，Ria 只向用户报告并询问下一步。aborted(parent/hook/disposed) 不是用户决定，保持原流程。completed/blocked 等其他原因也不被拦截。
+- worker 明确拒绝任务没有独立事件，仍由 Ria 读消息判断；manager prompt 要求此时标 blocked 并停下来问用户，不自行改派、重发或换方案。
+- idle 本身无法区分完成、等用户输入和明确拒绝；审批 pending 通常仍为 running，因此不会产生 idle 通知。
 - 配置 notifyOnWorkerIdle（默认 true）、workerIdleThrottleMs（默认 30000，1 秒–10 分钟）；环境变量 DSH_RIA_WORKER_IDLE、DSH_RIA_WORKER_IDLE_THROTTLE_MS 优先。
 - 日志记录 enabled/disabled、notify、throttled、no working task、Ria skip；投递失败只 warn，不重试。
 
@@ -502,7 +504,7 @@ Phase 9：微信出站长回复/复杂 Markdown 转 .md 文件（可配置阈值
 
 Phase 10：恢复上限可见性（达到上限的 task 标 blocked + blockedReason，通知 Ria 并列出放弃的 task；startup 异常也通知；task 更新/成功派发清零 recoveryCount）。
 
-Phase 11：worker idle 自动唤醒（agent/status 只读监听、working task executor 过滤、排除 Ria、按 worker+task 30 秒节流、可配置开关、mock 测试）。
+Phase 11：worker idle 自动唤醒（agent/status 只读监听、working task executor 过滤、排除 Ria、按 worker+task 30 秒节流、可配置开关、mock 测试）；读取最后一个 turn/end 的 reason，aborted(user) 时标 blocked 并改为“停下来问用户”。
 
 Phase 12：微信暂停推送（只停出站、连接保持；手动 pause/status API；非微信用户消息自动暂停、微信入站自动恢复；manual/channel 优先级；队列丢弃与在途完成；持久化与重启恢复）。
 

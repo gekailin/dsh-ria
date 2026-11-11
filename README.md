@@ -192,7 +192,7 @@ Ria 入口标题右侧有一个“微信”chip。点开后可以扫码登录微
 - 恢复失败会标记 `restore_failed`，60 秒后重试；审计里能看到失败原因。
 - 不改 worker 的 tools、prompt 或 preset。
 
-Ria 的系统 prompt 要求：需求不明确时先和用户澄清，再下发；不要凭猜测开工；任务要有验收标准；进度按需查询；经验按 case 集总结（需求、错误做法、正确做法），默认只在对话里输出，用户指定路径时才写文件；重启后先 read 再决定是否继续；收到 `[Worker idle]` 时先 read，确认完成才关任务，等用户输入就标 blocked；防误发提示由 agent system prompt section 提供，任务消息本身不加前缀；带 taskId 派发必须提供 note（一两句话：派给谁、做什么、用户接下来看到什么），Host 会把它显示成 Ria 会话当前轮次末尾的卡片，并同步一条微信文本；缺 note 或空白会直接报错、不投递，也不会结束本轮；成功派发后立即结束本轮，不再 sleep/poll；只有用户明确要求时才使用 ria_grant，绝不自行放宽 worker 权限；用户没指定 worker 时只从 scope=recent 的近期 worker 里挑，近期没有合适的就先问用户，不遍历全部会话、不凭空挑。
+Ria 的系统 prompt 要求：需求不明确时先和用户澄清，再下发；不要凭猜测开工；任务要有验收标准；进度按需查询；经验按 case 集总结（需求、错误做法、正确做法），默认只在对话里输出，用户指定路径时才写文件；重启后先 read 再决定是否继续；收到 `[Worker idle]` 时先 read，确认完成才关任务，等用户输入就标 blocked；worker 明确拒绝任务或用户取消/叫停 worker turn 时，标 blocked 并停下来问用户下一步，不自行改派、重发或换方案；防误发提示由 agent system prompt section 提供，任务消息本身不加前缀；带 taskId 派发必须提供 note（一两句话：派给谁、做什么、用户接下来看到什么），Host 会把它显示成 Ria 会话当前轮次末尾的卡片，并同步一条微信文本；缺 note 或空白会直接报错、不投递，也不会结束本轮；成功派发后立即结束本轮，不再 sleep/poll；只有用户明确要求时才使用 ria_grant，绝不自行放宽 worker 权限；用户没指定 worker 时只从 scope=recent 的近期 worker 里挑，近期没有合适的就先问用户，不遍历全部会话、不凭空挑。
 
 ## 任务与转述
 
@@ -247,12 +247,13 @@ Host 启动后延迟 1.5 秒：
 
 默认开启。Host 监听 DSH 的 `agent/status` 事件；当某个正在执行的 worker 变回 `idle`，并且它是至少一个 `working` task 的 executor 时，给 Ria 发一条普通队列消息。Ria 不用轮询，也不会错过 worker 的结束点。
 
-- 只读事件：不读 worker 的 transcript，不改 worker 的 prompt/tools，不往 worker 会话写消息，也不 resume 冷 worker。唯一的动作是唤醒 Ria。
+- 只读事件：从 worker 的事件日志读取最后一个 `turn/end` 的 reason，不改 worker 的 prompt/tools，不往 worker 会话写消息，也不 resume 冷 worker。唯一动作是唤醒 Ria；若最后一轮是 `aborted(user)`，同时把对应 `working` task 标为 `blocked`。
 - 排除 Ria 自己，避免自我唤醒循环。
 - 只匹配 `status=working` 且 `executor` 等于该 worker 的 task；`open`、`done`、`cancelled`、`blocked` 都不触发。
 - 同一 worker + 同一 task 在 30 秒内只通知一次；多个 task 分别计时。
-- 通知措辞只写“worker X 的 turn 已结束”，并明确要求 Ria 用 `ria_read` 确认，不假设任务完成。
-- `idle` 本身无法区分离线、完成和等待用户输入。Ria read 后如果看到 worker 正在向用户提问，应把 task 标成 `blocked` 并报告；如果 worker 在等审批，通常仍是 `running`，不会产生 idle 通知。
+- 通知写明“worker X 的 turn 已结束”和最后一轮结束原因（`completed`、`blocked`、`error`、`aborted(user)` 等），并明确要求 Ria 用 `ria_read` 确认，不假设任务完成。`ria_read` 的返回值也带 `lastTurn`。
+- 当原因是 `aborted(user)`（用户手动取消/叫停）时，通知明确写“必须停下来等用户决定”，不再建议发 continuation；对应 task 由 Host 标为 `blocked`，Ria 只需向用户报告并询问下一步。worker 在消息里明确拒绝任务时，Ria 同样标 `blocked` 后停下来问用户。`completed`、`blocked` 等其他原因保持原有流程，不被拦截。
+- `idle` 仍无法区分“完成”“等用户输入”和“明确拒绝”，这三者要看 worker 最近消息；如果 worker 在等审批，通常仍是 `running`，不会产生 idle 通知。
 - 通知投递失败只记 warn，不重试；worker 侧状态不受影响。
 
 关闭或调整：
@@ -315,7 +316,7 @@ smoke 使用 mock ctx 覆盖 ensure、Workspace 挂载、7 个工具、request�
 - 微信文件上传/发送链路按网页版协议实现并用 mock 覆盖，尚未用真实微信账号完成一次 .md 文件收发验证。
 - 扫码登录、消息收发和派发 note 的微信镜像仍需要真实微信账号验证。
 - 审批可见性只报告 pending，不代批、不自动唤醒 Ria；临时权限需要用户明确指令，Ria 不能自行判断后提权。
-- worker 自动唤醒只看 `agent/status` 的 `idle`，不区分“完成”“失败”“等用户输入”；提示措辞不假设完成，需要 Ria 再 read。
+- worker 自动唤醒由 `agent/status` 的 `idle` 触发，能读到最后一轮 `turn/end` 的 reason（含 `aborted(user)`），但“明确拒绝”只能由 Ria 读消息判断；提示措辞不假设完成，需要 Ria 再 read。
 - 不做 needs_input/failed 的独立事件级唤醒；需要时用官方 schedule 或用户回来问。
 - worker-idle 通知没有在真实 worker 会话里触发过，只用 mock 事件验证。
 - 不做多实例防双开。

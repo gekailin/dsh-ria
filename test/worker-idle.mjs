@@ -3,7 +3,7 @@ import { normalizeWorkerIdleOptions, WorkerIdleWatcher } from '../lib/worker-idl
 
 const settle = () => new Promise(resolve => setTimeout(resolve, 10))
 
-function setup({ tasks = [], options = {}, riaId = 'session-ria' } = {}) {
+function setup({ tasks = [], options = {}, riaId = 'session-ria', updateTask } = {}) {
   let handler
   let clock = 1_000
   const prompts = []
@@ -24,7 +24,7 @@ function setup({ tasks = [], options = {}, riaId = 'session-ria' } = {}) {
   }
   const watcher = new WorkerIdleWatcher({
     ctx,
-    store: { tasks: () => tasks },
+    store: { tasks: () => tasks, ...(updateTask ? { updateTask } : {}) },
     ensureRia: async () => riaId,
     getRiaId: () => riaId,
     log: (level, message) => logs.push(level + ': ' + message),
@@ -104,6 +104,67 @@ const workerTask = (overrides = {}) => ({
   h.emit({ agent: { id: 'session-worker' }, status: 'idle' })
   await settle()
   assert.equal(h.prompts.length, 2)
+}
+
+{
+  const updates = []
+  const h = setup({ tasks: [workerTask()], updateTask: (taskId, patch) => updates.push({ taskId, patch }) })
+  h.emit({
+    agent: { id: 'session-worker', session: { snapshotEvents: () => [{ type: 'turn/end', data: { turn: 3, reason: { kind: 'completed' } } }] } },
+    status: 'idle',
+  })
+  await settle()
+  assert.equal(h.prompts.length, 1)
+  const text = h.prompts[0].content[0].text
+  assert.match(text, /最后一轮结束原因：completed（turn 3）/)
+  assert.match(text, /如果还需要继续：用 ria_request 发送 continuation/)
+  assert.equal(updates.length, 0)
+}
+
+{
+  const task = workerTask()
+  const updates = []
+  const h = setup({
+    tasks: [task],
+    updateTask: (taskId, patch) => {
+      updates.push({ taskId, patch })
+      Object.assign(task, patch)
+    },
+  })
+  h.emit({
+    agent: { id: 'session-worker', session: { snapshotEvents: () => [{ type: 'turn/end', data: { turn: 7, reason: { kind: 'aborted', reason: { kind: 'user' } } } }] } },
+    status: 'idle',
+  })
+  await settle()
+  assert.equal(h.prompts.length, 1)
+  const text = h.prompts[0].content[0].text
+  assert.match(text, /最后一轮结束原因：aborted\(user\)（turn 7）/)
+  assert.match(text, /用户手动取消/)
+  assert.match(text, /必须停下来等用户决定/)
+  assert.match(text, /不要自动续派、重发、改派/)
+  assert.match(text, /向用户报告并询问下一步/)
+  assert.doesNotMatch(text, /发送 continuation/)
+  assert.equal(updates.length, 1)
+  assert.equal(updates[0].taskId, 'task_1')
+  assert.equal(updates[0].patch.status, 'blocked')
+  assert.match(updates[0].patch.blockedReason, /用户取消了 worker turn/)
+  assert.equal(task.status, 'blocked')
+  assert.match(h.logs.join('\n'), /user cancelled turn on session-worker; blocked task_1/)
+}
+
+{
+  const updates = []
+  const h = setup({ tasks: [workerTask()], updateTask: (taskId, patch) => updates.push({ taskId, patch }) })
+  h.emit({
+    agent: { id: 'session-worker', session: { snapshotEvents: () => [{ type: 'turn/end', data: { turn: 5, reason: { kind: 'aborted', reason: { kind: 'disposed' } } } }] } },
+    status: 'idle',
+  })
+  await settle()
+  assert.equal(h.prompts.length, 1)
+  const text = h.prompts[0].content[0].text
+  assert.match(text, /aborted\(disposed\)/)
+  assert.match(text, /发送 continuation/)
+  assert.equal(updates.length, 0)
 }
 
 {

@@ -22,6 +22,7 @@ export async function createFixture(options = {}) {
   const stateDir = mkdtempSync(join(tmpdir(), 'dsh-ria-fixture-'))
   const installed = new Map()
   const prompts = []
+  const steered = []
   const creates = []
   const renames = []
   const effects = []
@@ -46,6 +47,7 @@ export async function createFixture(options = {}) {
       systemPrompt: { section() { return () => {} } },
     },
     model: { current() { return { provider: 'provider-ok', model: 'model-vision' } } },
+    steer(message) { steered.push(message) },
     session: {
       snapshotEvents() { return [] },
       append() { return { seq: 0, time: 1 } },
@@ -192,6 +194,22 @@ export async function createFixture(options = {}) {
     },
   }
 
+  // Drive plugin hooks the way the agent loop does: a waterfall for pre-step
+  // (each handler receives next()) and a serial pass for turn-stopping.
+  const emit = async (name, payload, base) => {
+    const handlers = [...(listeners.get(name) || [])]
+    if (name === 'agent/turn-stopping') {
+      for (const handler of handlers) await handler(payload)
+      return undefined
+    }
+    const fallback = base || (async () => ({ kind: 'enter', messages: [] }))
+    const dispatch = async index => {
+      if (index >= handlers.length) return fallback()
+      return handlers[index](payload, () => dispatch(index + 1))
+    }
+    return dispatch(0)
+  }
+
   const service = apply(ctx, { stateDir })
   await service.ensure()
   const call = async (name, args) => {
@@ -216,6 +234,8 @@ export async function createFixture(options = {}) {
     service,
     installed,
     prompts,
+    steered,
+    emit,
     creates,
     renames,
     summaries,

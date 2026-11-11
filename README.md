@@ -241,14 +241,14 @@ Ria 的系统 prompt 要求：需求不明确时先和用户澄清，再下发�
 
 Host 启动后延迟 1.5 秒：
 
-- 没有 active task、没有中断的 Ria turn、也没有 pending delivery：什么都不做，不创建 Ria。
-- 有 open/working task：先重试 pending delivery，再给 Ria 发恢复消息，列出 taskId、executor、goal、acceptance。
-- Ria 自己的 turn 是否走完也记在 `ria.json` 顶层 `inFlight`：`turnId`、`startedAt`、`lastUserMessage`（≤500 字）、可选的 `lastPhase`（最近工具名）与 `recoveryCount`。收到真实用户消息时写一次；turn 正常完成或用户主动停止时清除。只有 turn 没来得及收尾（崩溃、进程重启）时才留到下次启动。
-- 没有 active task 但有 `inFlight`：同样发一条恢复消息。task 与 `inFlight` 同时存在时合并成一条，不连发两条。
-- 恢复消息带开始时间、用户消息摘要与最近工具名，要求 Ria 先 `ria_read` 自己的会话、检查工作区改动，再从中断处继续，不重复已完成部分；`recoveryCount` 达到 3/3 时只提示一次“已达自动恢复上限”并清除记录。每次真实用户消息都会把计数归零。
-- 同一 task 连续自动恢复最多 3 次。达到上限后，Host 会把任务标成 `blocked`，写入 `blockedReason`（自动恢复已达上限），并在同一条消息里列出 taskId、executor、goal，要求用户手动处理；不会静默跳过。
-- `recoveryCount` 在 task 被 `ria_task` 更新或成功派发时归零。因此它统计的是连续无人处理的重启次数；如果 Ria 或用户中途接手，额度会重置。
+- 没有未收敛 ticket、也没有 pending delivery：什么都不做，不创建 Ria。
+- 恢复单位是 ticket：`intake`（还没有归宿）、`open`（尚未派发）、`working`（worker 可能已中断）。`forked` 父容器只递归 `childTicketIds`，父本身不单独恢复；`blocked`、`failed`、`done`、`cancelled` 不自动恢复。
+- 有 pending delivery 先重试；重试成功会把对应 ticket 拉回 `working` 并重置恢复计数。
+- 所有候选 ticket 合并成一条恢复 prompt，逐条列出 ticketId、status、executor、goal、acceptance、原消息、开始时间、最近动作与 `recovery=n/3`。intake 要求先 `ria_read` 自己的会话再 `ria_resolve`；working 要求先读 worker 与工作区、检查已改文件和测试，再判断继续/done/failed/blocked；open 要求先检查 executor，再派发或标 blocked。
+- 每个 ticket 连续自动恢复最多 3 次。达到 3/3 时不再发 prompt，而是把 ticket 标成 `blocked`，写入 `blockedReason`（自动恢复已达上限）与 `failure.code=recovery_exhausted`，并产生一次 `recovery_exhausted` 卡片；下一个启动不会再处理它。
+- 恢复计数按 ticket 存在 `recovery.count`；`ria_ticket` 更新、成功派发或用户重新打开都会归零。因此它统计的是连续无人处理的重启次数。
 - startup recovery 本身抛错时，也会向 Ria 发送失败通知（错误内容和“需要手动处理”），不只写日志。
+- 旧的顶层 `inFlight` 记录在 schema v2 迁移时转成一条 `open`（或到上限时 `blocked`）ticket，`origin.kind=legacy_inflight`；迁移后不再有顶层 `inFlight` 字段。
 
 ## Worker 完成自动唤醒
 

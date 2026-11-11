@@ -206,4 +206,82 @@ function openTicket(store, overrides = {}) {
   assert.deepEqual(result.data.settings, { dispatchGuard: false, progressCards: false })
 }
 
+// A legacy in-flight record with no matching ticket becomes an open ticket,
+// keeps its recovery count, and leaves no top-level inFlight field behind.
+{
+  const at = Date.UTC(2026, 10, 11, 12, 0, 0)
+  const result = migrateV1State({
+    version: 1,
+    riaSessionId: 'session-ria',
+    tasks: [],
+    inFlight: {
+      turnId: 12,
+      startedAt: Date.UTC(2026, 10, 11, 8, 30, 0),
+      lastUserMessage: '调查无人车底商 GPU 方案',
+      lastPhase: 'bash',
+      recoveryCount: 1,
+    },
+  }, at)
+  assert.equal(result.data.tickets.length, 1)
+  const ticket = result.data.tickets[0]
+  assert.equal(ticket.status, 'open')
+  assert.equal(ticket.executor, 'self')
+  assert.equal(ticket.waitingOn, 'ria')
+  assert.equal(ticket.origin.kind, 'legacy_inflight')
+  assert.equal(ticket.origin.text, '调查无人车底商 GPU 方案')
+  assert.equal(ticket.recovery.count, 1)
+  assert.equal(ticket.progress.lastPhase, 'bash')
+  assert.equal('inFlight' in result.data, false)
+}
+
+// An exhausted legacy record becomes blocked with a reason instead of open.
+{
+  const result = migrateV1State({
+    version: 1,
+    tasks: [],
+    inFlight: {
+      turnId: 3,
+      startedAt: 1,
+      lastUserMessage: '已经到上限的消息',
+      recoveryCount: 3,
+    },
+  }, 2)
+  const ticket = result.data.tickets[0]
+  assert.equal(ticket.status, 'blocked')
+  assert.match(ticket.blockedReason, /自动恢复已达上限/)
+  assert.equal(ticket.failure.code, 'recovery_exhausted')
+}
+
+// When the captured text matches an active ticket, migration merges the
+// recovery count and phase into that ticket instead of creating a duplicate.
+{
+  const at = Date.UTC(2026, 10, 11, 12, 0, 0)
+  const result = migrateV1State({
+    version: 1,
+    tasks: [{
+      taskId: 'task_same',
+      goal: '合并恢复记录',
+      executor: 'session-worker',
+      status: 'working',
+      createdAt: 1,
+      updatedAt: 1,
+      recoveryCount: 1,
+    }],
+    inFlight: {
+      turnId: 9,
+      startedAt: 1,
+      lastUserMessage: '合并恢复记录',
+      lastPhase: 'ria_read',
+      recoveryCount: 2,
+    },
+  }, at)
+  assert.equal(result.data.tickets.length, 1)
+  const ticket = result.data.tickets[0]
+  assert.equal(ticket.ticketId, 'task_same')
+  assert.equal(ticket.recovery.count, 2)
+  assert.equal(ticket.progress.lastPhase, 'ria_read')
+  assert.equal(ticket.revision, 2)
+  assert.equal('inFlight' in result.data, false)
+}
+
 console.log('task-state ok')

@@ -269,26 +269,26 @@ Host 监听 agent/status（payload 为 { agent, status }）。当 status 变为 
 
 ## 10. 启动恢复
 
-重启后 worker 的 turn 已经中断；恢复以 task 和 Ria 自己的未完成 turn 为单位。
+重启后 worker 的 turn 已经中断；恢复以未收敛 ticket 为单位，不再维护独立的 inFlight turn 记录。
 
 | 情况 | 处理 |
 |---|---|
 | pending request：原消息没送达 | 用原 requestId 重试 |
-| 已送达但 task 未完成 | 用新 requestId 发 continuation |
-| Ria 自己的 turn 未收尾 | 发一条恢复 prompt，让 Ria 先 read 自己的会话再继续 |
+| 已送达但 ticket 未完成 | 发一条恢复 prompt，让 Ria 先 read 再继续 |
+| intake 还没有归宿 | 恢复 prompt 要求先 read 自己的会话，再 `ria_resolve` |
 
 步骤：
 
 1. 读 ria.json。
 2. 重试 pending request；失败保留。
 3. 如果原 request 仍在 pending 且重试成功，不追加 continuation。
-4. 收集 status=open/working 且没有 pending request 的 task；同时读顶层 `inFlight`（记录 Ria 当前/上一个未完成 turn：turnId、startedAt、lastUserMessage、lastPhase、recoveryCount）。
-5. 没有 active task、没有 `inFlight`、也没有 pending request 就安静结束。
-6. recoveryCount 已经达到 3 的 active task 先标成 blocked，写入 blockedReason（自动恢复已达上限），不再继续累计；`inFlight.recoveryCount` 达到 3 时清掉记录，只在本次 prompt 里提示一次“已达自动恢复上限”。
-7. 只有存在 candidate、exhausted task 或 `inFlight` 时才 ensure Ria。
-8. 给 Ria 发**一条** prompt：`inFlight` 部分说明上次 turn 未完成、附开始时间与用户消息摘要（及最近工具名），要求先 `ria_read` 自己的会话、检查工作区，再从中断处继续；candidate 部分列出 goal、acceptance、executor、recoveryCount；exhausted 部分单独列出 taskId、executor、goal，并明确说明已超过自动恢复上限、需要用户手动处理。各部分之间空行分隔，绝不发两条。
-9. candidate 的 recoveryCount 加一；`inFlight.recoveryCount` 同样加一；同一对象连续自动恢复最多 3 次。
-10. `inFlight` 的写入与清除：Ria 收到真实用户消息（source.kind=user 且 rpcId 不是 host_ 前缀）时写入一次，turn/end completed 或用户主动停止（aborted/user）时清除；崩溃或进程重启不会写 turn/end，记录因此留给下次启动。工具名只在内存跟踪，turn 异常结束落盘一次，不每次 tool/call 写盘。
+4. 收集未收敛 ticket：`intake`、`open`、`working`；`forked` 只递归 `childTicketIds`，父容器本身不作为恢复单元；`blocked`/`failed`/`done`/`cancelled` 跳过。
+5. 没有未收敛 ticket、也没有 pending request 就安静结束。
+6. `recovery.count` 已经达到 3 的 ticket 不再发 prompt：标成 `blocked`，写入 blockedReason（自动恢复已达上限）与 `failure.code=recovery_exhausted`，产生一次 `recovery_exhausted` 卡片，然后跳过。
+7. 只有存在 candidate 或 exhausted ticket 时才 ensure Ria。
+8. 给 Ria 发**一条** prompt，逐条列出 ticketId、status、executor、goal、acceptance、原消息、开始时间、最近动作与 `recovery=n/3`；intake 要求先 `ria_read` 自己的会话再 `ria_resolve`，working 要求先读 worker 与工作区、检查已改文件和测试再判断继续/done/failed/blocked；绝不发两条。
+9. candidate 的 `recovery.count` 加一；同一个 ticket 连续自动恢复最多 3 次。
+10. 恢复计数按 ticket 存在 `recovery.count`；`ria_ticket` 更新、成功派发或用户重新打开都会归零。旧的顶层 `inFlight` 在 schema v2 迁移时转成 `open`（到上限时 `blocked`）ticket，`origin.kind=legacy_inflight`，迁移后不再有 `inFlight`。
 11. Ria 先 read：
    - 已完成：done。
    - 需要用户/阻塞：blocked + blockedReason，报告用户。

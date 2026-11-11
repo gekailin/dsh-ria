@@ -460,8 +460,9 @@ ria.json 和 memory.md 都不存 transcript。
 - 点击后瞬时 launcher -> ensure -> openSession。
 - DSH 的正常会话界面要求 Session 属于一个 Workspace。ensure 在 stateDir 创建/复用标题为 Ria 的专用 Workspace，并用 workspaceId 创建 Session；旧 Ria 通过 attachSession 补挂。工作区列表会多这一项，这是输入框可用的必要条件。
 - 不做常驻看板。
-- 新建 Ria 时追加一条欢迎消息：提示选模型、设置权限（建议 danger-full-access + 审批策略）、直接说目标。
-- 欢迎消息是一个合成的完整 turn（turn/start、step/start、assistant/message、step/end、turn/end），只在新创建路径写一次；已存在/重启不重复，不占用户消息位，不调用模型。turn 从 1 开始编号（DSH session-format 的 nextTurn 初始值为 1）；早期实现用 turn 0，append 能成功但 DSH 重启 resume 时会报 corrupt，已改为 turn 1/step 1。
+- 新建 Ria 第一次打开（会话还没有任何 turn）时，输入框上方显示一张欢迎卡片：提示选模型、设置权限（建议 danger-full-access + 审批策略）、直接说目标。
+- 欢迎卡片是 client 侧渲染：注册在 `conversation.input.dock`（id=ria-welcome，order 5），只在当前会话等于 Ria 且 `blank` 时显示，发出第一条消息后自动消失；不写 session 日志、不占 turn、不调用模型、不进入模型上下文。
+- 早期实现是 Host 侧由 Session.append 写一个合成的完整 turn（turn 1/step 1）。该 turn 的 assistant/message 会成为 surface 的首个节点，排在真实 turn 的 system/message 之前，DSH session-format v4 校验要求 system/message 是 protected first surface head，因此重启 resume 报 corrupt（`system/message requires a protected first surface head`），已移除。
 - 带 taskId 的派发 note 由 Host 记录到 ria.json（最多保留 100 条），插件 client 在 `conversation.chat.turnTail` slot 渲染为当前轮次末尾的卡片，标题「任务已派发」/「消息已转交」。卡片不属于 turn process，不会被完成后折叠；不进入模型上下文；通过 GET /api/dispatch-notes?sessionId&turn 读取。早期用 command/run + command/done，卡片被 ChatNodeSeat 当作 process member 折叠，真实 UI 不可见，已移除。
 - 微信 chip 在 Ria 入口标题右侧，点击打开微信弹层。
 - 设置页注册 settings.section：id=ria-settings、order=25、label=Ria；一个“任务转交提示”开关，默认打开，POST /settings 持久化。说明文字明确：只影响后续 system prompt，不改 worker 历史、工具或预设。
@@ -489,7 +490,7 @@ Phase 4：微信进程内服务、回复同步、积压 skip、入口 chip。
 
 Phase 5：审批可见性 observer、ria_approval list、清理与 TTL。
 
-Phase 6：新建 Ria 的一次性欢迎消息（合成 assistant turn 1，不调用模型；修复早期 turn 0 导致重启 resume 失败）。
+Phase 6：新建 Ria 的一次性欢迎提示（最初是合成 assistant turn 1，不调用模型；合成 turn 早于真实 system/message，v4 校验失败，已改为 client 卡片，见第 13 节）。
 
 Phase 7：任务派发防误发提示（最初实现为仅带 taskId 的 request 插入固定 text part；Phase 13 已改为静态 system prompt section 并删除前缀）。
 
@@ -531,7 +532,7 @@ Phase 18：微信图片接口预留（识别 MsgType 3、入站下载/转换/投
 11. 微信积压超过 10 条时只发最后 10 条并提示。
 12. 微信 chip 在 Ria 入口右侧，宽侧边栏显示。
 13. 审批 observer 只记录活跃 task executor，记录后调用 next()，从不改变审批结果；abort/超时/重启后不残留 pending。
-14. 新建 Ria 显示一次欢迎消息；已存在/重启不重复；不占用户消息位；不调用模型；Web UI 显示为正常 assistant 消息。
+14. 新建 Ria 的首次打开显示一次欢迎卡片；只在会话 blank 时由 client 渲染，不写 session 日志、不占 turn 和用户消息位、不调用模型；已存在/重启不重复。
 15. 防误发提示由 agent 作用域 system prompt section 提供，对所有 agent 生效；要求 worker 对明显无关的消息先确认；设置页可关闭，关闭后 text 为空；任务和 quick relay 的消息内容都不变。
 16. 临时权限只能由用户明确指令触发；set 需要 userConfirmed=true；记录原值；task close/reset/expiry/startup 恢复；手工改动跳过；审计可查。
 17. 微信长回复/复杂 Markdown 按可配置规则转完整 .md 文件；短消息不变；文件发送失败回退文本并提示。
@@ -589,7 +590,7 @@ Phase 18：微信图片接口预留（识别 MsgType 3、入站下载/转换/投
 | 微信长连接绑 DSH 进程 | 重启加载 creds 重连，通常不扫码 |
 | 微信文件上传协议随网页版变化 | 规则命中时尝试上传/发 appmsg；任一步失败回退文本并提示 |
 | 入口 chip 是 DOM 注入 | MutationObserver；宽侧边栏才显示 |
-| 欢迎消息伪造 turn | 已改用 turn 1/step 1；真实 UI 显示正常，重启 resume 也通过；UI 会计 1 轮 1 步并显示已完成，属可接受的外观副作用 |
+| 欢迎消息写进 session 日志 | 合成 turn 的 assistant/message 早于真实 system/message，v4 校验失败（system/message requires a protected first surface head），重启 resume corrupt；已改为纯 client 卡片，不写日志 |
 | 临时权限被滥用 | 只能用户明确指令 + userConfirmed；单 worker、单 grant、TTL 上限 24h；task close/启动恢复；审计 |
 | 恢复时覆盖用户手工改动 | 比较当前 override，不一致则跳过并记录 |
 | idle 误判为完成 | 通知只写 turn 已结束；要求 read 确认；等用户输入时标 blocked |
@@ -611,7 +612,7 @@ Phase 18：微信图片接口预留（识别 MsgType 3、入站下载/转换/投
 
 ## 19. 总结
 
-全局一个 Ria，PTC preset（agentPreset=ptc）+ 管理者 prompt、memory.md 和 7 个工具；模型通过 run_code SDK 调用工具；用 task 管理谁做什么，request 就是普通会话消息；通过可开关的 agent system prompt section 提供通用防误发提示（简短英文，不提具体会话），任务消息不加前缀；带 taskId 派发必须提供 note，Host 记录后由 client 在 turn 末尾显示卡片，并把同一段 note 以“📌 任务已派发”文本同步微信（带 note 的 quick relay 为“📌 消息已转交”），然后结束本轮；worker idle 时自动唤醒 Ria（只读事件、30 秒节流）；重启按 task 继续；微信客户端进程内运行，长回复/复杂 Markdown 自动转 .md 文件；推送可暂停（手动或按消息通道自动切换），暂停只停出站、连接保持；新建会话有一条不调用模型的一次性欢迎消息；微信图片收发只预留接口，默认关闭。
+全局一个 Ria，PTC preset（agentPreset=ptc）+ 管理者 prompt、memory.md 和 7 个工具；模型通过 run_code SDK 调用工具；用 task 管理谁做什么，request 就是普通会话消息；通过可开关的 agent system prompt section 提供通用防误发提示（简短英文，不提具体会话），任务消息不加前缀；带 taskId 派发必须提供 note，Host 记录后由 client 在 turn 末尾显示卡片，并把同一段 note 以“📌 任务已派发”文本同步微信（带 note 的 quick relay 为“📌 消息已转交”），然后结束本轮；worker idle 时自动唤醒 Ria（只读事件、30 秒节流）；重启按 task 继续；微信客户端进程内运行，长回复/复杂 Markdown 自动转 .md 文件；推送可暂停（手动或按消息通道自动切换），暂停只停出站、连接保持；新建会话在 blank 状态显示一张 client 侧欢迎卡片（不写日志、不调用模型）；微信图片收发只预留接口，默认关闭。
 
 ## 20. 实现状态
 
@@ -630,12 +631,12 @@ Phase 18：微信图片接口预留（识别 MsgType 3、入站下载/转换/投
 
 文件：
 
-- lib/index.js：Host、RiaStore（含 recentWorkers、dispatchNotes）、7 个工具、manager prompt、启动恢复、HTTP API（含 settings、dispatch-notes）、approval observer 接线、grant 接线、微信服务接线、DispatchGuard 接线，以及新建 Ria 的 welcome 合成 turn（turn 1/step 1）。
+- lib/index.js：Host、RiaStore（含 recentWorkers、dispatchNotes）、7 个工具、manager prompt、启动恢复、HTTP API（含 settings、dispatch-notes）、approval observer 接线、grant 接线、微信服务接线、DispatchGuard 接线。
 - lib/dispatch-guard.mjs：agent 作用域静态 system prompt section 的安装、agent/created 与 disposed 监听、开关求值、dispose。
 - lib/approvals.mjs：approval/request 只读观察器、pending 列表、TTL/abort/shutdown 清理。
 - lib/worker-idle.mjs：agent/status 只读监听、working task executor 过滤、Ria 排除、按 worker+task 节流、配置/环境变量归一化。
 - lib/grants.mjs：临时权限 set/list/reset、原值记录、task close/expiry/startup 恢复、审计、失败重试。
-- lib/client.js：侧边栏入口、瞬时 launcher、入口右侧微信 chip 和登录弹层（含推送状态卡、暂停/恢复按钮、自动暂停轻提示）、设置页 Ria section、conversation.chat.turnTail 派发 note 卡片。
+- lib/client.js：侧边栏入口、瞬时 launcher、入口右侧微信 chip 和登录弹层（含推送状态卡、暂停/恢复按钮、自动暂停轻提示）、设置页 Ria section、conversation.chat.turnTail 派发 note 卡片、conversation.input.dock 的 blank 欢迎卡片。
 - lib/wechat/wxweb.mjs、login.mjs、outbound.mjs：复用的文件传输助手协议、扫码登录、串行发送，以及 .md 文件上传/appmsg 发送；outbound 另含只保留签名、当前 reject 的 enqueueImage。
 - lib/wechat/markdown.mjs：长度/代码块/表格/标题/链接判定、配置归一化、文件名。
 - lib/wechat/image.mjs：微信图片预留接口——wechatImage.inbound/outbound 归一化、MsgType 3 识别、imagePartFromMessage 签名与 TODO（当前明确报未实现）。
@@ -667,17 +668,17 @@ Phase 18：微信图片接口预留（识别 MsgType 3、入站下载/转换/投
 - 宽侧边栏中 chip 位于 Ria 标题右侧；折叠侧边栏不插入。
 - startup 测试覆盖 recoveryCount=3 的 working task：启动后产生一条通知、任务变 blocked 并带 blockedReason，status 可见；通知包含 taskId/executor/goal；更新 task 和成功派发都会把 recoveryCount 清零；pending delivery 重试成功也不会误判为超限；resolveAgent 失败时产生启动失败通知。测试不调用模型。
 - smoke 覆盖近期 worker：首次派发前 scope=recent 为空；成功 task 派发后出现 1 个候选并带 title/cwd/lastTaskId/lastTaskGoal/lastTaskStatus/lastUsedAt；quick relay 更新 lastUsedAt 且保留 lastTaskId；scope=sessions 带 title 和可选的 cwd/lastUsedAt；失败 request 不更新；ria.json 持久化 recentWorkers；所有工具输出递归检查为 lossless。
-- smoke 覆盖 Workspace 挂载、7 个工具注册、request 投递、task 派发与 quick relay 都不加前缀、dispatch guard section 同时装到 worker 和 Ria、GET/POST /settings 与 GET /state 的 settings、status、read、memory、持久化，以及 welcome 五事件序列和第二次 ensure 不重复；dispatch-guard 测试覆盖安装、created/disposed、重复安装、开关文本、失败 warning、shutdown；wechat 测试覆盖文本提取、事件过滤、入站去重/回显过滤、失败标记、reconnect skip、状态视图，以及图片接口预留（默认关闭、开关归一化、MsgType 3 识别、转换/出站明确报未实现，且默认关闭时文本路径不变）；approvals 测试覆盖活跃 executor 过滤、始终 next()、abort/TTL/shutdown 清理和 lossless 输出；grants 测试覆盖授权门槛、原值记录、task done 自动恢复、显式 reset、过期、startup、漂移跳过、恢复失败和审计；wechat-file 测试覆盖阈值/代码块/表格/标题/链接、配置/env、文件名、短消息不变、长消息发 .md、失败回退，以及上传和 appmsg 字段；wechat-pause 测试覆盖手动开关与持久化、非微信自动暂停、微信自动恢复、host_/schedule 过滤、manual 不被 channel 覆盖、暂停时不发送、排队丢弃而在途完成、恢复后补发 outbox，以及日志字段。npm test 九个测试全部通过。
-- 新建 Ria 后真实 Web UI 显示欢迎消息；会话界面显示“已完成，用时 1 秒”和“1 轮 1 步”，输入框正常；没有浏览器 runtime error。欢迎消息改为 turn 1/step 1 后，隔离 DSH 重启并重新打开 Ria 成功，未再出现 turn/start corrupt。
-- 真实 Web UI 中 task 派发的 note 渲染在轮次末尾：DOM 有 [data-ria-dispatch-note="task"]，标题“任务已派发”，位于欢迎消息下方；无 runtime error；截图 docs/ui-dispatch-note.png。真实 ria_request 写入路径由 smoke 覆盖。
+- smoke 覆盖 Workspace 挂载、7 个工具注册、request 投递、task 派发与 quick relay 都不加前缀、dispatch guard section 同时装到 worker 和 Ria、GET/POST /settings 与 GET /state 的 settings、status、read、memory、持久化，以及新建 Ria 不写任何 session 事件、第二次 ensure 不重复；dispatch-guard 测试覆盖安装、created/disposed、重复安装、开关文本、失败 warning、shutdown；wechat 测试覆盖文本提取、事件过滤、入站去重/回显过滤、失败标记、reconnect skip、状态视图，以及图片接口预留（默认关闭、开关归一化、MsgType 3 识别、转换/出站明确报未实现，且默认关闭时文本路径不变）；approvals 测试覆盖活跃 executor 过滤、始终 next()、abort/TTL/shutdown 清理和 lossless 输出；grants 测试覆盖授权门槛、原值记录、task done 自动恢复、显式 reset、过期、startup、漂移跳过、恢复失败和审计；wechat-file 测试覆盖阈值/代码块/表格/标题/链接、配置/env、文件名、短消息不变、长消息发 .md、失败回退，以及上传和 appmsg 字段；wechat-pause 测试覆盖手动开关与持久化、非微信自动暂停、微信自动恢复、host_/schedule 过滤、manual 不被 channel 覆盖、暂停时不发送、排队丢弃而在途完成、恢复后补发 outbox，以及日志字段。npm test 九个测试全部通过。
+- 新建 Ria 后真实 Web UI 在输入框上方显示欢迎卡片（blank 状态），发出第一条消息后消失；没有浏览器 runtime error。修复后的 Ria 会话日志通过 v4 校验（restoreReleasedV4Artifact：VALID，264 个事件），隔离 DSH 重启并重新打开 Ria 不再出现 corrupt。
+- 真实 Web UI 中 task 派发的 note 渲染在轮次末尾：DOM 有 [data-ria-dispatch-note="task"]，标题“任务已派发”，位于轮次末尾；无 runtime error；截图 docs/ui-dispatch-note.png。真实 ria_request 写入路径由 smoke 覆盖。
 - 审批观察器没有在真实 UI 中触发过；只做了单元测试和 smoke。首次实际审批时需确认 pending 列表和清理行为。
-- welcome 的合成 turn 会被 UI 计入“1 轮 1 步”，并显示“已完成”；这是 assistant 气泡可正常渲染的代价。
+- 欢迎卡片不在 transcript 里，不计入轮次和步骤，不随历史加载；发出第一条消息后消失。
 
 已知限制：
 
 - 工作区列表会多一个 Ria Workspace。
 - 隔离测试 profile 没有配置模型，界面显示“请选择模型”；真实 profile 使用用户当前默认模型。
-- 真实 ~/.dsh/profiles/web 尚未安装本插件；安装后需要重启 dsh web。
+- 插件已作为 `file:` 依赖安装到真实的 ~/.dsh/profiles/web（`node_modules/dsh-ria` 是拷贝，不是符号链接）；改动 `lib/` 后需要同步该副本并重启 dsh web 才生效。
 - Phase 13 的设置页已在隔离 DSH 中实际点击并验证开关与持久化；真实模型是否遵守 section 提示仍未验证。
 - 审批可见性阶段不代批；审批动作仍需在 worker 会话里完成。
 - 防误发提示依赖 worker 模型遵守；插件无法强制或验证，worker 仍可能直接执行。设置页只开关 section，不改变 worker 的历史、tools 或 preset。

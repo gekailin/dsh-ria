@@ -174,7 +174,7 @@ try {
     const sentTexts = []
     const withPrefix = new Outbound({ async send(text) { sentTexts.push(text); return 'id' } })
     await withPrefix.enqueue('hello')
-    assert.deepEqual(sentTexts, ['🐚 hello'])
+    assert.deepEqual(sentTexts, ['🌊 hello'])
     sentTexts.length = 0
     await withPrefix.enqueue('plain', { prefix: false })
     assert.deepEqual(sentTexts, ['plain'])

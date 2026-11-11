@@ -9,10 +9,10 @@
 Ria 是全局唯一的普通顶层 DSH Session。
 
 - 使用 PTC preset（agentPreset=ptc），拥有完整工具集。
-- 模型只直接看到 run_code 和生成的 SDK；8 个 ria_* 工具通过 SDK 在 run_code 内调用。
-- 在它的 Agent ctx 上额外注入管理者提示词和 8 个 ria_* 工具。
+- 模型只直接看到 run_code 和生成的 SDK；9 个 ria_* 工具通过 SDK 在 run_code 内调用。
+- 在它的 Agent ctx 上额外注入管理者提示词和 9 个 ria_* 工具。
 - 不是 subagent，不是 Agent Team Lead。
-- 默认不替用户干活：把需求整理成 task，转交给 worker；用户明确要求时，也可以自己完成具体任务，不限于总结。
+- 默认不替用户干活：把需求整理成 ticket，转交给 worker；用户明确要求时，也可以自己完成具体任务，不限于总结。
 - 用户可以像普通会话一样打开、对话、看历史。
 
 ### PTC 启动
@@ -20,7 +20,7 @@ Ria 是全局唯一的普通顶层 DSH Session。
 - ensure 创建 Ria 时固定传 agentPreset: 'ptc'。
 - PTC preset 需要 DSH 的 ptc runtime 和 tool-executor-ptc；缺失时 ensure 明确失败，不静默退回 standard。
 - 已有非 PTC 的 Ria 不自动改 preset；提示用户重建或迁移，避免 SDK/工具状态不一致。
-- 8 个 ria_* 工具必须在 run_code SDK 生成前注册；否则模型看不到它们。
+- 9 个 ria_* 工具必须在 run_code SDK 生成前注册；否则模型看不到它们。
 - 提示词可以写“用 run_code 调用工具”，但真正的调用规则由 PTC executor 约束。
 
 ## 2. 边界
@@ -56,7 +56,7 @@ RiaService
   |-- ApprovalObserver（approval/request 只读观察）
   |-- WorkerIdleWatcher（agent/status 只读观察，worker idle 通知）
   |-- DispatchGuard（agent 作用域 system prompt section，可开关）
-  |-- TaskRecovery（启动时继续未完成 task）
+  |-- TicketRecovery（启动时继续未收敛 ticket）
   |-- WechatService（进程内）
   |-- RiaHttpApi（ensure / 微信控制 / 暂停推送）
   |
@@ -71,43 +71,73 @@ RiaService
 
 没有后台轮询，没有独立 bridge 进程；只有两个只读业务事件观察器：approval/request 记录后立即 next()，agent/status 在 worker idle 时通知 Ria。DispatchGuard 另外监听 agent/created 与 agent/disposed，用于安装和清理 system prompt section。
 
-## 4. Task
+## 4. Ticket
 
-task 是 Ria 的管理单位；一个 task 只对应一个 executor。
+ticket 是 Ria 的管理单位；一个 ticket 只对应一个 executor。完整设计见 `docs/task-model-design.md`。
 
 ~~~json
 {
-  "taskId": "task_...",
+  "ticketId": "ticket_...",
+  "status": "open",
   "goal": "修完 3 个失败测试，不改 public API",
   "acceptance": "回归全绿",
   "executor": "s_abc",
-  "status": "open",
+  "waitingOn": "ria",
+  "origin": { "kind": "user_message", "text": "…", "at": 0 },
+  "parentTicketId": null,
+  "rootTicketId": "ticket_...",
+  "forkDepth": 0,
+  "childTicketIds": [],
+  "attempt": { "count": 0, "lastRequestId": null, "legacy": false },
+  "attempts": [],
+  "recovery": { "count": 0 },
   "blockedReason": "",
+  "failure": null,
+  "resolution": null,
+  "history": [],
+  "revision": 1,
   "createdAt": 0,
   "updatedAt": 0,
-  "recoveryCount": 0
+  "closedAt": null
 }
 ~~~
 
-- executor=self：Ria 自己做，可以是总结，也可以是用户明确要求的具体工作。
-- executor=sessionId：交给该 worker；用 ria_request 发送。
-- status：open | working | blocked | done | cancelled。
-- blockedReason：blocked 的原因，展示在 taskSummary 和 status 里。
-- 每次 ria_task 更新或成功派发，recoveryCount 归零；只有连续无人处理的重启才累计。
-- 广播给多个 worker：建多个 task。
+- 8 个状态：`intake`、`open`、`working`、`blocked`、`forked`、`done`、`failed`、`cancelled`；终态是 `done`、`failed`、`cancelled`。
+- `answered`、`merged`、`control` 是 `done.resolution.kind`，不是独立状态。
+- `executor`：`self` 或一个顶层 worker sessionId；`intake` 与 `forked` 容器为 null。
+- `waitingOn`：`ria`、`worker`、`user`、`approval`、`environment`、`children`、`none`；由状态决定，阻塞类必须有人可等。
+- 只有 `RiaStore.transitionTicket` 能改 status。它校验 28 条转移和 10 条不变量；非法转移返回 `invalid_transition`，`expectedRevision` 不匹配返回 `stale_revision`，都不静默改写。
+- 每次变更 `revision+1`；终态写 `closedAt`；reopen 清空 `closedAt/failure/resolution` 并保留 history。
+- `blocked` 必须有非空 `blockedReason` 且 `waitingOn` 是 user/approval/environment；`done` 必须有 `resolution.summary`；`failed` 必须有 `failure.code+message`；`cancelled` 必须有 `resolution.reason`。
+- 分叉用父 ticket + 子 ticket：父 `status=forked`、`executor=null`，只做容器；子 ticket 各自一个 executor、独立派发/失败/恢复；全部子收敛后父按 blocked > failed > cancelled > done 聚合。`forkDepth` 最大 2，每个父 2–8 个子。
+- 合并（`mergeTicket`）：source 的 history/attempts 摘要与子 ticket、deliveries 重挂到 target；source 以 `done + resolution.kind=merged` 收敛且不可 reopen；target 保留自己的 executor/goal/acceptance。错误码含 merge_self、ticket_missing、source_closed、target_closed、merge_cycle、merge_root_mismatch、target_busy、merge_irreversible。
+- 用户消息 → intake 的四个强制点：
+  1. `agent/pre-step`：只捕获 `source.kind==='user'` 且非 host_ 的消息，建 root intake，并注入 `source.kind='ria-task-host'` 的 `[Task intake]` notice（不是 user，防递归）。
+  2. `ria_resolve`：Ria 逐条定性 answered/work/merge/split/control/blocked；每个 intake 只能定性一次，`ria_ticket` 不得直接改 intake。
+  3. `agent/turn-stopping`：仍有未定性 intake 时先 `agent.steer` 提醒一次；第二次仍未给归宿就自动 blocked，并产生 `intake_unresolved` 卡片。
+  4. `turn/end`：`aborted(user)` 把未定性 intake 收敛为 cancelled；`error` 落 blocked；其余异常保留 intake，交给重启恢复。
+- 广播给多个 worker：建多个 ticket（或一个 forked 父加子 ticket），不要一个 ticket 多 executor。
 - 不保存 title、kind、source、lastRelayId、lastRecoveryAt。
+
+### 4.1 归档与恢复
+
+- 热文件 `ria.json` 保留所有非终态，加上最近 24h 关闭或按 closedAt 倒序最新 50 条终态；超窗写 `stateDir/tasks.log.jsonl`，同时按月写 `tasks-YYYY-MM.jsonl`（保留 12 个月）。写成功后才从内存删除。
+- `ria_status scope=history` / `ticketId` 可查归档；reopen 时先从日志捞回热存储，再走 T27。
+- 重启恢复单位是 ticket：`intake`、`open`、`working`；`forked` 父只递归子 ticket；blocked/failed/done/cancelled 不自动恢复。每个 ticket 连续恢复最多 3 次，超过则 blocked + `failure.code=recovery_exhausted` + 卡片，不再发 prompt。
+- 候选合并成一条恢复 prompt，逐条给 ticketId、status、executor、goal、acceptance、原消息、开始时间、最近动作和 recovery=n/3。
 
 ## 5. 工具
 
 | 工具 | 作用 | 参数 |
 |---|---|---|
-| ria_task | 创建/更新/关闭/合并 task | taskId?, goal, acceptance?, executor, status?, action=merge + sourceTaskId/targetTaskId/note |
-| ria_status | 查 task、历史归档、单条 ticket、可用顶层会话，或列近期 worker | scope: tasks/sessions/recent/history, sessionId?, ticketId?, limit? |
+| ria_ticket | 创建/更新/关闭/合并 ticket | ticketId?, goal, acceptance?, executor, status?, action=merge + sourceTicketId/targetTicketId/note |
+| ria_status | 查 ticket、历史归档、单条 ticket、可用顶层会话，或列近期 worker | scope: tickets/sessions/recent/history, sessionId?, ticketId?, limit? |
 | ria_spawn | 在已存在的绝对目录中新建顶层 worker 会话；title 失败只返回 titleError | cwd, agentPreset?, title? |
-| ria_request | 以普通用户消息发送内容；attachments 为图片绝对路径，投递前检查文件、宿主限制与目标模型 | targetSessionIds, message, content?, attachments?, taskId?, note?, mode? |
+| ria_resolve | 给 intake 定性 answered/work/merge/split/control/blocked | ticketId, kind, summary?, goal?, acceptance?, executor?, start?, targetTicketId?, action?, reason?, blockedReason?, waitingOn?, expectedRevision? |
+| ria_request | 以普通用户消息发送内容；attachments 为图片绝对路径，投递前检查文件、宿主限制与目标模型 | targetSessionIds, message, content?, attachments?, ticketId, note, mode? |
 | ria_read | 读会话最近消息 | sessionId, limit? |
 | ria_approval | 列出等待审批的 worker | action: list |
-| ria_grant | 临时调整 worker 的 sandbox/审批策略，并记录原值 | action: set/list/reset, sessionId?, taskId?, sandboxMode?, approvalPolicy?, ttlSeconds?, reason?, grantId?, userConfirmed? |
+| ria_grant | 临时调整 worker 的 sandbox/审批策略，并记录原值 | action: set/list/reset, sessionId?, ticketId?, sandboxMode?, approvalPolicy?, ttlSeconds?, reason?, grantId?, userConfirmed? |
 | ria_memory | 读写 memory.md | action: read/remember/forget, text?, key? |
 
 共同规则：
@@ -116,15 +146,16 @@ task 是 Ria 的管理单位；一个 task 只对应一个 executor。
 - PTC 下不直接调用工具；模型写 run_code，通过 SDK 调用 tools.ria_*。
 - 工具必须在 run_code SDK 生成前完成注册；Phase 0 验证。
 - 不伪造用户消息之外的身份，不改 worker 的 preset/tools；只追加一个可关闭的通用 system prompt section。
-- taskId 只用于关联状态，不是发送门禁。
+- ticketId 是 ria_request 的必填关联；ticket 必须存在、未关闭且 executor 匹配目标。
+- ria_ticket 的 status 更新也走 transitionTicket；非法转移返回错误而不是直接写值。
 - broadcast 或 steer 前先向用户确认。
 
 ### 近期 worker
 
-“近期用过”只按 Host 成功接受过的 ria_request 计算：task 派发和 quick relay 都算，只建/改 task 不算。用户手工会话不计入。
+“近期用过”只按 Host 成功接受过的 ria_request 计算；只建/改 ticket 不算。用户手工会话不计入。
 
 - 窗口 7 天，最多返回 5 个，按 lastUsedAt 倒序；ria.json 保留 30 天后清理。
-- scope=recent 返回 sessionId、title、cwd、lastUsedAt、lastTaskGoal、lastTaskStatus，以及 windowDays=7、limit=5、pendingDeliveries。
+- scope=recent 返回 sessionId、title、cwd、lastUsedAt、lastTicketGoal、lastTicketStatus，以及 windowDays=7、limit=5、pendingDeliveries。
 - scope=sessions 也带 title、lastUsedAt；title 来自 DSH 的 title projection，缺失时省略该字段。
 - 用户没指定 worker 时，Ria 只能从 scope=recent 里选；不得遍历全部会话，不得凭空挑一个没用过的。
 - scope=recent 为空、没有明显合适或 Ria 判断不清时，先问用户用哪个会话；不回退到任意或新会话。
@@ -134,8 +165,8 @@ task 是 Ria 的管理单位；一个 task 只对应一个 executor。
 
 ### 审批可见性（阶段一）
 
-- 根 ctx 监听 `approval/request`，只记录 executor 有 open/working task 的 worker；Ria 自身、subagent、无活跃 task 的会话不记。
-- 记录 approvalId、workerSessionId、taskId、toolName、callId、reason、createdAt、expiresAt、AbortSignal；随即 `next()`，不接管、不代批。
+- 根 ctx 监听 `approval/request`，只记录 executor 有 open/working ticket 的 worker；Ria 自身、subagent、无活跃 ticket 的会话不记。
+- 记录 approvalId、workerSessionId、ticketId、toolName、callId、reason、createdAt、expiresAt、AbortSignal；随即 `next()`，不接管、不代批。
 - `ria_approval` 只返回 pending 列表；无参数时需要 action=list。
 - 清理：审批结束或 next() 抛错时 finally 清除；AbortSignal abort、15 分钟 TTL、插件 shutdown、DSH 重启都清除。
 - 该观察器不改变审批结果；没有 UI answerer 时仍由 DSH 返回 unavailable。
@@ -143,12 +174,12 @@ task 是 Ria 的管理单位；一个 task 只对应一个 executor。
 
 ### 临时 worker 权限（审批阶段二）
 
-- 只在用户明确要求时调用 `ria_grant`；`set` 必须带 `userConfirmed=true`。Ria 不得因为 task blocked、审批卡住或自己的判断自动提权。
-- `set` 一次只改一个顶层 worker，至少指定 `sandboxMode` 或 `approvalPolicy`，可关联一个未关闭且 executor 匹配的 task。一个 worker 同时只能有一个有效 grant。
+- 只在用户明确要求时调用 `ria_grant`；`set` 必须带 `userConfirmed=true`。Ria 不得因为 ticket blocked、审批卡住或自己的判断自动提权。
+- `set` 一次只改一个顶层 worker，至少指定 `sandboxMode` 或 `approvalPolicy`，可关联一个未关闭且 executor 匹配的 ticket。一个 worker 同时只能有一个有效 grant。
 - 修改前记录 effective sandbox mode、sandbox override、effective approval policy、approval override；sandbox 通过 `session.append('sandbox/mode')` 写入，approval 通过 `ctx.approval.setPolicy(agent, policy)` 写入。
 - `approvalPolicy=never` 表示需要审批的动作会被拒绝，不是自动允许；不要把它当作“放开权限”。
 - 默认 TTL 30 分钟，允许 60 秒到 24 小时。
-- 恢复时机：关联 task 变成 done/cancelled、显式 `reset`、TTL 到期、下次启动 reconcile。恢复前比较当前 override；若用户已经手工改过，不覆盖，记入 skipped。
+- 恢复时机：关联 ticket 变成 done/cancelled、显式 `reset`、TTL 到期、下次启动 reconcile。恢复前比较当前 override；若用户已经手工改过，不覆盖，记入 skipped。
 - 恢复失败标记 `restore_failed` 并 60 秒后重试；启动时先 reconcile 再做其他恢复。
 - 审计追加到 `stateDir/audit.jsonl`（0600）：grant/set、grant/active、grant/apply_failed、grant/restore_failed、grant/restored。
 - 不改 worker tools、prompt 或 preset；只改 DSH 已有的权限 override。
@@ -160,23 +191,20 @@ request 就是一条普通会话消息，没有单独的消息类型体系。
 
 - message 直接使用 DSH Session 支持的内容：文本、图片、文件等。
 - 不做额外的文件分类、根目录白名单或专用上传流程；由 DSH 现有 message/content 能力处理。
-- 带 taskId 的任务派发必须提供 note（一两句话：派给谁、要 worker 做什么、用户接下来会看到什么），最多 500 字。Host 在投递成功后、concludeTurn 之前，把 note 写入 ria.json（最多保留 100 条），插件 client 在 conversation.chat.turnTail 渲染为当前轮次末尾的卡片。卡片独立于 turn process，不会被完成后折叠；不进入模型上下文，重启后仍可读取；通过 GET /api/dispatch-notes?sessionId&turn 查询。早期用 command/run + command/done，卡片被 ChatNodeSeat 当作 process member 折叠，真实 UI 不可见，已移除。
-- note 缺失、纯空白或超过 500 字时，工具直接报错：不投递、不写 delivery、不 concludeTurn。报错文案分别是 requires a non-empty note when taskId is set 和 note is N characters; the maximum is 500；超长不截断。
+- 必须带 `ticketId` 与 `note`；ticket 必须存在、未关闭、executor 等于目标 sessionId。缺 ticketId 抛 `ticketId is required`，缺 note 抛 `requires a non-empty note`，超长直接报错。
+- note 最多 500 字。Host 在投递成功后、concludeTurn 之前，把 note 写入 ria.json（最多保留 100 条），插件 client 在 conversation.chat.turnTail 渲染为当前轮次末尾的卡片。卡片独立于 turn process，不会被完成后折叠；不进入模型上下文，重启后仍可读取；通过 GET /api/dispatch-notes?sessionId&turn 查询。早期用 command/run + command/done，卡片被 ChatNodeSeat 当作 process member 折叠，真实 UI 不可见，已移除。
 - note 展示失败（例如 Ria 的 session 还没有 append 能力或 append 抛错）只记 warn，不阻断派发，也不影响已经成功的请求；成功派发仍然 concludeTurn。
-- quick relay（不带 taskId）不需要 note；如果提供了 note，也会显示一条“消息转发”卡片（同样受 500 字限制），否则不产生卡片。消息原样转发。
-- 带 taskId 的任务派发和不带 taskId 的 quick relay 都原样发送，Host 不在消息里插入任何 text part 或前缀。
+- 所有 request 都原样发送，Host 不在消息里插入任何 text part 或前缀。
 - 防误发提示由 DispatchGuard 提供：为每个 agent 注册 name=dsh-ria:dispatch-guard、order=4100 的静态 system prompt section。文本是简短英文 2 句、无标题、不提 Ria 或其他会话名：最新消息若与本会话当前工作明显无关，先向用户确认再执行。只保留这一条约束，不再额外说明空闲或相关时应当放行。对所有 agent 生效，对普通会话无害。
 - section 通过 agent.ctx.systemPrompt.section 安装；apply 时遍历 ctx.agents.list() 补装，并监听 agent/created；agent/disposed 和插件卸载时 dispose，避免同名 section 重载冲突。
 - 开关在“设置 > Ria”，默认打开，持久化在 ria.json 的 settings.dispatchGuard。关闭后 text 返回空字符串，DSH 的 renderPrompt 丢弃空 section；开关只影响后续 system prompt，不改历史消息、tools 或 preset。
 - 该提示只是行为约束，不是硬拦截；Host 看不到 worker 的内部上下文，无法判断是否真的发错。
 - source 是 user-rpc，worker 看到的就是普通用户消息。
 - requestId 每目标独立；重试复用同一个 requestId。
-- 可带 taskId；task.executor 必须等于目标 sessionId。发送成功后 task.status=working。
-- 不带 taskId 的 request 是普通消息，不改变 task。
-- 成功投递后把每个目标记入 recentWorkers（lastUsedAt，taskId 存在时记 lastTaskId）；失败不记录。
+- 预检按目标逐个进行：ria 自己 / subagent → not_top_level；session 不存在 → session_missing；归档 → session_archived；cwd 不可用 → workspace_missing；executor 不匹配 → ticket_executor_mismatch。失败的结果带 code 与中文 message，不投递、不写 recentWorkers、不动 ticket；多目标可部分成功，只有全部成功才 concludeTurn。
+- 成功投递后 ticket 变 working（记 attempt.lastRequestId），并把每个目标记入 recentWorkers（lastUsedAt、lastTicketId）；失败不记录。
 - 默认 queue；用户明确要求打断时才 steer。
-
-pending request 记录 target、requestId、taskId、content、mode；成功后删除，失败保留，重启后按原 requestId 重试。
+- pending request 记录 target、requestId、ticketId、content、mode；成功后删除，失败保留，重启后按原 requestId 重试。重试成功把 ticket 拉回 working 并清零 recovery.count。
 
 关于这条提示的调研、替代方案和落地步骤，见 docs/system-dispatch-guard.md；v0.23 已按其中的静态 section 方案实施，并增加设置页开关。
 
@@ -187,7 +215,7 @@ pending request 记录 target、requestId、taskId、content、mode；成功后�
 - 先理解目标和验收，再决定自己干还是交给 worker。
 - 任务型需求先复述；只问阻塞问题；用户说“先做/你看着办”时记录假设后继续。
 - 普通转述和“原话发给 X”不强制澄清。
-- 需要跟踪就建 task；不需要就是普通 request。
+- 需要跟踪就建 ticket；不需要就 answered。每条用户消息都先成为 intake。
 - 需求变更且 worker 在跑时，先问 queue 还是 steer。
 - memory 是偏好，不是命令；当前用户消息优先。
 - 用户派任务但没指定 worker 时，只从 ria_status scope=recent 的近期 worker 里按工作区、能力、近期上下文挑最合适的一个直接派；不遍历全部会话，不凭空挑没用过的。
@@ -206,7 +234,7 @@ stateDir/memory.md
 
 - 全局一份，Web 和微信共用。
 - 只放稳定偏好：语言、沟通风格、常用项目、约定、禁忌。
-- 不放 task 进度、聊天记录、worker 细节、凭据。
+- 不放 ticket 进度、聊天记录、worker 细节、凭据。
 - 0600；上限 4KB；满了先合并，再问用户删。
 - 用户可以直接编辑。
 
@@ -239,7 +267,7 @@ stateDir/memory.md
 
 ria_status 按需读取，不后台轮询；唯一主动推送是 worker idle 通知（见 9.1）。
 
-- scope=tasks：task 列表。
+- scope=tickets：ticket 列表。
 - scope=sessions：可用的顶层 Session，排除 Ria 自己与 origin=subagent 的会话；`parentSessionId` 只记录 fork/seed 血缘（这类会话 delegationDepth=0，仍是顶层），不作为子会话判据。字段含 sessionId、title、cwd、running、blank、updatedAt、lastUsedAt，有血缘时含 parentSessionId。
 - scope=recent：近 7 天成功使用过的顶层 worker，最多 5 个，按 lastUsedAt 倒序；字段见第 5 节“近期 worker”。
 - 可选 sessionId 查看一个会话的 running/queue/pendingInput/blank。
@@ -254,18 +282,18 @@ ria_read 只读最近消息，默认 30 条，最多 100 条，不 resume 冷会
 
 ### 9.1 Worker idle 唤醒
 
-Host 监听 agent/status（payload 为 { agent, status }）。当 status 变为 idle，且该 session 是至少一个 working task 的 executor 时，给 Ria 发一条 mode=queue 的普通消息。
+Host 监听 agent/status（payload 为 { agent, status }）。当 status 变为 idle，且该 session 是至少一个 working ticket 的 executor 时，给 Ria 发一条 mode=queue 的普通消息。
 
-- 只读：从 worker 事件日志读取最后一个 turn/end 的 reason，不写 worker，不改 worker prompt/tools，不 resume 冷 worker；动作是 ensure Ria 并 prompt Ria，且在 aborted(user) 时把对应 working task 标为 blocked。
+- 只读：从 worker 事件日志读取最后一个 turn/end 的 reason，不写 worker，不改 worker prompt/tools，不 resume 冷 worker；动作是 ensure Ria 并 prompt Ria，且在 aborted(user) 时把对应 working ticket 标为 blocked。
 - 排除 Ria 自身，避免自我唤醒循环。
-- 只匹配 status=working 的 task；open/done/cancelled/blocked 不触发。
-- 节流键是 workerSessionId + taskId，默认 30 秒；多 task 分别计时，同一次事件只发一条消息。
+- 只匹配 status=working 的 ticket；open/done/cancelled/blocked 不触发。
+- 节流键是 workerSessionId + ticketId，默认 30 秒；多 ticket 分别计时，同一次事件只发一条消息。
 - 文本固定以 [Worker idle] 开头，写“turn 已结束”和最后一轮 turn/end 的 outcome（completed、blocked、error、aborted(user) 等），要求 Ria 先 read 确认，不假设完成；等用户输入/决定时标 blocked，继续时发 continuation。
-- 最后一轮是 aborted(user)（用户手动取消/叫停）时，通知改为“必须停下来等用户决定”，不再建议 continuation；Host 同步把对应 working task 标为 blocked，Ria 只向用户报告并询问下一步。aborted(parent/hook/disposed) 不是用户决定，保持原流程。completed/blocked 等其他原因也不被拦截。
+- 最后一轮是 aborted(user)（用户手动取消/叫停）时，通知改为“必须停下来等用户决定”，不再建议 continuation；Host 同步把对应 working ticket 标为 blocked，Ria 只向用户报告并询问下一步。aborted(parent/hook/disposed) 不是用户决定，保持原流程。completed/blocked 等其他原因也不被拦截。
 - worker 明确拒绝任务没有独立事件，仍由 Ria 读消息判断；manager prompt 要求此时标 blocked 并停下来问用户，不自行改派、重发或换方案。
 - idle 本身无法区分完成、等用户输入和明确拒绝；审批 pending 通常仍为 running，因此不会产生 idle 通知。
 - 配置 notifyOnWorkerIdle（默认 true）、workerIdleThrottleMs（默认 30000，1 秒–10 分钟）；环境变量 DSH_RIA_WORKER_IDLE、DSH_RIA_WORKER_IDLE_THROTTLE_MS 优先。
-- 日志记录 enabled/disabled、notify、throttled、no working task、Ria skip；投递失败只 warn，不重试。
+- 日志记录 enabled/disabled、notify、throttled、no working ticket、Ria skip；投递失败只 warn，不重试。
 
 ## 10. 启动恢复
 
@@ -429,6 +457,9 @@ turn-tail 卡片是插件 client 渲染的，微信桥只转发 assistant/messag
 ~~~text
 stateDir/
   ria.json
+  ria.json.v1.bak   # 首次从 schema v1 迁移时留下的备份
+  tasks.log.jsonl   # 终态归档（追加），受 24h/50 条窗口控制
+  tasks-YYYY-MM.jsonl # 按月滚动，保留 12 个月
   memory.md
   audit.jsonl      # 临时权限审计，0600
   wechat/
@@ -438,18 +469,17 @@ stateDir/
 
 没有 lessons、lock、briefs、outbox。
 
-ria.json 只存 riaSessionId、riaPreset、tasks、deliveries、grants、settings、recentWorkers、dispatchNotes：
+ria.json schema v2 只存 schemaVersion、riaSessionId、riaPreset、tickets、ticketFeedback、deliveries、grants、settings、recentWorkers、dispatchNotes：
 
-- recentWorkers：sessionId -> lastUsedAt、lastTaskId?；只在 request 成功投递后写入，30 天后清理。
+- tickets：8 态 ticket，字段见第 4 节；非终态全留，终态按 24h/50 条窗口保留。
+- ticketFeedback：kind、code、ticketId、body（≤500）、card、mirror、workerTurn、at；每 ticket 保留最近若干条，5 秒内同 (ticketId,kind,code,workerTurn) 去重；与状态同一次 save。
+- recentWorkers：sessionId -> lastUsedAt、lastTicketId?；只在 request 成功投递后写入，30 天后清理。
+- settings：dispatchGuard（boolean，默认 true）、progressCards（boolean，默认 false）。
+- dispatchNotes：noteId、sessionId、turn、note、isTicket、at、ticketId?；最多保留 100 条，供 turn-tail 卡片读取。
+- deliveries：deliveryId、targetSessionId、requestId、ticketId、content、mode、createdAt。
+- grants：grantId、sessionId、ticketId、status、createdAt、expiresAt、before、after、reason、lastError。
 
-- settings：dispatchGuard（boolean，默认 true）。
-- dispatchNotes：noteId、sessionId、turn、note、isTask、at、taskId?；最多保留 100 条，供 turn-tail 卡片读取。
-
-- tasks：taskId、goal、acceptance、executor、status、blockedReason、createdAt、updatedAt、recoveryCount。
-- deliveries：deliveryId、targetSessionId、requestId、taskId、content、mode、createdAt。
-- grants：grantId、sessionId、taskId、status、createdAt、expiresAt、before、after、reason、lastError。
-
-写入：进程内 mutex、临时文件 + fsync + rename、0600。pending request 成功后删除，失败保留。
+写入：进程内 mutex、临时文件 + fsync + rename、0600。pending request 成功后删除，失败保留。v1 迁移先写 ria.json.v1.bak；迁移失败保留旧文件。
 
 Session 日志由 DSH 持久化：
 
@@ -468,7 +498,7 @@ ria.json 和 memory.md 都不存 transcript。
 - 新建 Ria 第一次打开（会话还没有任何 turn）时，输入框上方显示一张欢迎卡片：提示选模型、设置权限（建议 danger-full-access + 审批策略）、直接说目标。
 - 欢迎卡片是 client 侧渲染：注册在 `conversation.input.dock`（id=ria-welcome，order 5），只在当前会话等于 Ria 且 `blank` 时显示，发出第一条消息后自动消失；不写 session 日志、不占 turn、不调用模型、不进入模型上下文。
 - 早期实现是 Host 侧由 Session.append 写一个合成的完整 turn（turn 1/step 1）。该 turn 的 assistant/message 会成为 surface 的首个节点，排在真实 turn 的 system/message 之前，DSH session-format v4 校验要求 system/message 是 protected first surface head，因此重启 resume 报 corrupt（`system/message requires a protected first surface head`），已移除。
-- 带 taskId 的派发 note 由 Host 记录到 ria.json（最多保留 100 条），插件 client 在 `conversation.chat.turnTail` slot 渲染为当前轮次末尾的卡片，标题「任务已派发」/「消息已转交」。卡片不属于 turn process，不会被完成后折叠；不进入模型上下文；通过 GET /api/dispatch-notes?sessionId&turn 读取。早期用 command/run + command/done，卡片被 ChatNodeSeat 当作 process member 折叠，真实 UI 不可见，已移除。
+- 带 ticketId 的派发 note 由 Host 记录到 ria.json（最多保留 100 条），插件 client 在 `conversation.chat.turnTail` slot 渲染为当前轮次末尾的卡片，标题「任务已派发」/「消息已转交」。卡片不属于 turn process，不会被完成后折叠；不进入模型上下文；通过 GET /api/dispatch-notes?sessionId&turn 读取。早期用 command/run + command/done，卡片被 ChatNodeSeat 当作 process member 折叠，真实 UI 不可见，已移除。
 - 微信 chip 在 Ria 入口标题右侧，点击打开微信弹层。
 - 设置页注册 settings.section：id=ria-settings、order=25、label=Ria；一个“任务转交提示”开关，默认打开，POST /settings 持久化。说明文字明确：只影响后续 system prompt，不改 worker 历史、工具或预设。
 
@@ -479,13 +509,13 @@ ria.json 和 memory.md 都不存 transcript。
 - memory.md 0600；禁止写凭据/token。
 - 不自动上传、不遥测。
 - 单 Host 假设；两个 DSH 实例可能双开。
-- 删除 Ria 不删除 task、memory.md 和微信凭据。
+- 删除 Ria 不删除 ticket、memory.md 和微信凭据。
 
 ## 15. 阶段
 
-Phase 0：验证 PTC preset 创建（agentPreset=ptc）、run_code SDK 暴露 8 个 ria_*、user-rpc、sidebar launcher、schedule、微信扫码/收发。
+Phase 0：验证 PTC preset 创建（agentPreset=ptc）、run_code SDK 暴露 ria_* 工具、user-rpc、sidebar launcher、schedule、微信扫码/收发。
 
-Phase 1：单例、ensure、task、8 个工具、request、read、pending request 重试、入口。
+Phase 1：单例、ensure、ticket、9 个工具、request、read、pending request 重试、入口。
 
 Phase 2：启动恢复、continuation、recoveryCount。
 
@@ -497,82 +527,86 @@ Phase 5：审批可见性 observer、ria_approval list、清理与 TTL。
 
 Phase 6：新建 Ria 的一次性欢迎提示（最初是合成 assistant turn 1，不调用模型；合成 turn 早于真实 system/message，v4 校验失败，已改为 client 卡片，见第 13 节）。
 
-Phase 7：任务派发防误发提示（最初实现为仅带 taskId 的 request 插入固定 text part；Phase 13 已改为静态 system prompt section 并删除前缀）。
+Phase 7：任务派发防误发提示（最初实现为仅带 ticketId 的 request 插入固定 text part；Phase 13 已改为静态 system prompt section 并删除前缀）。
 
-Phase 8：临时 worker 权限 grant（set/list/reset、原值记录、task 关闭/过期/启动恢复、审计）。
+Phase 8：临时 worker 权限 grant（set/list/reset、原值记录、ticket 关闭/过期/启动恢复、审计）。
 
 Phase 9：微信出站长回复/复杂 Markdown 转 .md 文件（可配置阈值和复杂度规则、完整文件、失败回退文本）。
 
-Phase 10：恢复上限可见性（达到上限的 task 标 blocked + blockedReason，通知 Ria 并列出放弃的 task；startup 异常也通知；task 更新/成功派发清零 recoveryCount）。
+Phase 10：恢复上限可见性（达到上限的 task 标 blocked + blockedReason，通知 Ria 并列出放弃的 task；startup 异常也通知；ticket 更新/成功派发清零 recoveryCount）。
 
-Phase 11：worker idle 自动唤醒（agent/status 只读监听、working task executor 过滤、排除 Ria、按 worker+task 30 秒节流、可配置开关、mock 测试）；读取最后一个 turn/end 的 reason，aborted(user) 时标 blocked 并改为“停下来问用户”。
+Phase 11：worker idle 自动唤醒（agent/status 只读监听、working ticket executor 过滤、排除 Ria、按 worker+task 30 秒节流、可配置开关、mock 测试）；读取最后一个 turn/end 的 reason，aborted(user) 时标 blocked 并改为“停下来问用户”。
 
 Phase 12：微信暂停推送（只停出站、连接保持；手动 pause/status API；非微信用户消息自动暂停、微信入站自动恢复；manual/channel 优先级；队列丢弃与在途完成；持久化与重启恢复）。
 
-Phase 13：静态 system prompt section 防误发提示（对所有 agent 安装、可开关、默认开启），移除 task 派发的消息前缀，增加设置页。
+Phase 13：静态 system prompt section 防误发提示（对所有 agent 安装、可开关、默认开启），移除 ticket 派发的消息前缀，增加设置页。
 
 Phase 14：近期 worker 选择（成功 request 记录 recentWorkers；status 增加 scope=recent 与 title/lastUsedAt；manager prompt 规定默认从近期 worker 里挑，空或不确定时问用户）。
 
 Phase 15：微信暂停推送 UI（chip 弹层显示“推送中 / 已暂停推送”、来源与时间、手动暂停/恢复按钮；自动暂停时弹层内和侧边栏右下角各一条 8 秒轻提示；chip 圆点显示暂停色）。
 
-Phase 16：note 硬约束（带 taskId 的 request 必须传 note，最多 500 字；缺失/空白/超长直接报错且不投递；Host 在 concludeTurn 前把 note 记录到 ria.json，由 client 在 conversation.chat.turnTail 渲染可见卡片，失败只 warn；quick relay 不受影响）。
+Phase 16：note 硬约束（带 ticketId 的 request 必须传 note，最多 500 字；缺失/空白/超长直接报错且不投递；Host 在 concludeTurn 前把 note 记录到 ria.json，由 client 在 conversation.chat.turnTail 渲染可见卡片，失败只 warn；quick relay 不受影响）。
 
-Phase 17：派发 note 同步微信（task note 发“📌 任务已派发：<note>”，带 note 的 quick relay 发“📌 消息已转交：<note>”；走现有 outbound 队列和暂停门禁；未登录跳过；发送失败只 warn，不影响派发和 concludeTurn）。
+Phase 17：派发 note 同步微信（ticket note 发“📌 任务已派发：<note>”，带 note 的 quick relay 发“📌 消息已转交：<note>”；走现有 outbound 队列和暂停门禁；未登录跳过；发送失败只 warn，不影响派发和 concludeTurn）。
 
 Phase 18：微信图片接口预留（识别 MsgType 3、入站下载/转换/投递签名与 TODO、出站 enqueueImage 签名与 TODO；wechatImage.inbound/outbound 默认 false，文本路径不变）。
+
+Phase 19：完整任务模型 P0。schema v2（tickets[]、8 态、waitingOn、attempts、recovery、parent/child、resolution、revision、ticketFeedback）；RiaStore.transitionTicket 唯一状态入口与 28 条转移/10 条不变量；agent/pre-step 自动登记 intake + ria_resolve 定性 + turn-stopping 兜底 + turn/end 异常收尾四层强制点；merge（M1 消息并入、M2 ticket→ticket）；终态 24h/50 条窗口归档与月度日志、history/ticketId/reopen；删除顶层 inFlight，改为扫未收敛 ticket 恢复，恢复上限按 ticket 计。
+
+Phase 20：任务术语改名为 ticket：ria_task→ria_ticket、taskId→ticketId、内部 store 与状态机字段统一；ria_request 的 ticketId 与 note 均必填，移除 quick relay。
 
 ## 16. 验收
 
 1. 点击入口只创建一个 Ria。
-2. Ria 以 agentPreset=ptc 创建；模型只直接看到 run_code，8 个 ria_* 通过 SDK 可用。
+2. Ria 以 agentPreset=ptc 创建；模型只直接看到 run_code，9 个 ria_* 通过 SDK 可用。
 3. 没有 attach/detach。
-4. request 在 worker 中显示为普通用户消息，支持 DSH 支持的消息类型；task 派发和 quick relay 都原样发送，不加消息前缀。
-5. 一个 task 只有一个 executor；self 可做用户明确要求的任务，session 做分派任务。
-6. 重启后 pending request 原 requestId 重试；已送达 task 用新 requestId 继续。
-7. 同一 task 连续自动恢复最多 3 次；达到上限后标 blocked 并通知，不静默跳过；task 更新或成功派发清零 recoveryCount。
+4. request 在 worker 中显示为普通用户消息，支持 DSH 支持的消息类型；ticket 派发原样发送，不加消息前缀；ria_request 必须带 ticketId 与 note。
+5. 一个 ticket 只有一个 executor；forked 父容器 executor=null，子 ticket 各自独立。每条真实用户消息都在 pre-step 登记为 intake，并在本 turn 经 ria_resolve 定性，或被 turn-stopping 兜底 blocked。
+6. 重启后 pending request 原 requestId 重试；已送达 ticket 用新 requestId 继续。
+7. 同一 ticket 连续自动恢复最多 3 次；达到上限后标 blocked 并通知，不静默跳过；ticket 更新、成功派发或 reopen 清零 recovery.count。
 7.1. startup recovery 抛错时向 Ria 发送失败通知，不只写日志。
 8. memory.md 跨重启保留；冷启动注入；remember/forget 可用；当前消息优先。
 9. 没有 lessons/FTS5；经验默认只在上下文，用户给路径才写文件。
 10. 微信进程内运行，无 bridge 端口/socket；消息进 Ria，回复回微信。
 11. 微信积压超过 10 条时只发最后 10 条并提示。
 12. 微信 chip 在 Ria 入口右侧，宽侧边栏显示。
-13. 审批 observer 只记录活跃 task executor，记录后调用 next()，从不改变审批结果；abort/超时/重启后不残留 pending。
+13. 审批 observer 只记录活跃 ticket executor，记录后调用 next()，从不改变审批结果；abort/超时/重启后不残留 pending。
 14. 新建 Ria 的首次打开显示一次欢迎卡片；只在会话 blank 时由 client 渲染，不写 session 日志、不占 turn 和用户消息位、不调用模型；已存在/重启不重复。
-15. 防误发提示由 agent 作用域 system prompt section 提供，对所有 agent 生效；要求 worker 对明显无关的消息先确认；设置页可关闭，关闭后 text 为空；任务和 quick relay 的消息内容都不变。
-16. 临时权限只能由用户明确指令触发；set 需要 userConfirmed=true；记录原值；task close/reset/expiry/startup 恢复；手工改动跳过；审计可查。
+15. 防误发提示由 agent 作用域 system prompt section 提供，对所有 agent 生效；要求 worker 对明显无关的消息先确认；设置页可关闭，关闭后 text 为空；ticket 消息内容不变。
+16. 临时权限只能由用户明确指令触发；set 需要 userConfirmed=true；记录原值；ticket close/reset/expiry/startup 恢复；手工改动跳过；审计可查。
 17. 微信长回复/复杂 Markdown 按可配置规则转完整 .md 文件；短消息不变；文件发送失败回退文本并提示。
-18. 达到恢复上限的 task 不再停留在 working；状态为 blocked，blockedReason 可见，且 Ria 收到包含 taskId/executor/goal 的通知。
+18. 达到恢复上限的 ticket 不再停留在 working；状态为 blocked，blockedReason 可见，且 Ria 收到包含 ticketId/executor/goal 的通知。
 19. startup recovery 异常时 Ria 收到失败通知；通知失败不能吞掉原始错误日志。
-20. worker 结束 turn 变 idle 时，只有 working task 的 executor 触发一次通知；Ria 自己、非 working task、节流窗口内重复 idle 都不触发。
+20. worker 结束 turn 变 idle 时，只有 working ticket 的 executor 触发一次通知；Ria 自己、非 working ticket、节流窗口内重复 idle 都不触发。
 21. idle 通知只读 worker，不写 worker、不 resume 冷会话；通知文本要求 read 确认且不假设完成。
 22. idle 通知默认开启，可通过配置或环境变量一键关闭；关闭后不注册监听，日志说明原因。
-23. 通知投递失败只记 warn，不影响 worker 状态，也不改变 task。
+23. 通知投递失败只记 warn，不影响 worker 状态，也不改变 ticket。
 24. 微信暂停只停出站，连接、登录态、轮询和入站不受影响，不需要重新扫码。
 25. 手动暂停/恢复通过 POST /wechat/pause，状态在 GET /wechat/status 可见，并跨 DSH 重启保持。
 26. 非微信用户消息自动暂停，微信入站自动恢复；host_ 合成消息和 schedule 提醒不触发切换。
 27. 手动暂停不被自动暂停覆盖；微信入站可以恢复手动暂停；手动恢复后下一条非微信消息再次暂停。
 28. 暂停期间在途消息发送完成，排队消息丢弃并记录日志；outbox 不发送，恢复后补发。
 29. 暂停相关测试覆盖手动开关、自动切换、合成消息过滤、优先级、队列竞态、日志和重启持久化。
-30. 带 taskId 派发必须传 note（最多 500 字）；缺失、空白或超长直接报错，不投递、不 concludeTurn；成功后 Host 把 note 写入 ria.json，由 client 在 conversation.chat.turnTail 渲染为当前轮次末尾的可见卡片，再 concludeTurn；note 展示失败只 warn；quick relay 不需要 note。
+30. 带 ticketId 派发必须传 note（最多 500 字）；缺失、空白或超长直接报错，不投递、不 concludeTurn；成功后 Host 把 note 写入 ria.json，由 client 在 conversation.chat.turnTail 渲染为当前轮次末尾的可见卡片，再 concludeTurn；note 展示失败只 warn。ria_request 的 ticketId 与 note 均必填，没有 quick relay 例外。
 31. 设置页默认 dispatchGuard=true；关闭后所有已安装 section 的 text 返回空字符串；POST /settings 只接受 boolean 并持久化到 ria.json；GET /state 可见 settings。
 32. manager prompt 明确：用户未指定 worker 时只从 scope=recent 选择，不遍历全部会话，不凭空挑没用过的；没有合适候选时先问用户。
 33. “近期用过”定义为成功 ria_request 过的顶层 worker，窗口 7 天、最多 5 个、保留 30 天；task 创建/更新不算，用户手工会话不算。
-34. scope=recent 返回 sessionId、title、cwd、lastUsedAt、lastTaskGoal、lastTaskStatus；scope=sessions 也带 title、lastUsedAt；缺失字段省略且输出 lossless。
-35. 投递失败不更新 recentWorkers；quick relay 成功也更新 lastUsedAt。
+34. scope=recent 返回 sessionId、title、cwd、lastUsedAt、lastTicketGoal、lastTicketStatus；scope=sessions 也带 title、lastUsedAt；缺失字段省略且输出 lossless。
+35. 投递失败不更新 recentWorkers；只有成功派发才更新 lastUsedAt 和 lastTicketId。
 36. 微信弹层显示推送状态（正常“推送中”，暂停“已暂停推送”+ 来源 + 时间），按钮可手动暂停/恢复并立即刷新；自动暂停时只出现轻提示，不弹窗；设置页不重复提供同一开关。
-37. 带 note 的 task 派发成功后，微信收到一条“📌 任务已派发：<note>”；带 note 的 quick relay 收到“📌 消息已转交：<note>”；无 note 的 quick relay 不产生微信消息。note 走现有 outbound 队列：暂停时丢弃并记日志，未登录跳过，发送失败只 warn，不影响派发和 concludeTurn。网页卡片与微信文本并存，使用同一段 note 原文。
+37. ticket 派发成功后，微信收到一条“📌 任务已派发：<note>”。note 走现有 outbound 队列：暂停时丢弃并记日志，未登录跳过，发送失败只 warn，不影响派发和 concludeTurn。网页卡片与微信文本并存，使用同一段 note 原文。
 38. 微信图片只预留接口：wechatImage.inbound/outbound 默认 false；默认关闭时文本收发、文件、暂停、去重和 outbox 不变；入站识别 MsgType 3 但转换函数明确报未实现；出站 enqueueImage 只保留签名并明确 reject。
 
 ## 17. 已确认
 
-- task 单 executor；广播建多个 task。
+- ticket 单 executor；广播建多个 ticket。
 - Ria 所有 assistant 回复同步微信。
 - 微信积压 N=10。
 - memory 只做 memory.md，不做 lessons/FTS5。
 - 微信设置在入口右侧 chip。
 - 微信长回复/复杂 Markdown 转 .md：默认 800 字，代码块/表格/4 标题/6 链接任一命中。
 - request 是普通会话消息，使用 DSH 支持的消息类型。
-- worker idle 通知默认开启，节流 30 秒；只对 working task 的 executor 触发。
+- worker idle 通知默认开启，节流 30 秒；只对 working ticket 的 executor 触发。
 - 微信暂停默认不启用；手动 pause 优先于自动 pause；微信入站总是恢复。
 - 防误发提示使用静态 system prompt section，对所有 agent 生效；任务消息不加前缀。
 - 设置页提供 dispatchGuard 开关，默认打开。
@@ -585,10 +619,10 @@ Phase 18：微信图片接口预留（识别 MsgType 3、入站下载/转换/投
 |---|---|
 | PTC preset/runtime 不可用 | Ria 无法创建或工具不可见 | ensure 明确报错；不静默退回 standard |
 | 已有 Ria 不是 PTC | preset 不一致 | 提示重建/迁移，不自动改 |
-| PTC SDK 未包含自定义工具 | Ria 无法调用 8 个工具 | Phase 0 验证注册时序；必要时延迟 SDK 生成 |
-| task 状态依赖 Ria 维护 | 重启先 read；用户可纠正 |
+| PTC SDK 未包含自定义工具 | Ria 无法调用 9 个工具 | Phase 0 验证注册时序；必要时延迟 SDK 生成 |
+| ticket 状态依赖 Ria 维护 | 转移表 + 四层强制点 + 重启先 read；用户可纠正 |
 | 自动恢复误判 | 先 read；连续最多 3 次；达到上限标 blocked 并通知 |
-| 恢复额度被无关重启耗尽 | task 更新或成功派发清零 recoveryCount；达到上限仍可见可处理 |
+| 恢复额度被无关重启耗尽 | ticket 更新或成功派发清零 recoveryCount；达到上限仍可见可处理 |
 | 启动恢复失败无感知 | catch 中除日志外，再向 Ria 发失败通知；通知异常单独记录 |
 | memory 过期/膨胀 | 当前消息优先；4KB 上限；用户可删 |
 | 微信全量同步 | 已接受；后续可做 turn 关联 |
@@ -596,10 +630,10 @@ Phase 18：微信图片接口预留（识别 MsgType 3、入站下载/转换/投
 | 微信文件上传协议随网页版变化 | 规则命中时尝试上传/发 appmsg；任一步失败回退文本并提示 |
 | 入口 chip 是 DOM 注入 | MutationObserver；宽侧边栏才显示 |
 | 欢迎消息写进 session 日志 | 合成 turn 的 assistant/message 早于真实 system/message，v4 校验失败（system/message requires a protected first surface head），重启 resume corrupt；已改为纯 client 卡片，不写日志 |
-| 临时权限被滥用 | 只能用户明确指令 + userConfirmed；单 worker、单 grant、TTL 上限 24h；task close/启动恢复；审计 |
+| 临时权限被滥用 | 只能用户明确指令 + userConfirmed；单 worker、单 grant、TTL 上限 24h；ticket close/启动恢复；审计 |
 | 恢复时覆盖用户手工改动 | 比较当前 override，不一致则跳过并记录 |
 | idle 误判为完成 | 通知只写 turn 已结束；要求 read 确认；等用户输入时标 blocked |
-| idle 通知刷屏/自我唤醒 | 排除 Ria；按 worker+task 30 秒节流；只匹配 working task |
+| idle 通知刷屏/自我唤醒 | 排除 Ria；按 worker+task 30 秒节流；只匹配 working ticket |
 | 通知投递失败 | 只 warn，不重试；worker 状态不受影响 |
 | sandbox override 无法清除 | 写回原 effective mode，行为一致但可能保留同值 override |
 | 暂停与在途出站竞态 | 在途一条发完即止；排队丢弃并记日志；outbox 暂停期间不发送，恢复后补发 |
@@ -617,14 +651,14 @@ Phase 18：微信图片接口预留（识别 MsgType 3、入站下载/转换/投
 
 ## 19. 总结
 
-全局一个 Ria，PTC preset（agentPreset=ptc）+ 管理者 prompt、memory.md 和 8 个工具；模型通过 run_code SDK 调用工具；用 task 管理谁做什么，request 就是普通会话消息；通过可开关的 agent system prompt section 提供通用防误发提示（简短英文，不提具体会话），任务消息不加前缀；带 taskId 派发必须提供 note，Host 记录后由 client 在 turn 末尾显示卡片，并把同一段 note 以“📌 任务已派发”文本同步微信（带 note 的 quick relay 为“📌 消息已转交”），然后结束本轮；worker idle 时自动唤醒 Ria（只读事件、30 秒节流）；重启按 task 继续；微信客户端进程内运行，长回复/复杂 Markdown 自动转 .md 文件；推送可暂停（手动或按消息通道自动切换），暂停只停出站、连接保持；新建会话在 blank 状态显示一张 client 侧欢迎卡片（不写日志、不调用模型）；微信图片收发只预留接口，默认关闭。
+全局一个 Ria，PTC preset（agentPreset=ptc）+ 管理者 prompt、memory.md 和 9 个工具；模型通过 run_code SDK 调用工具；用 ticket 管理谁做什么，request 就是普通会话消息；通过可开关的 agent system prompt section 提供通用防误发提示（简短英文，不提具体会话），任务消息不加前缀；派发必须提供 note，Host 记录后由 client 在 turn 末尾显示卡片，并把同一段 note 以“📌 任务已派发”文本同步微信，然后结束本轮；worker idle 时自动唤醒 Ria（只读事件、30 秒节流）；重启按未收敛 ticket 继续；微信客户端进程内运行，长回复/复杂 Markdown 自动转 .md 文件；推送可暂停（手动或按消息通道自动切换），暂停只停出站、连接保持；新建会话在 blank 状态显示一张 client 侧欢迎卡片（不写日志、不调用模型）；微信图片收发只预留接口，默认关闭。
 
 ## 20. 实现状态
 
 截至当前版本：
 
-- Phase 0–18 已实现；Phase 0–4、Phase 6、Phase 13 和 Phase 16 的 turn-tail 卡片通过隔离环境的真实 DSH 验证，其余阶段由单元测试和 smoke 覆盖。Phase 16 的截图使用手工写入 ria.json 的 note 验证渲染；真实 toolRequest 写入路径由 smoke 覆盖。
-- Phase 17 的微信 note 镜像由 test/wechat.mjs 和 smoke 覆盖：task/quick 格式、暂停丢弃日志、恢复后发送、未登录跳过、发送异常不影响派发和 concludeTurn；没有用真实微信账号验证实际收件。
+- Phase 0–20 已实现；Phase 0–4、Phase 6、Phase 13 和 Phase 16 的 turn-tail 卡片通过隔离环境的真实 DSH 验证，其余阶段由单元测试和 smoke 覆盖。Phase 16 的截图使用手工写入 ria.json 的 note 验证渲染；真实 toolRequest 写入路径由 smoke 覆盖。
+- Phase 17 的微信 note 镜像由 test/wechat.mjs 和 smoke 覆盖：ticket 格式、暂停丢弃日志、恢复后发送、未登录跳过、发送异常不影响派发和 concludeTurn；没有用真实微信账号验证实际收件。
 - Phase 18 的图片接口只是预留：test/wechat.mjs 覆盖默认关闭、开关归一化、MsgType 3 识别、图片转换明确报未实现、出站 enqueueImage 拒绝，以及默认关闭时文本路径不受影响；没有真实图片下载/上传链路。
 - Phase 15 的暂停状态卡、手动开关和自动暂停轻提示没有在真实微信账号下走完整链路；弹层只在已登录时显示状态卡，隔离 profile 无法伪造成已登录。
 - Phase 14 的近期 worker 记录、scope=recent 候选字段、空窗口和无 lastUsedAt 字段的 lossless 输出由 smoke 覆盖；挑选行为本身是 prompt 约束，未用真实模型验证。
@@ -636,10 +670,10 @@ Phase 18：微信图片接口预留（识别 MsgType 3、入站下载/转换/投
 
 文件：
 
-- lib/index.js：Host、RiaStore（含 recentWorkers、dispatchNotes）、8 个工具、manager prompt、启动恢复、HTTP API（含 settings、dispatch-notes）、approval observer 接线、grant 接线、微信服务接线、DispatchGuard 接线。
+- lib/index.js：Host、RiaStore（含 recentWorkers、dispatchNotes）、9 个工具、manager prompt、启动恢复、HTTP API（含 settings、dispatch-notes）、approval observer 接线、grant 接线、微信服务接线、DispatchGuard 接线。
 - lib/dispatch-guard.mjs：agent 作用域静态 system prompt section 的安装、agent/created 与 disposed 监听、开关求值、dispose。
 - lib/approvals.mjs：approval/request 只读观察器、pending 列表、TTL/abort/shutdown 清理。
-- lib/worker-idle.mjs：agent/status 只读监听、working task executor 过滤、Ria 排除、按 worker+task 节流、配置/环境变量归一化。
+- lib/worker-idle.mjs：agent/status 只读监听、working ticket executor 过滤、Ria 排除、按 worker+task 节流、配置/环境变量归一化。
 - lib/grants.mjs：临时权限 set/list/reset、原值记录、task close/expiry/startup 恢复、审计、失败重试。
 - lib/client.js：侧边栏入口、瞬时 launcher、入口右侧微信 chip 和登录弹层（含推送状态卡、暂停/恢复按钮、自动暂停轻提示）、设置页 Ria section、conversation.chat.turnTail 派发 note 卡片、conversation.input.dock 的 blank 欢迎卡片。
 - lib/wechat/wxweb.mjs、login.mjs、outbound.mjs：复用的文件传输助手协议、扫码登录、串行发送，以及 .md 文件上传/appmsg 发送；outbound 另含只保留签名、当前 reject 的 enqueueImage。
@@ -655,8 +689,8 @@ Phase 18：微信图片接口预留（识别 MsgType 3、入站下载/转换/投
 - test/wechat-pause.mjs：手动暂停/恢复、自动按通道切换、合成消息过滤、manual 优先级、队列竞态、丢弃日志、重启持久化。
 - test/approvals.mjs：审批观察器单元测试。
 - test/grants.mjs：临时权限单元测试（过期、startup、漂移跳过、恢复失败、审计）。
-- test/worker-idle.mjs：正常触发、Ria 排除、非 working/running 不触发、节流、关闭开关、多 task 合并、配置归一化。
-- test/startup.mjs：恢复上限、blocked 状态、更新/成功派发清零、启动异常通知。
+- test/worker-idle.mjs：正常触发、Ria 排除、非 working/running 不触发、节流、关闭开关、多 ticket 合并、配置归一化。
+- test/startup.mjs：未收敛 ticket 恢复、forked 递归、恢复上限、blocked 状态、更新/成功派发清零、启动异常通知；另由 test/task-state、test/intake、test/merge、test/archive 覆盖状态机、强制点、合并与归档。
 - test/dispatch-guard.mjs：section 安装、agent/created 与 disposed、重复安装、开关文本、失败 warning、shutdown。
 - docs/system-dispatch-guard.md：系统级防误发提示调研，含 DSH 注入点、对比、推荐方案和落地步骤；v0.23 已按静态 section + 设置页方案实施。
 - docs/ui-settings.png：隔离 DSH 中“设置 > Ria”开关的真实界面截图。
@@ -671,11 +705,11 @@ Phase 18：微信图片接口预留（识别 MsgType 3、入站下载/转换/投
 - GET /health、POST /ensure、GET /state 正常。
 - GET /wechat/status 返回 idle；POST /wechat/login 返回 data:image/jpeg 二维码；弹层显示 190×190 二维码。
 - 宽侧边栏中 chip 位于 Ria 标题右侧；折叠侧边栏不插入。
-- startup 测试覆盖 recoveryCount=3 的 working task：启动后产生一条通知、任务变 blocked 并带 blockedReason，status 可见；通知包含 taskId/executor/goal；更新 task 和成功派发都会把 recoveryCount 清零；pending delivery 重试成功也不会误判为超限；resolveAgent 失败时产生启动失败通知。测试不调用模型。
-- smoke 覆盖近期 worker：首次派发前 scope=recent 为空；成功 task 派发后出现 1 个候选并带 title/cwd/lastTaskId/lastTaskGoal/lastTaskStatus/lastUsedAt；quick relay 更新 lastUsedAt 且保留 lastTaskId；scope=sessions 带 title 和可选的 cwd/lastUsedAt；失败 request 不更新；ria.json 持久化 recentWorkers；所有工具输出递归检查为 lossless。
-- smoke 覆盖 Workspace 挂载、8 个工具注册、request 投递、task 派发与 quick relay 都不加前缀、dispatch guard section 同时装到 worker 和 Ria、GET/POST /settings 与 GET /state 的 settings、status、read、memory、持久化，以及新建 Ria 不写任何 session 事件、第二次 ensure 不重复；dispatch-guard 测试覆盖安装、created/disposed、重复安装、开关文本、失败 warning、shutdown；wechat 测试覆盖文本提取、事件过滤、入站去重/回显过滤、失败标记、reconnect skip、状态视图，以及图片接口预留（默认关闭、开关归一化、MsgType 3 识别、转换/出站明确报未实现，且默认关闭时文本路径不变）；approvals 测试覆盖活跃 executor 过滤、始终 next()、abort/TTL/shutdown 清理和 lossless 输出；grants 测试覆盖授权门槛、原值记录、task done 自动恢复、显式 reset、过期、startup、漂移跳过、恢复失败和审计；wechat-file 测试覆盖阈值/代码块/表格/标题/链接、配置/env、文件名、短消息不变、长消息发 .md、失败回退，以及上传和 appmsg 字段；wechat-pause 测试覆盖手动开关与持久化、非微信自动暂停、微信自动恢复、host_/schedule 过滤、manual 不被 channel 覆盖、暂停时不发送、排队丢弃而在途完成、恢复后补发 outbox，以及日志字段。spawn 测试覆盖 create 参数、title 重命名、workspace_missing/preset_not_found/spawn_failed、ria_status scope=sessions 可见且不是 subagent；attachments 测试覆盖图片投递 content、attachment_missing/attachment_invalid/model_no_image、多目标部分成功、失败不投递且不动 task。npm test 十一个测试全部通过。
+- startup 测试覆盖 recoveryCount=3 的 working ticket：启动后产生一条通知、任务变 blocked 并带 blockedReason，status 可见；通知包含 ticketId/executor/goal；更新 task 和成功派发都会把 recoveryCount 清零；pending delivery 重试成功也不会误判为超限；resolveAgent 失败时产生启动失败通知。测试不调用模型。
+- smoke 覆盖近期 worker：首次派发前 scope=recent 为空；成功 ticket 派发后出现 1 个候选并带 title/cwd/lastTicketId/lastTicketGoal/lastTicketStatus/lastUsedAt；scope=sessions 带 title 和可选的 cwd/lastUsedAt；失败 request 不更新；ria.json 持久化 recentWorkers；所有工具输出递归检查为 lossless。
+- smoke 覆盖 Workspace 挂载、9 个工具注册、request 投递、ticket 派发不加前缀、dispatch guard section 同时装到 worker 和 Ria、GET/POST /settings 与 GET /state 的 settings、status、read、memory、持久化，以及新建 Ria 不写任何 session 事件、第二次 ensure 不重复；dispatch-guard 测试覆盖安装、created/disposed、重复安装、开关文本、失败 warning、shutdown；wechat 测试覆盖文本提取、事件过滤、入站去重/回显过滤、失败标记、reconnect skip、状态视图，以及图片接口预留（默认关闭、开关归一化、MsgType 3 识别、转换/出站明确报未实现，且默认关闭时文本路径不变）；approvals 测试覆盖活跃 executor 过滤、始终 next()、abort/TTL/shutdown 清理和 lossless 输出；grants 测试覆盖授权门槛、原值记录、ticket done 自动恢复、显式 reset、过期、startup、漂移跳过、恢复失败和审计；wechat-file 测试覆盖阈值/代码块/表格/标题/链接、配置/env、文件名、短消息不变、长消息发 .md、失败回退，以及上传和 appmsg 字段；wechat-pause 测试覆盖手动开关与持久化、非微信自动暂停、微信自动恢复、host_/schedule 过滤、manual 不被 channel 覆盖、暂停时不发送、排队丢弃而在途完成、恢复后补发 outbox，以及日志字段。spawn 测试覆盖 create 参数、title 重命名、workspace_missing/preset_not_found/spawn_failed、ria_status scope=sessions 可见且不是 subagent；attachments 测试覆盖图片投递 content、attachment_missing/attachment_invalid/model_no_image、多目标部分成功、失败不投递且不动 ticket。npm test 十五个测试全部通过。
 - 新建 Ria 后真实 Web UI 在输入框上方显示欢迎卡片（blank 状态），发出第一条消息后消失；没有浏览器 runtime error。修复后的 Ria 会话日志通过 v4 校验（restoreReleasedV4Artifact：VALID，264 个事件），隔离 DSH 重启并重新打开 Ria 不再出现 corrupt。
-- 真实 Web UI 中 task 派发的 note 渲染在轮次末尾：DOM 有 [data-ria-dispatch-note="task"]，标题“任务已派发”，位于轮次末尾；无 runtime error；截图 docs/ui-dispatch-note.png。真实 ria_request 写入路径由 smoke 覆盖。
+- 真实 Web UI 中 ticket 派发的 note 渲染在轮次末尾：DOM 有 [data-ria-dispatch-note="ticket"]，标题“任务已派发”，位于轮次末尾；无 runtime error；截图 docs/ui-dispatch-note.png。真实 ria_request 写入路径由 smoke 覆盖。
 - 审批观察器没有在真实 UI 中触发过；只做了单元测试和 smoke。首次实际审批时需确认 pending 列表和清理行为。
 - 欢迎卡片不在 transcript 里，不计入轮次和步骤，不随历史加载；发出第一条消息后消失。
 

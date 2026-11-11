@@ -1,10 +1,25 @@
 # dsh-super-session
 
+![阿汐站在玻璃中庭里，手里提着一盏灯](docs/hero.jpg)
+
+**阿汐 · Ria** —— 潮起潮落，事事有着落。  
+*Tide may roam — every wave comes home.*
+
 一个 DSH Web 插件：全局只有一个 Super Session。它不直接承担实现工作，而是管理用户已有的顶层 Session：转述需求、跟踪进度、总结经验并分发。
 
 Super 自己是一个普通的顶层 DSH Session，运行 PTC preset，带管理者 prompt 和 7 个 super_session_* 工具。worker 侧不需要安装任何东西，收到的就是普通用户消息；防误发提示由 agent 作用域的 system prompt section 提供，不修改消息内容。
 
 ![Super Session 入口打开后的会话界面](docs/ui-final.png)
+
+## 名字
+
+<img src="docs/ria-avatar.png" width="120" align="right" alt="阿汐的头像">
+
+**阿汐**，英文 **Ria**（西班牙语 *ría*，潮汐河口）。潮水有去有回；她做的事也一样：把事送出海，再把结果带回来。
+
+> 潮起潮落，事事有着落。
+
+文档和消息里，🌊 代表这个入口，🐚 是她的签名；日志、状态文件和代码里不用 emoji。
 
 ## 当前状态
 

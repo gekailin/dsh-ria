@@ -35,7 +35,7 @@ function makeService(ctx, dir, overrides = {}) {
 
 const dir = await mkdtemp(join(tmpdir(), 'dsh-super-session-wechat-file-'))
 try {
-  assert.equal(DEFAULT_MARKDOWN_FILE_OPTIONS.charThreshold, 1800)
+  assert.equal(DEFAULT_MARKDOWN_FILE_OPTIONS.charThreshold, 800)
   assert.equal(normalizeMarkdownFileOptions(false).enabled, false)
   assert.deepEqual(normalizeMarkdownFileOptions({ charThreshold: 10 }), {
     ...DEFAULT_MARKDOWN_FILE_OPTIONS,

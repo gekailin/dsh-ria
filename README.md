@@ -81,7 +81,7 @@ Super Session 入口标题右侧有一个“微信”chip。点开后可以扫�
 
 | 命中条件 | 默认值 |
 |---|---|
-| 字符数 | 超过 1800 |
+| 字符数 | 超过 800 |
 | 代码块 | 有围栏代码块（三个反引号或三个波浪线） |
 | 表格 | 有 Markdown 表格 |
 | 标题 | 4 个及以上 Markdown 标题 |
@@ -96,7 +96,7 @@ Super Session 入口标题右侧有一个“微信”chip。点开后可以扫�
   config:
     markdownFile:
       enabled: true
-      charThreshold: 1800
+      charThreshold: 800
       codeBlock: true
       table: true
       headingCount: 4

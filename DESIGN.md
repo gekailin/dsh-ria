@@ -269,7 +269,7 @@ continuation 要求 worker 先检查工作区、已改文件和测试，从中�
 - Markdown 标题数达到 headingCount。
 - Markdown 链接数达到 linkCount。
 
-默认值：enabled=true、charThreshold=1800、codeBlock=true、table=true、headingCount=4、linkCount=6。阈值限制在 80–100000，标题/链接数限制在 1–50/1–500。
+默认值：enabled=true、charThreshold=800、codeBlock=true、table=true、headingCount=4、linkCount=6。阈值限制在 80–100000，标题/链接数限制在 1–50/1–500。
 
 配置可以在 profile 的插件行里给 markdownFile，也可以被环境变量覆盖（环境变量优先）：
 
@@ -278,7 +278,7 @@ continuation 要求 worker 先检查工作区、已改文件和测试，从中�
   config:
     markdownFile:
       enabled: true
-      charThreshold: 1800
+      charThreshold: 800
       codeBlock: true
       table: true
       headingCount: 4
@@ -400,7 +400,7 @@ Phase 9：微信出站长回复/复杂 Markdown 转 .md 文件（可配置阈值
 - 微信积压 N=10。
 - memory 只做 memory.md，不做 lessons/FTS5。
 - 微信设置在入口右侧 chip。
-- 微信长回复/复杂 Markdown 转 .md：默认 1800 字，代码块/表格/4 标题/6 链接任一命中。
+- 微信长回复/复杂 Markdown 转 .md：默认 800 字，代码块/表格/4 标题/6 链接任一命中。
 - request 是普通会话消息，使用 DSH 支持的消息类型。
 
 ## 18. 风险

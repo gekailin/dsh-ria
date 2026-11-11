@@ -36,7 +36,8 @@ const worker = {
   },
 }
 const superEvents = []
-let failSuperAppend = false
+let superTurn = 7
+let failSuperSnapshot = false
 const superAgent = {
   id: superId,
   ctx: {
@@ -50,9 +51,11 @@ const superAgent = {
     },
   },
   session: {
-    snapshotEvents: () => [],
+    snapshotEvents() {
+      if (failSuperSnapshot) throw new Error('snapshot failed')
+      return [{ type: 'turn/start', data: { turn: superTurn } }, { type: 'step/start', data: { turn: superTurn, step: 1 } }]
+    },
     append(type, data, options) {
-      if (failSuperAppend) throw new Error('append failed')
       superEvents.push({ type, data, options })
       return { seq: superEvents.length - 1, time: 1 }
     },
@@ -193,9 +196,9 @@ assert.equal(ensured.body.sessionId, superId)
 assert.equal(created, true)
 assert.deepEqual(workspaceAttachments, [superId])
 assert.deepEqual(superEvents.map(event => event.type), ['turn/start', 'step/start', 'assistant/message', 'step/end', 'turn/end'])
-assert.equal(superEvents[0].data.turn, 0)
-assert.equal(superEvents[2].data.turn, 0)
-assert.equal(superEvents[2].data.step, 0)
+assert.equal(superEvents[0].data.turn, 1)
+assert.equal(superEvents[2].data.turn, 1)
+assert.equal(superEvents[2].data.step, 1)
 assert.equal(superEvents[2].data.message.role, 'assistant')
 assert.equal(superEvents[2].data.message.source.kind, 'model')
 assert.equal(superEvents[2].options.surfaceOp, 'append')
@@ -275,14 +278,25 @@ assert.equal(concluded, 1)
 assert.equal(prompts.at(-1).content.length, 1)
 assert.equal(prompts.at(-1).content[0].text, 'please fix')
 assert.equal(prompts.at(-1).requestId.startsWith('req_'), true)
-assert.equal(superEvents.length, eventsBeforeTaskDispatch + 2)
-assert.equal(superEvents[eventsBeforeTaskDispatch].type, 'command/run')
-assert.equal(superEvents[eventsBeforeTaskDispatch].data.name, '任务派发')
-assert.equal(superEvents[eventsBeforeTaskDispatch].data.source.kind, 'user')
-assert.equal(superEvents[eventsBeforeTaskDispatch + 1].type, 'command/done')
-assert.equal(superEvents[eventsBeforeTaskDispatch + 1].data.kind, 'success')
-assert.equal(superEvents[eventsBeforeTaskDispatch + 1].data.text, dispatchNote + '\n')
-assert.equal(superEvents[eventsBeforeTaskDispatch + 1].data.commandId, superEvents[eventsBeforeTaskDispatch].data.commandId)
+assert.equal(superEvents.length, eventsBeforeTaskDispatch)
+const notesAtTurn = await request('GET', '/plugins/dsh-super-session/api/dispatch-notes?sessionId=' + encodeURIComponent(superId) + '&turn=' + superTurn)
+assert.equal(notesAtTurn.status, 200)
+assert.equal(notesAtTurn.body.notes.length, 1)
+const storedNote = notesAtTurn.body.notes[0]
+assert.equal(storedNote.turn, superTurn)
+assert.equal(storedNote.sessionId, superId)
+assert.equal(storedNote.note, dispatchNote)
+assert.equal(storedNote.isTask, true)
+assert.equal(storedNote.taskId, task.task.taskId)
+assert.equal(typeof storedNote.at, 'number')
+assertLossless(notesAtTurn.body)
+const notesWrongSession = await request('GET', '/plugins/dsh-super-session/api/dispatch-notes?sessionId=session-worker&turn=' + superTurn)
+assert.deepEqual(notesWrongSession.body, { notes: [] })
+const notesAll = await request('GET', '/plugins/dsh-super-session/api/dispatch-notes?sessionId=' + encodeURIComponent(superId))
+assert.equal(notesAll.body.notes.length, 1)
+const persistedState = JSON.parse(readFileSync(join(stateDir, 'super.json'), 'utf8'))
+assert.equal(persistedState.dispatchNotes.length, 1)
+assert.equal(persistedState.dispatchNotes[0].note, dispatchNote)
 const recentAfterTask = await call('super_session_status', { scope: 'recent' })
 assert.equal(recentAfterTask.workers.length, 1)
 assert.equal(recentAfterTask.workers[0].sessionId, 'session-worker')
@@ -304,24 +318,38 @@ assert.equal(prompts.at(-1).content.length, 1)
 assert.equal(prompts.at(-1).content[0].text, 'just checking')
 assert.equal(superEvents.length, eventsBeforeQuick)
 assertLossless(quickRequest)
+const notesAfterQuick = await request('GET', '/plugins/dsh-super-session/api/dispatch-notes?sessionId=' + encodeURIComponent(superId) + '&turn=' + superTurn)
+assert.equal(notesAfterQuick.body.notes.length, 1)
+const quickNote = '只是转述一句话给 Worker One。'
+const quickWithNote = await call('super_session_request', { targetSessionIds: ['session-worker'], message: 'quick note', note: quickNote })
+assert.equal(quickWithNote.results[0].ok, true)
+const notesAfterQuickWithNote = await request('GET', '/plugins/dsh-super-session/api/dispatch-notes?sessionId=' + encodeURIComponent(superId) + '&turn=' + superTurn)
+assert.equal(notesAfterQuickWithNote.body.notes.length, 2)
+assert.equal(notesAfterQuickWithNote.body.notes[1].isTask, false)
+assert.equal(notesAfterQuickWithNote.body.notes[1].note, quickNote)
+assert.equal('taskId' in notesAfterQuickWithNote.body.notes[1], false)
+assertLossless(notesAfterQuickWithNote.body)
 const recentAfterQuick = await call('super_session_status', { scope: 'recent' })
 assert.equal(recentAfterQuick.workers.length, 1)
 assert.equal(recentAfterQuick.workers[0].lastUsedAt >= lastUsedBeforeQuick, true)
 assert.equal(recentAfterQuick.workers[0].lastTaskId, task.task.taskId)
 assertLossless(recentAfterQuick)
 concluded = 0
-const eventsBeforeAppendFailure = superEvents.length
-failSuperAppend = true
-let appendFailure
+const eventsBeforeSnapshotFailure = superEvents.length
+const notesBeforeSnapshotFailure = (await request('GET', '/plugins/dsh-super-session/api/dispatch-notes?sessionId=' + encodeURIComponent(superId))).body.notes.length
+failSuperSnapshot = true
+let snapshotFailure
 try {
-  appendFailure = await call('super_session_request', { targetSessionIds: ['session-worker'], message: 'note display failure', taskId: task.task.taskId, note: '展示失败也要继续派发。' })
+  snapshotFailure = await call('super_session_request', { targetSessionIds: ['session-worker'], message: 'note display failure', taskId: task.task.taskId, note: '展示失败也要继续派发。' })
 } finally {
-  failSuperAppend = false
+  failSuperSnapshot = false
 }
-assert.equal(appendFailure.results[0].ok, true)
+assert.equal(snapshotFailure.results[0].ok, true)
 assert.equal(concluded, 1)
-assert.equal(superEvents.length, eventsBeforeAppendFailure)
-assertLossless(appendFailure)
+assert.equal(superEvents.length, eventsBeforeSnapshotFailure)
+const notesAfterSnapshotFailure = await request('GET', '/plugins/dsh-super-session/api/dispatch-notes?sessionId=' + encodeURIComponent(superId))
+assert.equal(notesAfterSnapshotFailure.body.notes.length, notesBeforeSnapshotFailure)
+assertLossless(snapshotFailure)
 concluded = 0
 const partialRequest = await call('super_session_request', { targetSessionIds: ['session-worker', 'session-child'], message: 'partial' })
 assert.equal(partialRequest.results.filter(item => item.ok).length, 1)

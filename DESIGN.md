@@ -1,6 +1,6 @@
 # dsh-super-session 设计方案
 
-> 状态：v0.26（2026-11-11）
+> 状态：v0.27（2026-11-11）
 > 目标目录：/home/gkl/Desktop/vibe_proj/dsh-super-session
 > Super Session 固定用 PTC preset（agentPreset=ptc）启动，模型只直接看到 run_code + SDK。本文是设计说明；实现状态见第 20 节。
 
@@ -159,7 +159,7 @@ request 就是一条普通会话消息，没有单独的消息类型体系。
 
 - message 直接使用 DSH Session 支持的内容：文本、图片、文件等。
 - 不做额外的文件分类、根目录白名单或专用上传流程；由 DSH 现有 message/content 能力处理。
-- 带 taskId 的任务派发必须提供 note（一两句话：派给谁、要 worker 做什么、用户接下来会看到什么），最多 500 字。Host 在投递成功后、concludeTurn 之前，把 note 写成 Super 会话的 command/run + command/done 事件，UI 显示为一条独立的命令卡片（Host 在文本末尾加换行，使长 note 可展开）。command 事件是 log-only，不属于模型 surface，不进入模型上下文，并随 session log 持久化；重启后从日志重放，不会变成用户消息。
+- 带 taskId 的任务派发必须提供 note（一两句话：派给谁、要 worker 做什么、用户接下来会看到什么），最多 500 字。Host 在投递成功后、concludeTurn 之前，把 note 写入 super.json（最多保留 100 条），插件 client 在 conversation.chat.turnTail 渲染为当前轮次末尾的卡片。卡片独立于 turn process，不会被完成后折叠；不进入模型上下文，重启后仍可读取；通过 GET /api/dispatch-notes?sessionId&turn 查询。早期用 command/run + command/done，卡片被 ChatNodeSeat 当作 process member 折叠，真实 UI 不可见，已移除。
 - note 缺失、纯空白或超过 500 字时，工具直接报错：不投递、不写 delivery、不 concludeTurn。报错文案分别是 requires a non-empty note when taskId is set 和 note is N characters; the maximum is 500；超长不截断。
 - note 展示失败（例如 Super 的 session 还没有 append 能力或 append 抛错）只记 warn，不阻断派发，也不影响已经成功的请求；成功派发仍然 concludeTurn。
 - quick relay（不带 taskId）不需要 note；如果提供了 note，也会显示一条“消息转发”卡片（同样受 500 字限制），否则不产生卡片。消息原样转发。
@@ -409,11 +409,12 @@ stateDir/
 
 没有 lessons、lock、briefs、outbox。
 
-super.json 只存 super、tasks、deliveries、grants、settings、recentWorkers：
+super.json 只存 super、tasks、deliveries、grants、settings、recentWorkers、dispatchNotes：
 
 - recentWorkers：sessionId -> lastUsedAt、lastTaskId?；只在 request 成功投递后写入，30 天后清理。
 
 - settings：dispatchGuard（boolean，默认 true）。
+- dispatchNotes：noteId、sessionId、turn、note、isTask、at、taskId?；最多保留 100 条，供 turn-tail 卡片读取。
 
 - tasks：taskId、goal、acceptance、executor、status、blockedReason、createdAt、updatedAt、recoveryCount。
 - deliveries：deliveryId、targetSessionId、requestId、taskId、content、mode、createdAt。
@@ -436,7 +437,8 @@ super.json 和 memory.md 都不存 transcript。
 - DSH 的正常会话界面要求 Session 属于一个 Workspace。ensure 在 stateDir 创建/复用标题为 Super Session 的专用 Workspace，并用 workspaceId 创建 Session；旧 Super 通过 attachSession 补挂。工作区列表会多这一项，这是输入框可用的必要条件。
 - 不做常驻看板。
 - 新建 Super 时追加一条欢迎消息：提示选模型、设置权限（建议 danger-full-access + 审批策略）、直接说目标。
-- 欢迎消息是一个合成的完整 turn（turn/start、step/start、assistant/message、step/end、turn/end），只在新创建路径写一次；已存在/重启不重复，不占用户消息位，不调用模型。
+- 欢迎消息是一个合成的完整 turn（turn/start、step/start、assistant/message、step/end、turn/end），只在新创建路径写一次；已存在/重启不重复，不占用户消息位，不调用模型。turn 从 1 开始编号（DSH session-format 的 nextTurn 初始值为 1）；早期实现用 turn 0，append 能成功但 DSH 重启 resume 时会报 corrupt，已改为 turn 1/step 1。
+- 带 taskId 的派发 note 由 Host 记录到 super.json（最多保留 100 条），插件 client 在 `conversation.chat.turnTail` slot 渲染为当前轮次末尾的卡片，标题「任务已派发」/「消息已转交」。卡片不属于 turn process，不会被完成后折叠；不进入模型上下文；通过 GET /api/dispatch-notes?sessionId&turn 读取。早期用 command/run + command/done，卡片被 ChatNodeSeat 当作 process member 折叠，真实 UI 不可见，已移除。
 - 微信 chip 在 Super 入口标题右侧，点击打开微信弹层。
 - 设置页注册 settings.section：id=super-session-settings、order=25、label=Super Session；一个“任务转交提示”开关，默认打开，POST /settings 持久化。说明文字明确：只影响后续 system prompt，不改 worker 历史、工具或预设。
 
@@ -463,7 +465,7 @@ Phase 4：微信进程内服务、回复同步、积压 skip、入口 chip。
 
 Phase 5：审批可见性 observer、super_session_approval list、清理与 TTL。
 
-Phase 6：新建 Super 的一次性欢迎消息（合成 assistant turn，不调用模型）。
+Phase 6：新建 Super 的一次性欢迎消息（合成 assistant turn 1，不调用模型；修复早期 turn 0 导致重启 resume 失败）。
 
 Phase 7：任务派发防误发提示（最初实现为仅带 taskId 的 request 插入固定 text part；Phase 13 已改为静态 system prompt section 并删除前缀）。
 
@@ -483,7 +485,7 @@ Phase 14：近期 worker 选择（成功 request 记录 recentWorkers；status �
 
 Phase 15：微信暂停推送 UI（chip 弹层显示“推送中 / 已暂停推送”、来源与时间、手动暂停/恢复按钮；自动暂停时弹层内和侧边栏右下角各一条 8 秒轻提示；chip 圆点显示暂停色）。
 
-Phase 16：note 硬约束（带 taskId 的 request 必须传 note，最多 500 字；缺失/空白/超长直接报错且不投递；Host 在 concludeTurn 前写入 command/run + command/done 可见卡片，失败只 warn；quick relay 不受影响）。
+Phase 16：note 硬约束（带 taskId 的 request 必须传 note，最多 500 字；缺失/空白/超长直接报错且不投递；Host 在 concludeTurn 前把 note 记录到 super.json，由 client 在 conversation.chat.turnTail 渲染可见卡片，失败只 warn；quick relay 不受影响）。
 
 ## 16. 验收
 
@@ -517,7 +519,7 @@ Phase 16：note 硬约束（带 taskId 的 request 必须传 note，最多 500 �
 27. 手动暂停不被自动暂停覆盖；微信入站可以恢复手动暂停；手动恢复后下一条非微信消息再次暂停。
 28. 暂停期间在途消息发送完成，排队消息丢弃并记录日志；outbox 不发送，恢复后补发。
 29. 暂停相关测试覆盖手动开关、自动切换、合成消息过滤、优先级、队列竞态、日志和重启持久化。
-30. 带 taskId 派发必须传 note（最多 500 字）；缺失、空白或超长直接报错，不投递、不 concludeTurn；成功后 Host 把 note 写成 Super 会话的 command card，再 concludeTurn；note 展示失败只 warn；quick relay 不需要 note。
+30. 带 taskId 派发必须传 note（最多 500 字）；缺失、空白或超长直接报错，不投递、不 concludeTurn；成功后 Host 把 note 写入 super.json，由 client 在 conversation.chat.turnTail 渲染为当前轮次末尾的可见卡片，再 concludeTurn；note 展示失败只 warn；quick relay 不需要 note。
 31. 设置页默认 dispatchGuard=true；关闭后所有已安装 section 的 text 返回空字符串；POST /settings 只接受 boolean 并持久化到 super.json；GET /state 可见 settings。
 32. manager prompt 明确：用户未指定 worker 时只从 scope=recent 选择，不遍历全部会话，不凭空挑没用过的；没有合适候选时先问用户。
 33. “近期用过”定义为成功 super_session_request 过的顶层 worker，窗口 7 天、最多 5 个、保留 30 天；task 创建/更新不算，用户手工会话不算。
@@ -555,7 +557,7 @@ Phase 16：note 硬约束（带 taskId 的 request 必须传 note，最多 500 �
 | 微信长连接绑 DSH 进程 | 重启加载 creds 重连，通常不扫码 |
 | 微信文件上传协议随网页版变化 | 规则命中时尝试上传/发 appmsg；任一步失败回退文本并提示 |
 | 入口 chip 是 DOM 注入 | MutationObserver；宽侧边栏才显示 |
-| 欢迎消息伪造 turn 0 | 已用真实 UI 验证正常显示；UI 会计 1 轮 1 步并显示已完成，属可接受的外观副作用 |
+| 欢迎消息伪造 turn | 已改用 turn 1/step 1；真实 UI 显示正常，重启 resume 也通过；UI 会计 1 轮 1 步并显示已完成，属可接受的外观副作用 |
 | 临时权限被滥用 | 只能用户明确指令 + userConfirmed；单 worker、单 grant、TTL 上限 24h；task close/启动恢复；审计 |
 | 恢复时覆盖用户手工改动 | 比较当前 override，不一致则跳过并记录 |
 | idle 误判为完成 | 通知只写 turn 已结束；要求 read 确认；等用户输入时标 blocked |
@@ -564,22 +566,22 @@ Phase 16：note 硬约束（带 taskId 的 request 必须传 note，最多 500 �
 | sandbox override 无法清除 | 写回原 effective mode，行为一致但可能保留同值 override |
 | 暂停与在途出站竞态 | 在途一条发完即止；排队丢弃并记日志；outbox 暂停期间不发送，恢复后补发 |
 | 自动暂停误判合成消息 | host_ 前缀 + source.kind=user 双重过滤；schedule 不参与 |
-| 派发只调工具不写回复 | note 是工具参数硬约束：缺失/空白/超长直接报错且不投递；成功后 Host 先写可见 command card 再 concludeTurn |
-| note 卡片过长被折叠 | command 卡片默认单行 ellipsis；Host 在 note 末尾加换行，使卡片可展开查看全文 |
-| command 事件被当成命令 | 卡片样式类似命令执行记录；标题区分“任务派发/消息转发”，不进入模型上下文 |
+| 派发只调工具不写回复 | note 是工具参数硬约束：缺失/空白/超长直接报错且不投递；成功后 Host 先记录可见 turn-tail 卡片再 concludeTurn |
+| command 卡片被 turn process 折叠 | 已放弃 command 事件；改用 conversation.chat.turnTail，卡片在轮次末尾独立渲染，不进入模型上下文 |
+| note 卡片只存在于 Host 状态 | note 写入 super.json（最多 100 条）；client 通过 HTTP 读取；卡片不依赖 session log，也不会进入模型上下文 |
 | system prompt section 是行为约束 | 模型仍可能忽略；设置页只开关提示，不改变 worker 的 tools/preset/历史，也不做硬拦截 |
 | 插件重载残留同名 section | apply 统一 dispose；按 agent id 去重；安装失败只 warn，不阻断加载 |
 | 手动暂停被自动覆盖 | manual 优先；只有微信入站能清除 manual，并明确记录 resumedBy |
 
 ## 19. 总结
 
-全局一个 Super Session，PTC preset（agentPreset=ptc）+ 管理者 prompt、memory.md 和 7 个工具；模型通过 run_code SDK 调用工具；用 task 管理谁做什么，request 就是普通会话消息；通过可开关的 agent system prompt section 提供通用防误发提示，任务消息不加前缀；带 taskId 派发必须提供 note，Host 写成可见 command card 后结束本轮；worker idle 时自动唤醒 Super（只读事件、30 秒节流）；重启按 task 继续；微信客户端进程内运行，长回复/复杂 Markdown 自动转 .md 文件；推送可暂停（手动或按消息通道自动切换），暂停只停出站、连接保持；新建会话有一条不调用模型的一次性欢迎消息。
+全局一个 Super Session，PTC preset（agentPreset=ptc）+ 管理者 prompt、memory.md 和 7 个工具；模型通过 run_code SDK 调用工具；用 task 管理谁做什么，request 就是普通会话消息；通过可开关的 agent system prompt section 提供通用防误发提示，任务消息不加前缀；带 taskId 派发必须提供 note，Host 记录后由 client 在 turn 末尾显示卡片，然后结束本轮；worker idle 时自动唤醒 Super（只读事件、30 秒节流）；重启按 task 继续；微信客户端进程内运行，长回复/复杂 Markdown 自动转 .md 文件；推送可暂停（手动或按消息通道自动切换），暂停只停出站、连接保持；新建会话有一条不调用模型的一次性欢迎消息。
 
 ## 20. 实现状态
 
 截至当前版本：
 
-- Phase 0–16 已实现；Phase 0–4、Phase 6 和 Phase 13 通过隔离环境的真实 DSH 验证，其余阶段由单元测试和 smoke 覆盖。Phase 16 的 command card 尚未在真实 UI 里截图验证。
+- Phase 0–16 已实现；Phase 0–4、Phase 6、Phase 13 和 Phase 16 的 turn-tail 卡片通过隔离环境的真实 DSH 验证，其余阶段由单元测试和 smoke 覆盖。Phase 16 的截图使用手工写入 super.json 的 note 验证渲染；真实 toolRequest 写入路径由 smoke 覆盖。
 - Phase 15 的暂停状态卡、手动开关和自动暂停轻提示没有在真实微信账号下走完整链路；弹层只在已登录时显示状态卡，隔离 profile 无法伪造成已登录。
 - Phase 14 的近期 worker 记录、scope=recent 候选字段、空窗口和无 lastUsedAt 字段的 lossless 输出由 smoke 覆盖；挑选行为本身是 prompt 约束，未用真实模型验证。
 - Phase 13 的设置页已在隔离 DSH 里真实点击：设置导航出现 Super Session；开关默认勾选，关闭后显示“当前：已关闭”且 GET /settings 返回 false，重新打开后恢复 true；截图 docs/ui-settings.png。system prompt section 的安装、开关和空文本同时由单元测试与 smoke 覆盖。
@@ -590,19 +592,19 @@ Phase 16：note 硬约束（带 taskId 的 request 必须传 note，最多 500 �
 
 文件：
 
-- lib/index.js：Host、SuperStore（含 recentWorkers）、7 个工具、manager prompt、启动恢复、HTTP API（含 settings）、approval observer 接线、grant 接线、微信服务接线、DispatchGuard 接线，以及新建 Super 的 welcome 合成 turn。
+- lib/index.js：Host、SuperStore（含 recentWorkers、dispatchNotes）、7 个工具、manager prompt、启动恢复、HTTP API（含 settings、dispatch-notes）、approval observer 接线、grant 接线、微信服务接线、DispatchGuard 接线，以及新建 Super 的 welcome 合成 turn（turn 1/step 1）。
 - lib/dispatch-guard.mjs：agent 作用域静态 system prompt section 的安装、agent/created 与 disposed 监听、开关求值、dispose。
 - lib/approvals.mjs：approval/request 只读观察器、pending 列表、TTL/abort/shutdown 清理。
 - lib/worker-idle.mjs：agent/status 只读监听、working task executor 过滤、Super 排除、按 worker+task 节流、配置/环境变量归一化。
 - lib/grants.mjs：临时权限 set/list/reset、原值记录、task close/expiry/startup 恢复、审计、失败重试。
-- lib/client.js：侧边栏入口、瞬时 launcher、入口右侧微信 chip 和登录弹层（含推送状态卡、暂停/恢复按钮、自动暂停轻提示）、设置页 Super Session section。
+- lib/client.js：侧边栏入口、瞬时 launcher、入口右侧微信 chip 和登录弹层（含推送状态卡、暂停/恢复按钮、自动暂停轻提示）、设置页 Super Session section、conversation.chat.turnTail 派发 note 卡片。
 - lib/wechat/wxweb.mjs、login.mjs、outbound.mjs：复用的文件传输助手协议、扫码登录、串行发送，以及 .md 文件上传/appmsg 发送。
 - lib/wechat/markdown.mjs：长度/代码块/表格/标题/链接判定、配置归一化、文件名。
 - lib/wechat/service.mjs：进程内连接、assistant 文本回传、长回复转文件/失败回退、入站去重、Super 投递、重连积压处理、暂停状态与按通道自动切换。
 - lib/wechat/request-ids.mjs：wx_ / host_ requestId 前缀与来源判定。
 - lib/wechat/outbound.mjs：串行发送、暂停门禁、排队丢弃、在途完成。
 - cordis.patch.yml：插件 patch。
-- test/smoke.mjs：Host 流程 smoke；近期 worker 记录、scope=recent/sessions 字段、空窗口、失败不更新、prompt 规则与 lossless 断言。
+- test/smoke.mjs：Host 流程 smoke；近期 worker 记录、scope=recent/sessions 字段、空窗口、失败不更新、prompt 规则与 lossless 断言；dispatch-notes 按 session/turn 过滤、错误 session 空列表、note 持久化、snapshot 读取失败仍派发。
 - test/wechat.mjs：微信服务单元测试。
 - test/wechat-file.mjs：Markdown 判定、文件发送、失败回退和 multipart/appmsg 单元测试。
 - test/wechat-pause.mjs：手动暂停/恢复、自动按通道切换、合成消息过滤、manual 优先级、队列竞态、丢弃日志、重启持久化。
@@ -613,6 +615,7 @@ Phase 16：note 硬约束（带 taskId 的 request 必须传 note，最多 500 �
 - test/dispatch-guard.mjs：section 安装、agent/created 与 disposed、重复安装、开关文本、失败 warning、shutdown。
 - docs/system-dispatch-guard.md：系统级防误发提示调研，含 DSH 注入点、对比、推荐方案和落地步骤；v0.23 已按静态 section + 设置页方案实施。
 - docs/ui-settings.png：隔离 DSH 中“设置 > Super Session”开关的真实界面截图。
+- docs/ui-dispatch-note.png：隔离 DSH 中 Super 会话轮次末尾的“任务已派发”卡片截图（note 为手工写入 super.json 的验证数据）。
 
 已验证：
 
@@ -626,7 +629,8 @@ Phase 16：note 硬约束（带 taskId 的 request 必须传 note，最多 500 �
 - startup 测试覆盖 recoveryCount=3 的 working task：启动后产生一条通知、任务变 blocked 并带 blockedReason，status 可见；通知包含 taskId/executor/goal；更新 task 和成功派发都会把 recoveryCount 清零；pending delivery 重试成功也不会误判为超限；resolveAgent 失败时产生启动失败通知。测试不调用模型。
 - smoke 覆盖近期 worker：首次派发前 scope=recent 为空；成功 task 派发后出现 1 个候选并带 title/cwd/lastTaskId/lastTaskGoal/lastTaskStatus/lastUsedAt；quick relay 更新 lastUsedAt 且保留 lastTaskId；scope=sessions 带 title 和可选的 cwd/lastUsedAt；失败 request 不更新；super.json 持久化 recentWorkers；所有工具输出递归检查为 lossless。
 - smoke 覆盖 Workspace 挂载、7 个工具注册、request 投递、task 派发与 quick relay 都不加前缀、dispatch guard section 同时装到 worker 和 Super、GET/POST /settings 与 GET /state 的 settings、status、read、memory、持久化，以及 welcome 五事件序列和第二次 ensure 不重复；dispatch-guard 测试覆盖安装、created/disposed、重复安装、开关文本、失败 warning、shutdown；wechat 测试覆盖文本提取、事件过滤、入站去重/回显过滤、失败标记、reconnect skip 和状态视图；approvals 测试覆盖活跃 executor 过滤、始终 next()、abort/TTL/shutdown 清理和 lossless 输出；grants 测试覆盖授权门槛、原值记录、task done 自动恢复、显式 reset、过期、startup、漂移跳过、恢复失败和审计；wechat-file 测试覆盖阈值/代码块/表格/标题/链接、配置/env、文件名、短消息不变、长消息发 .md、失败回退，以及上传和 appmsg 字段；wechat-pause 测试覆盖手动开关与持久化、非微信自动暂停、微信自动恢复、host_/schedule 过滤、manual 不被 channel 覆盖、暂停时不发送、排队丢弃而在途完成、恢复后补发 outbox，以及日志字段。npm test 九个测试全部通过。
-- 新建 Super 后真实 Web UI 显示欢迎消息；会话界面显示“已完成，用时 1 秒”和“1 轮 1 步”，输入框正常；没有浏览器 runtime error。
+- 新建 Super 后真实 Web UI 显示欢迎消息；会话界面显示“已完成，用时 1 秒”和“1 轮 1 步”，输入框正常；没有浏览器 runtime error。欢迎消息改为 turn 1/step 1 后，隔离 DSH 重启并重新打开 Super 成功，未再出现 turn/start corrupt。
+- 真实 Web UI 中 task 派发的 note 渲染在轮次末尾：DOM 有 [data-super-session-dispatch-note="task"]，标题“任务已派发”，位于欢迎消息下方；无 runtime error；截图 docs/ui-dispatch-note.png。真实 super_session_request 写入路径由 smoke 覆盖。
 - 审批观察器没有在真实 UI 中触发过；只做了单元测试和 smoke。首次实际审批时需确认 pending 列表和清理行为。
 - welcome 的合成 turn 会被 UI 计入“1 轮 1 步”，并显示“已完成”；这是 assistant 气泡可正常渲染的代价。
 

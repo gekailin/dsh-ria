@@ -147,6 +147,8 @@ const ctx = {
         { sessionId: 'session-worker-2', running: false, blank: true, updatedAt: 4, projections: { values: { title: 'Worker Two' } } },
         { sessionId: 'session-archived', running: false, blank: false, updatedAt: 5, cwd: stateDir, projections: { values: { title: 'Archived One' } } },
         { sessionId: 'session-no-workspace', running: false, blank: false, updatedAt: 6, cwd: '/work/worker-gone', projections: { values: { title: 'Gone One' } } },
+        // Seeded session: has parentSessionId but no origin; it is a top-level worker.
+        { sessionId: 'session-seeded', running: false, blank: false, updatedAt: 7, cwd: stateDir, parentSessionId: 'session-worker', projections: { values: { title: 'Seeded One' } } },
       ] }
     },
     async prompt(request) {
@@ -378,7 +380,7 @@ const status = await call('ria_status', { scope: 'tasks' })
 assert.equal(status.tasks[0].status, 'working')
 assertLossless(status)
 const sessions = await call('ria_status', { scope: 'sessions' })
-assert.deepEqual(sessions.sessions.map(item => item.sessionId), ['session-worker', 'session-worker-2', 'session-archived', 'session-no-workspace'])
+assert.deepEqual(sessions.sessions.map(item => item.sessionId), ['session-worker', 'session-worker-2', 'session-archived', 'session-no-workspace', 'session-seeded'])
 assertLossless(sessions)
 assert.equal('parentSessionId' in sessions.sessions[0], false)
 assert.equal(sessions.sessions[0].title, 'Worker One')
@@ -389,6 +391,14 @@ assert.equal(typeof sessions.sessions[0].lastUsedAt, 'number')
 assert.equal(sessions.sessions[1].title, 'Worker Two')
 assert.equal('cwd' in sessions.sessions[1], false)
 assert.equal('lastUsedAt' in sessions.sessions[1], false)
+assert.equal(sessions.sessions[4].parentSessionId, 'session-worker')
+// A seeded session keeps a parentSessionId; it must still be dispatchable.
+concluded = 0
+const seededDispatch = await call('ria_request', { targetSessionIds: ['session-seeded'], message: 'seeded worker check' })
+assert.equal(seededDispatch.results[0].ok, true)
+assert.equal(concluded, 1)
+assert.equal(prompts.at(-1).sessionId, 'session-seeded')
+assertLossless(seededDispatch)
 const sessionStatus = await call('ria_status', { scope: 'sessions', sessionId: 'session-worker' })
 assert.equal(sessionStatus.session.sessionId, 'session-worker')
 assertLossless(sessionStatus)

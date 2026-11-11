@@ -239,7 +239,7 @@ stateDir/memory.md
 ria_status 按需读取，不后台轮询；唯一主动推送是 worker idle 通知（见 9.1）。
 
 - scope=tasks：task 列表。
-- scope=sessions：可用的顶层 Session，排除 Ria 自己、subagent、带 parentSessionId 的会话；字段含 sessionId、title、cwd、running、blank、updatedAt、lastUsedAt。
+- scope=sessions：可用的顶层 Session，排除 Ria 自己与 origin=subagent 的会话；`parentSessionId` 只记录 fork/seed 血缘（这类会话 delegationDepth=0，仍是顶层），不作为子会话判据。字段含 sessionId、title、cwd、running、blank、updatedAt、lastUsedAt，有血缘时含 parentSessionId。
 - scope=recent：近 7 天成功使用过的顶层 worker，最多 5 个，按 lastUsedAt 倒序；字段见第 5 节“近期 worker”。
 - 可选 sessionId 查看一个会话的 running/queue/pendingInput/blank。
 

@@ -1,6 +1,6 @@
 # 系统级「任务转交 · 防误发」提示调研
 
-状态：已实施（DESIGN v0.23）。调研基线为 commit e2cac28；最终采用静态 system prompt section + 设置页开关，不再按 task 动态判断，也不再插入消息前缀。目标是把 super_session_request 在任务派发时逐条插入的防误发文本，改为 DSH 系统级的通用行为约束。
+状态：已实施（DESIGN v0.29）。调研基线为 commit e2cac28；最终采用静态 system prompt section + 设置页开关，不再按 task 动态判断，也不再插入消息前缀。v0.29 把 section 文本收敛为简短英文，无标题，不提 Super Session 或其他会话名。目标是把 super_session_request 在任务派发时逐条插入的防误发文本，改为 DSH 系统级的通用行为约束。
 
 ## 0. 结论
 
@@ -17,9 +17,9 @@
 
 ## 1. 现状与问题
 
-当前实现：
+改造前实现（历史，相关前缀已删除）：
 
-- /home/gkl/Desktop/vibe_proj/dsh-super-session/lib/index.js:29 定义 DISPATCH_GUARD_TEXT。
+- /home/gkl/Desktop/vibe_proj/dsh-super-session/lib/index.js:29 曾定义 DISPATCH_GUARD_TEXT。
 - /home/gkl/Desktop/vibe_proj/dsh-super-session/lib/index.js:678：
   const outboundContent = taskId ? [{ type: 'text', text: DISPATCH_GUARD_TEXT }, ...content] : content
 - /home/gkl/Desktop/vibe_proj/dsh-super-session/lib/index.js:702-704 把 outboundContent 写入 delivery 并调用 sessionController.prompt。
@@ -151,14 +151,11 @@ ctx.systemPrompt.context 可以注册 agent 作用域的动态 context，但渲�
 
 ### 3.3 文本措辞
 
-去掉「这条消息前面有一段提示」的假设，改成对「最新一条用户消息」的判断。实际实现文本：
+去掉「这条消息前面有一段提示」的假设，改成对「最新一条用户消息」的判断。v0.29 的实际实现是一段简短英文，没有标题，不提 Super Session 或其他会话名：
 
-## 任务转交提示
-本会话可能收到由其他会话（Super Session）转交的任务。以下提示是通用的，不代表当前消息一定是转交任务。
-- 如果最新一条用户消息与本会话正在做的事明显不同，或与本会话上下文完全对不上：可能发错了会话，请先向用户确认，不要直接执行。
-- 如果本会话空闲、刚建立，或消息与当前任务相关：按正常任务执行，不要因为这段提示额外确认。
+The latest message may not belong to this session's current work. If it is clearly unrelated to what the session is doing, ask the user to confirm before acting on it; if the session is idle or the message is relevant, proceed normally.
 
-这段文本是静态的，对所有 agent 都存在；因此措辞明确说明「不代表当前消息一定是转交任务」，避免普通会话误判。
+这段文本是静态的，对所有 agent 都存在。它不假设消息一定来自转交，也不点名任何会话；如果最新消息与当前工作明显无关，先向用户确认；会话空闲或消息相关，则正常执行。
 
 ### 3.4 前缀：已删除
 
@@ -252,7 +249,7 @@ ctx.systemPrompt.context 可以注册 agent 作用域的动态 context，但渲�
 ## 6. 风险与限制
 
 - 系统提示是行为约束，不是硬拦截；模型仍可能不遵守。它比消息前缀更权威，但插件无法验证 worker 是否真的先问用户。
-- 静态文本对所有 agent 生效。用户已确认这是可接受的，因为文本明确说明「不代表当前消息一定是转交任务」，对普通会话无害。
+- 静态文本对所有 agent 生效。用户已确认这是可接受的，因为文本不假设消息来自转交，也不点名任何会话，对普通会话无害。
 - 系统提示每步重新组装；文本固定，不会每步抖动。开关切换时会有一次系统提示变化，可能影响 prompt cache。
 - 如果插件重载时旧 section 没有 dispose，同名注册会抛错。实现用 Map + cleanup，并在注册失败时记录 warn。
 - 已存在的旧前缀不能从历史里删除；旧消息带前缀、新消息靠系统提示，这是可接受的过渡状态。

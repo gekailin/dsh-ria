@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DEFAULT_WECHAT_IMAGE_OPTIONS, imagePartFromMessage, isImageMessage, normalizeWechatImageOptions } from '../lib/wechat/image.mjs'
+import { Outbound } from '../lib/wechat/outbound.mjs'
 import { InboundBridge, WechatService, assistantText } from '../lib/wechat/service.mjs'
 
 function fakeCtx() {
@@ -158,6 +160,54 @@ try {
     service.outbound = { async enqueue() { throw new Error('send failed') } }
     assert.equal(await service.sendDispatchNote('发送失败。', { isTask: true }), false)
     assert.ok(logs.some(item => item.level === 'warn' && /could not send dispatch note/.test(item.message) && /send failed/.test(item.message)))
+  }
+
+  {
+    assert.deepEqual(DEFAULT_WECHAT_IMAGE_OPTIONS, { inbound: false, outbound: false })
+    assert.deepEqual(normalizeWechatImageOptions(undefined), { inbound: false, outbound: false })
+    assert.deepEqual(normalizeWechatImageOptions({ inbound: true, outbound: 'yes' }), { inbound: true, outbound: false })
+    assert.equal(isImageMessage({ type: 3 }), true)
+    assert.equal(isImageMessage({ type: '3' }), true)
+    assert.equal(isImageMessage({ type: 1 }), false)
+    await assert.rejects(() => imagePartFromMessage({ type: 3 }), /reserved but not implemented/)
+
+    const outbound = new Outbound({ async send() { return 'id' }, async sendFile() { return 'id' } })
+    await assert.rejects(() => outbound.enqueueImage({ name: 'a.jpg', buffer: Buffer.from('x') }), /reserved but not implemented/)
+    outbound.setPaused(true)
+    await assert.rejects(() => outbound.enqueueImage({ name: 'a.jpg', buffer: Buffer.from('x') }), error => error.code === 'WECHAT_PAUSED')
+  }
+
+  {
+    // Default off: an image is still "unsupported", and text keeps working.
+    const ctx = fakeCtx()
+    const service = makeService(ctx, dir)
+    const sent = []
+    service.session = { client: { sentIds: new Set() } }
+    service.outbound = { async enqueue(text) { sent.push(text); return 'id' } }
+    const bridge = new InboundBridge(service)
+    await bridge.handle({ id: 'img-off-1', to: 'filehelper', type: 3, text: '<img />' })
+    assert.equal(ctx.prompts.length, 0)
+    assert.ok(sent.some(text => /只能接收文本消息/.test(text)))
+    await bridge.handle({ id: 'img-off-text', to: 'filehelper', type: 1, text: 'still text' })
+    assert.equal(ctx.prompts.length, 1)
+    assert.deepEqual(ctx.prompts[0].content, [{ type: 'text', text: 'still text' }])
+  }
+
+  {
+    // Reserved inbound switch: recognition routes to the stub, text is unaffected.
+    const ctx = fakeCtx()
+    const service = makeService(ctx, dir, { wechatImage: { inbound: true } })
+    service.session = { client: { sentIds: new Set() } }
+    const delivered = []
+    service.deliverImageFromWechat = async message => { delivered.push(message) }
+    const bridge = new InboundBridge(service)
+    await bridge.handle({ id: 'img-on-1', to: 'filehelper', type: 3, text: '<img />' })
+    assert.equal(delivered.length, 1)
+    assert.equal(delivered[0].id, 'img-on-1')
+    assert.equal(ctx.prompts.length, 0)
+    await bridge.handle({ id: 'img-on-text', to: 'filehelper', type: 1, text: 'text with images on' })
+    assert.equal(ctx.prompts.length, 1)
+    assert.deepEqual(ctx.prompts[0].content, [{ type: 'text', text: 'text with images on' }])
   }
 
   {

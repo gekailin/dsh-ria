@@ -8,9 +8,9 @@ Super 自己是一个普通的顶层 DSH Session，运行 PTC preset，带管理
 
 ## 当前状态
 
-- Phase 0–17 已实现：单例、PTC 创建、任务、转述、读取、memory、重启恢复（含恢复上限可见性）、侧边栏入口、进程内微信和入口右侧的微信 chip、worker 审批可见性、新会话欢迎消息、系统 prompt 防误发提示与设置页开关、临时 worker 权限调整、微信长回复/复杂 Markdown 自动转 .md 文件，worker 结束 turn 后自动唤醒 Super，微信推送的暂停/恢复，以及暂停状态和手动开关的 UI，带 taskId 派发的 note 硬约束与可见的 turn-tail 派发卡片，以及同步到微信的派发确认文本。
+- Phase 0–18 已实现：单例、PTC 创建、任务、转述、读取、memory、重启恢复（含恢复上限可见性）、侧边栏入口、进程内微信和入口右侧的微信 chip、worker 审批可见性、新会话欢迎消息、系统 prompt 防误发提示与设置页开关、临时 worker 权限调整、微信长回复/复杂 Markdown 自动转 .md 文件，worker 结束 turn 后自动唤醒 Super，微信推送的暂停/恢复，以及暂停状态和手动开关的 UI，带 taskId 派发的 note 硬约束与可见的 turn-tail 派发卡片，以及同步到微信的派发确认文本；微信图片收发只预留接口，默认关闭。
 - 已验证环境：DSH 0.2.2-rc.1，Node 26，真实 Web profile 的隔离副本。
-- 微信入站只接受文本；扫码登录需要在弹层里完成一次，之后 DSH 重启会自动复用凭据。
+- 微信入站目前只投递文本；图片收发只预留了接口，见“图片接口（预留）”。扫码登录需要在弹层里完成一次，之后 DSH 重启会自动复用凭据。
 
 ## 安装
 
@@ -71,7 +71,7 @@ Super Session 入口标题右侧有一个“微信”chip。点开后可以扫�
 - 微信发来的文本原样作为普通用户消息进入 Super，不加前缀，也不直接进 worker。
 - Super 的每条 assistant 文本回复都会同步回微信；暂停推送时除外。
 - 带 note 的派发/转述成功后，note 也会作为一条普通微信文本推送（见下文“派发 note 卡片”），同样受暂停开关约束。
-- 入站只处理文本；图片和文件仍建议直接在 Super Session 界面发送。
+- 入站只投递文本；图片收发接口目前只是预留（默认关闭），图片和文件仍建议直接在 Super Session 界面发送。
 - 出站长回复或复杂 Markdown 时，默认改发完整的 .md 文件；短消息和简单文本保持原样。
 - DSH 重启后如有 creds 会自动重连；待发文本超过 10 条时只补发最后 10 条，并先提示跳过了多少条。
 - chip 只在宽侧边栏显示；折叠侧边栏不插入。
@@ -119,6 +119,22 @@ Super Session 入口标题右侧有一个“微信”chip。点开后可以扫�
 ~~~
 
 也可以直接写 `markdownFile: false` 关闭整套规则。环境变量优先级高于 profile 配置：`DSH_SUPER_SESSION_MD_FILE`、`DSH_SUPER_SESSION_MD_THRESHOLD`、`DSH_SUPER_SESSION_MD_CODE`、`DSH_SUPER_SESSION_MD_TABLE`、`DSH_SUPER_SESSION_MD_HEADINGS`、`DSH_SUPER_SESSION_MD_LINKS`。阈值会被限制在安全范围（80–100000 字符）。
+
+### 图片接口（预留）
+
+微信图片收发目前只是预留接口，没有完整实现。两个开关都默认关闭：
+
+~~~yaml
+- id: super-session
+  config:
+    wechatImage:
+      inbound: false
+      outbound: false
+~~~
+
+- 入站：`InboundBridge` 已能识别 MsgType 3（图片）；`WechatService.deliverImageFromWechat(message)` 和 `lib/wechat/image.mjs` 的 `imagePartFromMessage(message, { client, signal })` 是预留签名，负责解析 `<img>` 元数据、下载原图、转成 DSH 的 `{ type: 'image', mediaType, data }` 内容块。函数体内有 TODO，当前会明确报 “reserved but not implemented”，不会投递半成品。
+- 出站：`Outbound.enqueueImage({ name, buffer, mime, ref })` 是预留签名，TODO 是上传图片并按网页版协议发 Type=6 appmsg；当前调用会 reject。
+- 默认关闭时图片仍按原来的“目前只能接收文本消息”处理；文本收发、文件发送、暂停、去重和 outbox 路径都不受影响。
 
 ## 工具
 
@@ -273,11 +289,11 @@ DSH_HOME/state/super-session/
 npm test
 ~~~
 
-smoke 使用 mock ctx 覆盖 ensure、Workspace 挂载、7 个工具、request、task 派发与 quick relay 都不加前缀、dispatch guard section 安装到 worker 和 Super、GET/POST /settings 与 GET /state 的 settings、status、read、memory、持久化、grant 的 set/list/reset 与 task 关闭恢复，以及欢迎消息的五事件序列和第二次 ensure 不重复；近期 worker 覆盖空列表、task 派发后候选的 title/cwd/lastUsedAt/lastTaskGoal/lastTaskStatus、quick relay 只更新时间、失败请求不更新、scope=sessions 字段、super.json 持久化和 lossless；dispatch-guard 测试覆盖 installAll、agent/created 与 disposed、重复安装、开关关闭时 text 为空、注册失败只 warn 和 shutdown；wechat 测试覆盖 assistant 文本提取、入口事件过滤、微信入站去重/回显过滤、失败标记、reconnect skip 和状态视图；wechat-file 测试覆盖阈值/代码块/表格/标题/链接判定、配置/env 覆盖、文件名、短消息不变、长消息发 .md、失败回退文本，以及上传 multipart 和 appmsg 的字段/签名/去重；approvals 测试覆盖只记录活跃 executor、始终 next()、abort/超时/shutdown 清理和 lossless 输出；grants 测试覆盖过期、startup、task 缺失/关闭、漂移跳过、恢复失败和审计；startup 测试覆盖达到恢复上限后的通知与 blocked 状态、更新/成功派发清零、以及启动异常通知；worker-idle 测试覆盖正常触发、排除 Super、非 working task/running 状态不触发、按 task 节流、开关关闭，以及提示文本要求 read/不假设完成/等用户输入时标 blocked；wechat-pause 测试覆盖手动开关与持久化、非微信消息自动暂停、微信入站自动恢复、host_/schedule 合成消息不触发、manual 优先级、暂停时不出站且丢日志、排队丢弃而在途完成、重启保持，以及恢复后补发 outbox；smoke 还验证 pause/unpause 往返后 pausedAt、resumedAt、pausedBy 和重复读取 status 的字段一致；以及 dispatch-notes 按 session/turn 过滤、错误 session 返回空列表、note 持久化、无 note 的 quick relay 不记录、snapshot 读取失败不影响派发和 concludeTurn；wechat 和 smoke 还覆盖派发 note 的微信镜像：task/quick 格式、暂停时丢弃并记日志、恢复后发送、未登录跳过、发送异常不影响派发与 concludeTurn。
+smoke 使用 mock ctx 覆盖 ensure、Workspace 挂载、7 个工具、request、task 派发与 quick relay 都不加前缀、dispatch guard section 安装到 worker 和 Super、GET/POST /settings 与 GET /state 的 settings、status、read、memory、持久化、grant 的 set/list/reset 与 task 关闭恢复，以及欢迎消息的五事件序列和第二次 ensure 不重复；近期 worker 覆盖空列表、task 派发后候选的 title/cwd/lastUsedAt/lastTaskGoal/lastTaskStatus、quick relay 只更新时间、失败请求不更新、scope=sessions 字段、super.json 持久化和 lossless；dispatch-guard 测试覆盖 installAll、agent/created 与 disposed、重复安装、开关关闭时 text 为空、注册失败只 warn 和 shutdown；wechat 测试覆盖 assistant 文本提取、入口事件过滤、微信入站去重/回显过滤、失败标记、reconnect skip、状态视图，以及图片接口预留：默认关闭不影响文本、开启后只走图片桩、图片内容块转换和出站图片接口均明确报未实现；wechat-file 测试覆盖阈值/代码块/表格/标题/链接判定、配置/env 覆盖、文件名、短消息不变、长消息发 .md、失败回退文本，以及上传 multipart 和 appmsg 的字段/签名/去重；approvals 测试覆盖只记录活跃 executor、始终 next()、abort/超时/shutdown 清理和 lossless 输出；grants 测试覆盖过期、startup、task 缺失/关闭、漂移跳过、恢复失败和审计；startup 测试覆盖达到恢复上限后的通知与 blocked 状态、更新/成功派发清零、以及启动异常通知；worker-idle 测试覆盖正常触发、排除 Super、非 working task/running 状态不触发、按 task 节流、开关关闭，以及提示文本要求 read/不假设完成/等用户输入时标 blocked；wechat-pause 测试覆盖手动开关与持久化、非微信消息自动暂停、微信入站自动恢复、host_/schedule 合成消息不触发、manual 优先级、暂停时不出站且丢日志、排队丢弃而在途完成、重启保持，以及恢复后补发 outbox；smoke 还验证 pause/unpause 往返后 pausedAt、resumedAt、pausedBy 和重复读取 status 的字段一致；以及 dispatch-notes 按 session/turn 过滤、错误 session 返回空列表、note 持久化、无 note 的 quick relay 不记录、snapshot 读取失败不影响派发和 concludeTurn；wechat 和 smoke 还覆盖派发 note 的微信镜像：task/quick 格式、暂停时丢弃并记日志、恢复后发送、未登录跳过、发送异常不影响派发与 concludeTurn。
 
 ## 限制
 
-- 微信协议依赖「文件传输助手」网页版；入站只有文本，出站文件也只发 .md。
+- 微信协议依赖「文件传输助手」网页版；入站只投递文本，出站文件只发 .md；微信图片收发目前只有预留接口和默认关闭的开关，尚未实现。
 - 暂停推送的界面入口只在 chip 弹层里；设置页“Super Session”不重复放同一个开关，避免两个控制点。
 - 暂停不能撤回已经在发送中的消息；只能保证之后排队的消息不发出。
 - 暂停期间的连接保持和真实收发没有用真实微信账号验证，只做了单元测试和 HTTP smoke。

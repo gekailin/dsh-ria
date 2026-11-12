@@ -63,6 +63,19 @@ async function waitForStatus(service, predicate, label) {
   assert.fail(label + ' timed out: ' + JSON.stringify(view.login))
 }
 
+// Client channel catalog: the file-transfer helper is listed last, but the
+// dialog must still open on it. Keep the default pinned by name, not by index.
+{
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const catalog = source.match(/var CHANNELS = \[([\s\S]*?)\n    \];/)
+  assert.ok(catalog, 'client should declare a CHANNELS catalog')
+  const ids = [...catalog[1].matchAll(/\{ id: "([^"]+)"/g)].map(match => match[1])
+  assert.deepEqual(ids, ['wechat-claw', 'qq-bot', 'wechat'], 'WeChat file transfer should be the last tab')
+  assert.match(source, /var DEFAULT_CHANNEL = "wechat"/)
+  assert.match(source, /React\.useState\(DEFAULT_CHANNEL\)/)
+  assert.doesNotMatch(source, /React\.useState\("wechat"\)/, 'default must not be an inline tab literal')
+}
+
 // Pure helpers: account-id normalization, QR rendering, request-id prefixes and
 // the AES-256-GCM payload returned by the QQ bind endpoint.
 {

@@ -13,7 +13,7 @@
 
 - README.md:224/243 的副作用不丢仅适用于已成功入 durable outbox 的条目，不覆盖派发接受到 note 落盘前崩溃/写失败。
 - lib/index.js:2630-2631 声称共享 noteId 防止微信重复，实际 wxweb 每次随机 ClientMsgId；本地卡片 noteId 去重不能代表远端 exactly-once。
-- lib/index.js:4 注释仍称 seven tools，实际安装 10 个。
+- 已修 `a2c2a58`：工具数10、ticket_executor_mismatch描述、split P1、quick relay 历史边界、图片已实现、历史方案版本提示；README/DESIGN 与源码不再承诺微信崩溃 exactly-once。
 - outbox delivered 幂等仅限现存记录：lib/outbox.mjs:129、193、198-205；24h 清理或超过500提前清理后相同 key 可重新入队。
 
 ## 暂不修 / 需要决定
@@ -31,7 +31,16 @@
 
 - 基线、四项已修复后及恢复现场均 npm test：19 suite 全绿。
 - 已补 self 错误更正、相对 import 发布清单、partial dispatch 可见确认、不完整 provider catalog 故障注入。
-- 后续优先补暂停 deferred、积压队列 await 竞态、媒体重连、分片中途失败；避免只断言 mock 调用而漏查用户可见副作用。
+- 已补暂停/离线 deferred 与真实失败、积压队列两个 await 竞态、取消节流、v2 legacy重载、空白attention重载。最近 npm test 21 suite 全绿（exit 0）。媒体重连/图片故障修复继续中；分片进度及远端事务仍未修。
+- 维护建议：用明确completion gates替换固定20ms/10ms等待；审批TTL注入可控时钟；补注册schema契约与图片/文本/文件跨类型串行测试。不要把共享fixture断言等同真实宿主图像解码测试。
+
+## 新增状态机审计结论
+
+- **P1 用户取消被节流吞掉（已修 `e5292c4`）**：lib/worker-idle.mjs:137-153 在读取 turn/end 前节流；同 ticket completed 后30秒内 user-abort 不进入 blocked。现在取消先处理且绕过普通通知节流；测试验证等待用户、无继续派发、重复事件不重复通知。
+- **P2 显式 legacy:false 被覆盖（已修 `54d9a8d`）**：lib/tickets.mjs:153-154、lib/index.js:252-253；v2 working 无 lastRequestId 重载时被改 legacy:true，绕过 attempt_required。保留显式 false，仅缺 attempt 的旧记录补 legacy；补真实 store.save/load。
+- **P2 空白 blockedReason 不兼容 attention（已修 `2f7cd32`）**：lib/tickets.mjs:168-169；空格 reason 与合法 question 加载后 invariant 拒绝。改 trim 判空并回填 question；补创建和真实存储重载。
+- matched legacy recoveryCount>=3 迁移与 unmatched 不一致，但 lib/index.js:3133-3140 的 startup 已有 blockForRecovery 兜底，不计确认故障，不删旧迁移。
+- 协作修复已由另一 worker 提交 `227572e`、`cfb8e12`：新建 worker 归属 workspace 与启动孤儿对账。安装副本未同步、服务未重启，live 仍旧行为；当前 npm test 已扩到21 suite 且全绿。
 
 ## 已确认问题
 
@@ -48,9 +57,9 @@
 
 ### 微信与持久化：待修复 / 边界
 
-1. **P1 暂停耗尽重试** — lib/index.js:2746-2748、2721-2723；lib/wechat/service.mjs:630-637；lib/outbox.mjs:172-181。暂停/离线 sendDispatchNote 返回 false 被视为异常，第 6 次变 failed，约 81 分钟后恢复也不再投递。最小复现：暂停后按 backoff 推进时钟并 pump 六次。建议 deferred 与 failed 分离，恢复主动 pump，补长期暂停恢复故障注入。
+1. **P1 暂停耗尽重试** — lib/index.js:2746-2748、2721-2723；lib/wechat/service.mjs:630-637；lib/outbox.mjs:172-181。暂停/离线 sendDispatchNote 返回 false 被视为异常，第 6 次变 failed，约 81 分钟后恢复也不再投递。最小复现：暂停后按 backoff 推进时钟并 pump 六次。已修 `6bb956e`：durable 暂停/离线 deferred 不计 attempts，真实网络错误计失败；十次暂停 pump、离线及恢复投递故障注入通过。恢复依赖已有30秒tick。
 2. **P1 微信不具崩溃幂等** — lib/index.js:2719-2720、2747；lib/wechat/wxweb.mjs:229、388；lib/index.js:2630-2631。外部发送成功后才记录 delivered，每次随机 ClientMsgId 且未传 noteId；服务端接收后进程退出或响应丢失，再投产生重复。建议稳定发送 ID + 验证服务端去重语义，否则明确 at-least-once。
-3. **P1/P2 flush 与 addOutbox 竞态** — lib/wechat/service.mjs:111-114、701-703。flush 等待 old-0 时追加 41 条使 50 条上限裁掉 old-0，成功后 shift 又删除从未发送的 old-1；内存 fake 已复现。建议按条目身份删除，notice 后清理也按快照身份。
+3. **P1/P2 flush 与 addOutbox 竞态** — lib/wechat/service.mjs:111-114、701-703。flush 等待 old-0 时追加 41 条使 50 条上限裁掉 old-0，成功后 shift 又删除从未发送的 old-1；内存 fake 已复现。已修 `8a0e308`：按原对象身份删除，notice 后按快照身份删除；两个 await gate 实测追加/上限裁剪竞态。
 4. **P2 重连绕过媒体路径** — lib/wechat/service.mjs:607、614、652-674、702；lib/wechat/outbound.mjs:30-33。首次失败存原文，重连直接 enqueue 而非 deliverAssistant，图片仅本地路径文本，长 Markdown 截断。建议统一发送路径并记录媒体进度。
 5. **P2 图片失败不可恢复** — lib/wechat/service.mjs:193-194、678-685。图片语法已从正文剥离，上传异常只 log，纯图片回复无任何可见结果。内存 fake enqueueImage throw 后正常 resolve。建议独立持久重试项或可见文字 fallback，避免重发成功正文。
 6. **P2 分片失败重复前片** — lib/wechat/outbound.mjs:140-147；lib/wechat/service.mjs:614、702。第二片失败后存全文，全量重试重复第一片；fake 序列 A,B(fail),A,B。建议片段进度/稳定 ID，补第二片失败及暂停中途分片测试。

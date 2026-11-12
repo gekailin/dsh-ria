@@ -86,6 +86,8 @@ RiaService
 
 ticket 是 Ria 的管理单位；一个 ticket 只对应一个 executor。完整设计见 `docs/task-model-design.md`。
 
+- ticket 之间的排队 / 依赖机制见 `docs/ticket-queue-design.md`（设计稿，P0 未实现）。
+
 ~~~json
 {
   "ticketId": "ticket_...",

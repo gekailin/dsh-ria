@@ -120,6 +120,59 @@ try {
     assert.equal(service.state.data.outbox.length, 0)
   }
 
+
+  // Capacity trimming during an in-flight send must not delete its new head.
+  {
+    const service = makeService(fakeCtx(), dir)
+    for (let i = 0; i < 10; i += 1) service.state.addOutbox('race-old-' + i)
+    const sent = []
+    let release
+    const gate = new Promise(resolve => { release = resolve })
+    service.outbound = {
+      async enqueue(text) {
+        sent.push(text)
+        if (text === 'race-old-0') await gate
+      },
+    }
+    const flushing = service.flushOutbox()
+    assert.deepEqual(sent, ['race-old-0'])
+    for (let i = 0; i < 41; i += 1) service.state.addOutbox('race-new-' + i)
+    assert.equal(service.state.data.outbox[0].text, 'race-old-1')
+    release()
+    await flushing
+    assert.deepEqual(sent, [
+      ...Array.from({ length: 10 }, (_, i) => 'race-old-' + i),
+      ...Array.from({ length: 41 }, (_, i) => 'race-new-' + i),
+    ])
+    assert.equal(makeService(fakeCtx(), dir).state.data.outbox.length, 0)
+  }
+
+  // The reconnect notice removes only its skipped snapshot, not newer items.
+  {
+    const service = makeService(fakeCtx(), dir)
+    for (let i = 0; i < 12; i += 1) service.state.addOutbox('notice-old-' + i)
+    const sent = []
+    let release
+    const gate = new Promise(resolve => { release = resolve })
+    service.outbound = {
+      async enqueue(text) {
+        sent.push(text)
+        if (sent.length === 1) await gate
+      },
+    }
+    const flushing = service.flushOutbox()
+    assert.match(sent[0], /跳过 2 条/)
+    for (let i = 0; i < 40; i += 1) service.state.addOutbox('notice-new-' + i)
+    assert.equal(service.state.data.outbox[0].text, 'notice-old-2')
+    release()
+    await flushing
+    assert.deepEqual(sent.slice(1), [
+      ...Array.from({ length: 10 }, (_, i) => 'notice-old-' + (i + 2)),
+      ...Array.from({ length: 40 }, (_, i) => 'notice-new-' + i),
+    ])
+    assert.equal(makeService(fakeCtx(), dir).state.data.outbox.length, 0)
+  }
+
   {
     const logs = []
     const sent = []

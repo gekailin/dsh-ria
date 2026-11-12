@@ -74,10 +74,28 @@ export async function createFixture(options = {}) {
     }
   }
 
-  const workspace = {
-    id: 'workspace-ria',
-    path: stateDir,
-    async attachSession() {},
+  const workspaces = new Map()
+  const workspaceCalls = []
+  const workspaceAttachments = []
+  let workspaceSeq = 0
+  const workspaceFor = (path, title) => {
+    for (const existing of workspaces.values()) if (existing.path === path) return existing
+    const id = path === stateDir ? 'workspace-ria' : 'workspace-' + (++workspaceSeq)
+    const entity = {
+      id,
+      path,
+      title,
+      sessionIds: [],
+      async attachSession(sessionId) {
+        if (options.failAttach) throw new Error(options.failAttach)
+        const sid = String(sessionId)
+        if (entity.sessionIds.includes(sid)) return
+        entity.sessionIds.push(sid)
+        workspaceAttachments.push({ key: id + ':' + sid, workspaceId: id, sessionId: sid })
+      },
+    }
+    workspaces.set(id, entity)
+    return entity
   }
 
   const ctx = {
@@ -137,10 +155,10 @@ export async function createFixture(options = {}) {
     workspaceRegistry: {
       get archivedSessionIds() { return options.archivedSessionIds || [] },
       async create(path, title) {
-        if (path !== stateDir) throw new Error('unexpected workspace path: ' + path)
-        if (title !== 'Ria') throw new Error('unexpected workspace title: ' + title)
-        return workspace
+        workspaceCalls.push({ path, title })
+        return workspaceFor(path, title)
       },
+      list() { return [...workspaces.values()] },
     },
     sandboxPolicy: {
       resolve() { return { mode: 'workspace-write' } },
@@ -277,6 +295,9 @@ export async function createFixture(options = {}) {
     creates,
     renames,
     summaries,
+    workspaces,
+    workspaceCalls,
+    workspaceAttachments,
     riaAgent,
     call,
     cleanup,

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Outbound, PauseError } from '../lib/wechat/outbound.mjs'
+import { Outbound, PauseError, chunk } from '../lib/wechat/outbound.mjs'
 import { WechatService } from '../lib/wechat/service.mjs'
 
 const tick = () => new Promise(resolve => setImmediate(resolve))
@@ -35,6 +35,14 @@ function dispatch(service, rpcId, kind = 'user') {
 
 async function readState(dir) {
   return JSON.parse(await readFile(join(dir, 'wechat', 'state.json'), 'utf8'))
+}
+
+// Hard length boundaries must not split an emoji into invalid UTF-16 halves.
+for (const max of [1, 2, 1800]) {
+  const text = 'a'.repeat(max - 1) + '🌊' + 'b'.repeat(max)
+  const parts = chunk(text, max, 100)
+  assert.equal(parts.join(''), text)
+  assert.ok(parts.every(part => part.isWellFormed()))
 }
 
 const dir = await mkdtemp(join(tmpdir(), 'dsh-ria-pause-'))

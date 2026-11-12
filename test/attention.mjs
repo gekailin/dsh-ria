@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createFixture } from './support/ria-fixture.mjs'
-import { normalizeAttention } from '../lib/tickets.mjs'
+import { assertTicketInvariants, normalizeAttention, normalizeTicket } from '../lib/tickets.mjs'
 
 function userMessage(id, text, rpcId = 'rpc-' + id) {
   return {
@@ -185,6 +185,29 @@ function blockedTicket(store, overrides = {}) {
     const overview = await fixture.service.attentionOverview()
     assert.equal(overview.waitingOnUser, 1)
     assert.equal(overview.items[0].ticketId, blocked.ticket.ticketId)
+  } finally {
+    fixture.cleanup()
+  }
+}
+
+// Whitespace-only legacy reasons fall back to the structured question.
+{
+  const fixture = await createFixture()
+  try {
+    const ticket = blockedTicket(fixture.service.store, { blockedReason: ' \t\n ', attention: { question: 'choose?' } })
+    assert.equal(ticket.blockedReason, 'choose?')
+    ticket.blockedReason = '   '
+    fixture.service.store.save()
+    fixture.service.store.load()
+    assert.equal(fixture.service.store.ticket(ticket.ticketId).blockedReason, 'choose?')
+    const loaded = normalizeTicket(JSON.parse(JSON.stringify({ ...ticket, blockedReason: '   ' })))
+    assert.equal(loaded.blockedReason, 'choose?')
+    assertTicketInvariants(loaded)
+    const legacy = normalizeTicket({ taskId: 'old-blocked', status: 'blocked', blockedReason: '   ' })
+    assert.equal(legacy.blockedReason, 'legacy blocked ticket')
+    assertTicketInvariants(legacy)
+    const explicit = normalizeTicket({ ...ticket, blockedReason: '  explicit reason  ' })
+    assert.equal(explicit.blockedReason, '  explicit reason  ')
   } finally {
     fixture.cleanup()
   }

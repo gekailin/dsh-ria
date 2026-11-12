@@ -120,3 +120,7 @@ Host 启动后延迟 1.5 秒：
 环境变量优先级更高：`DSH_RIA_WORKER_IDLE=0` 一键关闭，`DSH_RIA_WORKER_IDLE_THROTTLE_MS` 调整节流窗口（1 秒–10 分钟）。
 
 日志前缀是 `dsh-ria: worker-idle:`。`info` 记录已通知、节流跳过和关闭状态，`debug` 记录“无 working ticket”等其他跳过原因。
+
+## 审批等待
+
+worker 触发 `approval/request` 时，Host 会把它的 active ticket 标成 `blocked`、`waitingOn=approval`，并把一句中文问题写进 `attention`（kind=approval，askedBy=worker，ref=approvalId）。同时排一张 `approval_note` 卡片和一条微信提醒；审批结束、abort 或 15 分钟超时后 ticket 回到 `working`，`waitingOn=worker`，attention 清空。审批队列只在内存中，重启后 startup 会把没有对应 pending 的 blocked+approval ticket 恢复为 working，不会永久卡住。Ria 仍然只能查看（`ria_approval`），不能代批。

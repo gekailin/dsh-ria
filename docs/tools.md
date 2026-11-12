@@ -8,13 +8,13 @@ Ria 通过 run_code SDK 调用 11 个 `ria_*` 工具。工具只在 Ria 的 Agen
 |---|---|
 | ria_resolve | 给一条 intake ticket 定性，每个真实用户消息都要调用一次。kind=answered 以 resolution.kind=answered 关闭问答；kind=work 开正式任务（executor 必填或默认 self，start=true 仅表示本轮自己开始做）；kind=merge 并入 targetTicketId 并在需要时重开；kind=control 对 targetTicketId 执行 cancel/reopen/retry；kind=blocked 挂起并写 blockedReason 与 waitingOn=user/approval/environment，waitingOn=user 时传 attention {kind, question, options?}。split 属 P1，当前返回 not_supported。只有 intake 可 resolve，重复调用返回 intake_already_resolved；不要用 ria_ticket 改 intake。 |
 | ria_ticket | 建/改/关/合并 ticket。字段：ticketId、goal、acceptance、executor（self 或一个顶层 worker sessionId）、status（intake/open/working/blocked/forked/done/failed/cancelled）、blockedReason、waitingOn、attention。当 status=blocked 且 waitingOn=user 时，attention 用 {kind:'question'|'approval'|'decision', question, options?, askedBy?, ref?} 记录“在等用户回答什么”；旧票只有 blockedReason 也能正常读取。一个 ticket 只有一个 executor；状态只能经状态机转移。每次更新都会把 recovery.count 归零。action=merge 把 sourceTicketId 并进 targetTicketId：source 以 done + resolution.kind=merged 收敛，子 ticket 与待投递消息改挂 target，合并不可逆。 |
-| ria_status | 查看 ticket 和可管理的顶层 Session。可带 scope=tickets、scope=sessions、scope=recent 或 scope=history；带 ticketId 可精确查一条（归档的也能查）。scope=tickets 只列热存储（所有非终态 + 最近 24h 或最新 50 条终态）；scope=history 从归档日志按 closedAt 倒序读，默认 50 条、limit 最大 200。scope=sessions 带 title、cwd、updatedAt、lastUsedAt，以及已知的 provider、model、reasoningEffort；scope=recent 返回最近 7 天成功派发过的最多 5 个顶层 worker，按 lastUsedAt 倒序，带 sessionId、title、cwd、lastUsedAt、lastTicketGoal、lastTicketStatus 和同样的模型字段。不会 resume 冷会话。所有 ticket 响应附带 attentionOverview：waitingOnUser 计数与 items（ticketId、goal、question、kind、options、legacy）。所有 ticket 响应也附带 outbox：pending、failed、delivered、total 与 items（未投递条目，含 kind、attempts、due、ticketId、lastError、note）；带 ticketId 查询时只统计该票的条目。 |
+| ria_status | 查看 ticket 和可管理的顶层 Session。可带 scope=tickets、scope=sessions、scope=recent 或 scope=history；带 ticketId 可精确查一条（归档的也能查）。scope=tickets 只列热存储（所有非终态 + 最近 24h 或最新 50 条终态）；scope=history 从归档日志按 closedAt 倒序读，默认 50 条、limit 最大 200。scope=sessions 带 title、cwd、updatedAt、lastUsedAt，以及已知的 provider、model、reasoningEffort；scope=recent 返回最近 7 天成功派发过的最多 10 个顶层 worker，按 lastUsedAt 倒序，带 sessionId、title、cwd、lastUsedAt、lastTicketGoal、lastTicketStatus 和同样的模型字段。不会 resume 冷会话。所有 ticket 响应附带 attentionOverview：waitingOnUser、waitingOnApproval、total 计数与 items（ticketId、goal、question、kind、options、askedBy、ref、legacy）。所有 ticket 响应也附带 outbox：pending、failed、delivered、total 与 items（未投递条目，含 kind、attempts、due、ticketId、lastError、note）；带 ticketId 查询时只统计该票的条目。 |
 | ria_spawn | 新建一个顶层 worker 会话。cwd 必须是存在且可读的绝对目录；agentPreset 可选；title 可选（创建后用 title 服务重命名，失败只返回 titleError，不影响创建）；model、provider、reasoningEffort 可选，用于给新会话选模型。model 在创建前按宿主模型注册表解析，未知或歧义（同名模型属于多个 provider 且未给 provider）会直接返回 model_not_found，不创建会话；创建后 selectModel 失败会返回 ok=false + 已创建的 sessionId，并说明它仍使用默认模型，可用 ria_model 重试。失败码：workspace_missing、preset_not_found、spawn_failed、model_not_found。新会话作为 top-level worker 出现在 ria_status scope=sessions，不会被当成 subagent。 |
 | ria_model | 改一个已存在顶层会话（默认 worker；明确要求时也可改 Ria 自己）的模型。只改模型选择，不发消息、不建 ticket、不唤醒会话。改前按 ria_request 的预检检查会话存在、非 subagent、未归档、cwd 可用，另加 model_not_found。model 必填；模型名在多个 provider 下都存在时必须显式给 provider。成功返回 selected {provider, model, reasoningEffort?} 与已知的 previous；ria_status scope=sessions/recent 会立即反映新模型。 |
 | ria_request | 把 ticket 的消息发给一个或多个 worker。ticketId 与 note 均必填；mode=queue 或 steer；content 支持 text/image/file；attachments 支持最多 20 个图片绝对路径（png/jpeg/webp/gif），与 content 一起作为 text + image parts 投递，交给宿主 attachment 服务统一校验和存储。目标 executor 必须等于 ticket.executor。Host 先把 note 和微信镜像写入副作用 outbox，有活跃 turn 时立即记录到 ria.json，由插件 client 在 Ria 会话当前轮次末尾显示成可见卡片，不进入模型上下文；没有活跃 turn 时留待下一次 turn/start、startup 或 30 秒 tick 补投。同时把 note 作为“📌 任务已派发：<note>”推送到微信；发送失败由 outbox 退避重试，不阻断派发。缺 note、空白或超长会直接报错且不投递。附件预检失败码：attachment_missing、attachment_invalid、model_no_image；预检失败不投递、不写 recentWorkers、不动 ticket。Host 不加消息前缀；防误发提示由 agent system prompt section 提供。 |
 | ria_read | 读某个 Session 的近期消息。live 用 snapshotEvents，冷会话用持久化 events，不 resume。返回值还带 queue：与 ria_queue list 相同的 pending 视图，冷会话为 null。 |
 | ria_queue | 列出或撤回一个顶层 worker 尚未执行的消息。action=list 返回 running 与 queue（id、placement=queued/steering/context、可选 rpcId、preview）；冷会话 queue=null。action=remove 接受 itemId 或 rpcId（rpcId 来自 ria_request 的 requestId；两者都给时 itemId 优先），不可恢复，只删 pending，不停止当前 turn、不改 ticket、不影响 recentWorkers。失败码 queue_item_not_found、queue_remove_failed；预检同 ria_request。 |
-| ria_approval | 列出正在等待审批的 worker（仅限有 active ticket 的 executor）。只读：不批准、不拒绝、不替 UI answerer 作答。 |
+| ria_approval | 列出正在等待审批的 worker（仅限有 active ticket 的 executor）。每项带 approvalId、workerSessionId、ticketId、toolName、callId/reason、createdAt、expiresAt、expiresInMs。捕获审批时会把对应 ticket 标成 blocked+waitingOn=approval、写 kind=approval 的 attention，并排一张 approval_note 卡片与一条微信提醒。只读：不批准、不拒绝、不替 UI answerer 作答。 |
 | ria_grant | 临时调整一个 worker 的 sandbox mode 和/或 approval policy。action=set/list/reset；set 必须带 userConfirmed=true，并记录原值、到期时间、审计，任务结束或 reset 时恢复。 |
 | ria_memory | read/remember/forget。写 stateDir/memory.md，0600，上限 4096 字节。 |
 
@@ -32,7 +32,7 @@ Ria 通过宿主模型注册表（`ctx.get('llm').listProviders()/listModels(pro
 
 ## 等待用户拍板（attention）
 
-`blocked + waitingOn=user` 的 ticket 可以带 `attention`，把“在等什么问题、有哪些选项、什么时候问的”结构化存进 ria.json。`ria_status` 的任意 ticket 响应都会返回 `attentionOverview`：`waitingOnUser` 是票数，`items` 逐条给出问题；只有老 `blockedReason` 的历史票仍然可读，并标 `legacy=true`。ticket 离开 blocked、关闭或被 reopen 时会清空 attention。
+`blocked + waitingOn=user` 的 ticket 可以带 `attention`，把“在等什么问题、有哪些选项、什么时候问的”结构化存进 ria.json。`ria_status` 的任意 ticket 响应都会返回 `attentionOverview`：`waitingOnUser`/`waitingOnApproval` 分别是等用户与等审批的票数，`items` 逐条给出问题；只有老 `blockedReason` 的历史票仍然可读，并标 `legacy=true`。ticket 离开 blocked、关闭或被 reopen 时会清空 attention。
 
 `attention` 和 `ria_approval` 是两件事：`ria_approval` 只读地列出 **worker** 正在等待的审批，审批由 worker 会话和 UI answerer 处理；`attention` 是 **Ria 自己**需要用户拍板的问题（方案选择、是否继续、范围确认等），不会批准或拒绝任何 worker 操作。
 
@@ -41,7 +41,7 @@ Ria 通过宿主模型注册表（`ctx.get('llm').listProviders()/listModels(pro
 用户派任务但没有指定 worker 时，manager prompt 要求 Ria 只从“近期用过”的顶层 worker 里选，不遍历全部会话，也不凭空挑一个没用过的。规则由 Host 的字段支撑，不把完整会话列表塞进 prompt。
 
 - **近期用过的定义**：Host 成功接受过一次 ria_request 的顶层 worker；只创建或更新 ticket 不算。
-- 时间窗口 7 天，最多返回 5 个，按 lastUsedAt 倒序。记录保存在 ria.json 的 recentWorkers，只保留最近 30 天，避免无限增长。
+- 时间窗口 7 天，最多返回 10 个，按 lastUsedAt 倒序。记录保存在 ria.json 的 recentWorkers，只保留最近 30 天，避免无限增长。
 - ria_status 的 scope=recent 返回 sessionId、title、cwd、lastUsedAt、lastTicketId、lastTicketGoal、lastTicketStatus，以及 running/blank；缺失字段直接省略，保证输出是 lossless JSON。
 - scope=sessions 也带 title 和 lastUsedAt，方便用户明确点名某个会话时核对；但默认挑选只要求看 scope=recent。
 - 近期列表为空、没有一个明显合适、或 Ria 自己判断不清时，先问用户选哪个会话，不猜，也不退回“遍历全部会话”。
@@ -50,10 +50,13 @@ Ria 通过宿主模型注册表（`ctx.get('llm').listProviders()/listModels(pro
 ## 审批可见性
 
 - 插件在根上下文监听 `approval/request`，只记录有 open/working ticket 的 executor 的待审批请求：worker session、ticket、工具、callId、原因、时间。
+- 捕获时立刻把对应 ticket 从 open/working 迁到 `blocked` + `waitingOn=approval`，写入 `attention={kind:'approval', question, askedBy:'worker', ref:approvalId}`；`blockedReason` 是同一句中文问题。这样 `ria_status` 的 `attentionOverview.waitingOnApproval` 与 items 能直接看到卡在哪。
+- 同时经 outbox 排两条可见副作用：`approval_note` 卡片（在 Ria 当前 turn 末尾显示，没有活跃 turn 时等下一次 turn/start）和 `wechat_approval_note` 微信提醒（`🔐 等待权限审批：...`）。两条都用 `approvalId` 做 dedupeKey。
 - 记录后立即调用 `next()`，把决定权交回原有 UI answerer；插件从不改变审批结果。
-- `ria_approval` 只返回当前 pending 列表。pending 在审批结束、AbortSignal 取消、15 分钟超时或 DSH 重启后清除。
-- 不做自动唤醒或推送：用户问进度、或 Ria 主动检查时，才用这个工具查。
-- 用户要批准/拒绝时，仍需打开对应 worker 会话操作；Ria 只能转告是哪个 worker、哪个工具、什么原因。
+- 审批结束（允许/拒绝/取消）、AbortSignal abort 或 15 分钟 TTL 到期时，ticket 走 `blocked -> open -> working`，`waitingOn=worker` 并清空 attention。同一 ticket 有多个 pending 审批时，等最后一个结束再恢复。
+- 审批队列只在内存里。startup 会把「blocked+waitingOn=approval 但 ref 已不在 pending」的 ticket 恢复为 working，避免重启后永久卡住。
+- `ria_approval` 返回当前 pending 列表及每项的 `ticketId`、`expiresAt`、`expiresInMs`（剩余毫秒）；pending 在审批结束、abort、15 分钟超时或 DSH 重启后清除。
+- 用户要批准/拒绝时，仍需打开对应 worker 会话操作；Ria 只能转告是哪个 worker、哪个工具、什么原因，不能代替用户决定。
 
 ## 临时 worker 权限（阶段二）
 

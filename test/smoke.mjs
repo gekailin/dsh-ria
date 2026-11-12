@@ -279,7 +279,7 @@ const call = async (name, args) => installed.get(name).execute(args, {
 const recentEmpty = await call('ria_status', { scope: 'recent' })
 assert.deepEqual(recentEmpty.workers, [])
 assert.equal(recentEmpty.windowDays, 7)
-assert.equal(recentEmpty.limit, 5)
+assert.equal(recentEmpty.limit, 10)
 assertLossless(recentEmpty)
 
 const ticket = await call('ria_ticket', { goal: 'fix tests', acceptance: 'green', executor: 'session-worker' })

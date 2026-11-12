@@ -171,7 +171,30 @@ try {
     assert.equal(images.length, 0)
   }
 
-  console.log('wechat-image ok')
+  // 8. Reconnection uses image extraction and waits for actual media completion.
+  {
+    const service = makeService(join(dir, 'backlog-image'))
+    const source = '看图：\n\n![shot](' + join(dir, 'shot.png') + ')'
+    const events = []
+    let entered, release
+    const started = new Promise(resolve => { entered = resolve })
+    const gate = new Promise(resolve => { release = resolve })
+    service.outbound = new Outbound({
+      gapMs: 0, prefix: '',
+      async send(text) { events.push(['text', text]); return 'text-id' },
+      async sendImage(name) { events.push(['image', name]); entered(); await gate; return 'image-id' },
+    })
+    service.state.addOutbox(source)
+    const flushing = service.flushOutbox()
+    await started
+    assert.equal(service.state.data.outbox.length, 1)
+    release()
+    await flushing
+    assert.deepEqual(events, [['text', '看图：'], ['image', 'shot.png']])
+    assert.equal(service.state.data.outbox.length, 0)
+    assert.equal(makeService(join(dir, 'backlog-image')).state.data.outbox.length, 0)
+  }
+
 } finally {
   await rm(dir, { recursive: true, force: true })
 }

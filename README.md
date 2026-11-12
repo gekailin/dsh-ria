@@ -2,7 +2,7 @@
 
 ![阿汐站在玻璃中庭里，手里提着一盏灯](docs/hero.jpg)
 
-**阿汐 · Ria** —— 潮起潮落，事事有着落。
+**阿汐 · Ria** —— 潮来汐去，万事有绪。
 
 Ria 是 DSH Web 的一个常驻管理者插件，全局只有一个阿汐。她不自己写代码：把你说的事整理成 ticket，派给你已有的 worker，或者按需新建一个，然后盯到 done 或 blocked 再回来汇报。worker 那边不用装任何东西，收到的就是一条普通消息。
 
@@ -36,4 +36,4 @@ pnpm add --ignore-scripts file:/绝对路径/dsh-ria
 
 ## License
 
-MIT，见 [LICENSE](LICENSE)。
+Apache License 2.0，见 [LICENSE](LICENSE)。

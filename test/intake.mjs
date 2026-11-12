@@ -86,6 +86,16 @@ function capture(fixture, id, text, turn) {
     assert.equal(work.ticket.executor, 'session-worker')
     assert.equal(work.ticket.goal, '写完报告')
 
+    const mistakenSelf = capture(fixture, 'm-self-id', '让 Ria 自己执行', 8).ticket
+    const selfError = await fixture.call('ria_resolve', { ticketId: mistakenSelf.ticketId, kind: 'work', executor: fixture.riaAgent.id })
+    assert.equal(selfError.ok, false)
+    assert.equal(selfError.code, 'not_top_level')
+    assert.match(selfError.message, /executor: "self"/)
+    assert.equal(fixture.service.store.ticket(mistakenSelf.ticketId).status, 'intake')
+    const correctedSelf = await fixture.call('ria_resolve', { ticketId: mistakenSelf.ticketId, kind: 'work', executor: 'self' })
+    assert.equal(correctedSelf.ok, true)
+    assert.equal(correctedSelf.ticket.executor, 'self')
+
     const self = capture(fixture, 'm-self', '你现在就查一下', 8).ticket
     const started = await fixture.call('ria_resolve', { ticketId: self.ticketId, kind: 'work', start: true })
     assert.equal(started.ok, true)

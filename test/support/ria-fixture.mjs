@@ -35,6 +35,10 @@ export async function createFixture(options = {}) {
   const effects = []
   const listeners = new Map()
   const summaries = []
+  const titles = new Map([
+    ['session-worker', 'Worker One'],
+    ['session-no-image', 'Text Only'],
+  ])
   const routes = []
   let riaId = RIA_ID
   let concluded = 0
@@ -204,8 +208,10 @@ export async function createFixture(options = {}) {
       async list() {
         const withModel = item => {
           const current = models.get(String(item.sessionId))
-          if (!current) return item
-          const values = { ...(item.projections && item.projections.values ? item.projections.values : {}), modelSelection: { next: current } }
+          const values = { ...(item.projections && item.projections.values ? item.projections.values : {}) }
+          const title = titles.get(String(item.sessionId))
+          if (title) values.title = title
+          if (current) values.modelSelection = { next: current }
           return { ...item, projections: { ...(item.projections || {}), values } }
         }
         return {
@@ -226,9 +232,15 @@ export async function createFixture(options = {}) {
       async rename(request) {
         renames.push(request)
         if (options.failRename) throw options.failRename
+        const title = String(request.title)
+          .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u200B\u200E\u200F\u202A-\u202E\u2060-\u2064\u2066-\u206F\uFEFF]/gu, '')
+          .replace(/\s+/gu, ' ')
+          .trim()
+        if (!title) throw Object.assign(new Error('session title must contain visible characters'), { code: 'session/title-invalid' })
+        titles.set(String(request.sessionId), title)
         const summary = summaries.find(item => item.sessionId === request.sessionId)
-        if (summary) summary.projections.values.title = request.title
-        return { title: request.title, seq: 1 }
+        if (summary) summary.projections.values.title = title
+        return { title, seq: 1 }
       },
       async selectModel(request) {
         if (options.failSelectModel) throw options.failSelectModel

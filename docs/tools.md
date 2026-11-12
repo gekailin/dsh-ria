@@ -1,6 +1,6 @@
 # 工具与 worker 管理
 
-Ria 通过 run_code SDK 调用 11 个 `ria_*` 工具。工具只在 Ria 的 Agent ctx 上注册，worker 侧不需要安装任何东西。
+Ria 通过 run_code SDK 调用 12 个 `ria_*` 工具。工具只在 Ria 的 Agent ctx 上注册，worker 侧不需要安装任何东西。
 
 ## 工具
 
@@ -11,6 +11,7 @@ Ria 通过 run_code SDK 调用 11 个 `ria_*` 工具。工具只在 Ria 的 Agen
 | ria_status | 查看 ticket 和可管理的顶层 Session。可带 scope=tickets、scope=sessions、scope=recent 或 scope=history；带 ticketId 可精确查一条（归档的也能查）。scope=tickets 只列热存储（所有非终态 + 最近 24h 或最新 50 条终态）；scope=history 从归档日志按 closedAt 倒序读，默认 50 条、limit 最大 200。scope=sessions 带 title、cwd、updatedAt、lastUsedAt，以及已知的 provider、model、reasoningEffort；scope=recent 返回最近 7 天成功派发过的最多 10 个顶层 worker，按 lastUsedAt 倒序，带 sessionId、title、cwd、lastUsedAt、lastTicketGoal、lastTicketStatus 和同样的模型字段。不会 resume 冷会话。所有 ticket 响应附带 attentionOverview：waitingOnUser、waitingOnApproval、total 计数与 items（ticketId、goal、question、kind、options、askedBy、ref、legacy）。每张票还带 queueState（waiting_dependency/ready/dependency_alert/dispatched/blocked/none）、queueText、queueToken、blockedBy、readyAt、readyNotifiedAt、dependencyAlerts；scope=tickets 另外返回 queue {waiting,ready,alerts,items}，items 只含非终态且有 dependsOn 的票，按 ready→alert→waiting 排序。所有 ticket 响应也附带 outbox：pending、failed、delivered、total 与 items（未投递条目，含 kind、attempts、due、ticketId、lastError、note）；带 ticketId 查询时只统计该票的条目。 |
 | ria_spawn | 新建一个顶层 worker 会话。cwd 必须是存在且可读的绝对目录；agentPreset 可选；title 可选（创建后用 title 服务重命名，失败只返回 titleError，不影响创建）；model、provider、reasoningEffort 可选，用于给新会话选模型。model 在创建前按宿主模型注册表解析，未知或歧义（同名模型属于多个 provider 且未给 provider）会直接返回 model_not_found，不创建会话；创建后 selectModel 失败会返回 ok=false + 已创建的 sessionId，并说明它仍使用默认模型，可用 ria_model 重试。失败码：workspace_missing、preset_not_found、spawn_failed、model_not_found。新会话作为 top-level worker 出现在 ria_status scope=sessions，不会被当成 subagent。 |
 | ria_model | 改一个已存在顶层会话（默认 worker；明确要求时也可改 Ria 自己）的模型。只改模型选择，不发消息、不建 ticket、不唤醒会话。改前按 ria_request 的预检检查会话存在、非 subagent、未归档、cwd 可用，另加 model_not_found。model 必填；模型名在多个 provider 下都存在时必须显式给 provider。成功返回 selected {provider, model, reasoningEffort?} 与已知的 previous；ria_status scope=sessions/recent 会立即反映新模型。 |
+| ria_title | 改一个已存在顶层会话（含 Ria 自己，不含 subagent）的会话名。只改名，不发消息、不建 ticket、不唤醒 worker、不改其它状态。预检同 ria_model（存在、非 subagent、未归档、cwd 可用）；空标题或宿主判定标题非法返回 title_invalid，宿主原始 message 原样附回。成功返回 {ok:true, sessionId, title} 与已知的 previous。 |
 | ria_request | 把 ticket 的消息发给一个或多个 worker。ticketId 与 note 均必填；mode=queue 或 steer；content 支持 text/image/file；attachments 支持最多 20 个图片绝对路径（png/jpeg/webp/gif），与 content 一起作为 text + image parts 投递，交给宿主 attachment 服务统一校验和存储。目标 executor 必须等于 ticket.executor。Host 先把 note 和微信镜像写入副作用 outbox，有活跃 turn 时立即记录到 ria.json，由插件 client 在 Ria 会话当前轮次末尾显示成可见卡片，不进入模型上下文；没有活跃 turn 时留待下一次 turn/start、startup 或 30 秒 tick 补投。同时把 note 作为“📌 任务已派发：<note>”推送到微信；发送失败由 outbox 退避重试，不阻断派发。缺 note、空白或超长会直接报错且不投递。附件预检失败码：attachment_missing、attachment_invalid、model_no_image；预检失败不投递、不写 recentWorkers、不动 ticket。Host 不加消息前缀；防误发提示由 agent system prompt section 提供。mode=queue 时若目标正在跑 turn 或已有非空 pending 队列，直接返回 worker_busy 且不投递；依赖票必须带当前 queueToken，未就绪、token 缺失/过期或已派发都返回 ticket_not_ready。mode=steer 仍可插进运行中的 turn，但只用于同步信息，不得用来下发新任务。 |
 | ria_read | 读某个 Session 的近期消息。live 用 snapshotEvents，冷会话用持久化 events，不 resume。返回值还带 queue：与 ria_queue list 相同的 pending 视图，冷会话为 null。 |
 | ria_queue | 列出或撤回一个顶层 worker 尚未执行的消息。action=list 返回 running 与 queue（id、placement=queued/steering/context、可选 rpcId、preview）；冷会话 queue=null。action=remove 接受 itemId 或 rpcId（rpcId 来自 ria_request 的 requestId；两者都给时 itemId 优先），不可恢复，只删 pending，不停止当前 turn、不改 ticket、不影响 recentWorkers。失败码 queue_item_not_found、queue_remove_failed；预检同 ria_request。 |
@@ -53,6 +54,12 @@ Ria 通过宿主模型注册表（`ctx.get('llm').listProviders()/listModels(pro
 - 新建 worker：`ria_spawn` 的 `model`/`provider`/`reasoningEffort`。模型在创建前解析，未知模型不会留下会话；创建后选模型失败会返回 `ok:false` + `sessionId`，明确说明该会话仍用默认模型。
 - 已有 worker：`ria_model({ sessionId, model, provider?, reasoningEffort? })`。预检与 `ria_request` 一致（存在、top-level、未归档、cwd 可用），允许显式改 Ria 自己，但默认面向 worker。
 - 状态：`ria_status` 的 session/recent 条目从会话的 `modelSelection` 投影读取 `provider`、`model`、`reasoningEffort`（未知时省略），不需要唤醒冷会话。
+
+## 会话改名
+
+`ria_title({ sessionId, title })` 只改会话名，适合用户说“把那个 worker 改名叫……”或给 Ria 自己换名字。它走宿主 `sessionController.rename`，不会发消息、不会创建或修改 ticket、不会唤醒冷会话，也不改模型、权限等其它状态；新建 worker 时仍用 `ria_spawn` 的 `title`。
+
+预检与 `ria_model` 相同：会话必须存在、是顶层会话（subagent 一律拒绝）、未归档、cwd 仍可用，失败码为 `session_missing`、`not_top_level`、`session_archived`、`workspace_missing`，且失败不产生任何副作用。标题只包含空白或不可见字符时返回 `title_invalid`；宿主返回 `session/title-invalid` 时同样映射成 `title_invalid`，并带上宿主的原始 message。成功返回 `{ ok: true, sessionId, title }`；能从会话投影读到旧标题时附 `previous`，读不到就省略。允许改 Ria 自己，因为用户在设置里也能看到并修改自己的会话名。
 
 ## 等待用户拍板（attention）
 

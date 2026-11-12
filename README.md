@@ -57,6 +57,10 @@ DSH 设置页里的 Ria 区块使用独立的白底卡片，不跟随主题背�
 - **任务转交提示**（`dispatchGuard`，默认开）：给所有会话加一段 system prompt，消息明显对不上时先向用户确认。
 - **自动暂停微信推送**（`wechatAutoPause`，默认开）：微信「文件传输助手」之外的通道（含微信 Claw、QQ）发来消息时，自动暂停「文件传输助手」推送。暂停时会往当前活跃的微信侧通道发一条说明（只发这一条，不会放行其他推送），回一条「文件传输助手」消息即恢复；手动暂停/恢复不受影响。关闭后只关闭「文件传输助手」的自动暂停，Claw/QQ 仍按“最后消息通道”规则切换。派发 note、审批提醒也发给最近活跃的微信侧通道，两个都不可用时留在 outbox 重试。
 
+## 工具
+
+Ria 通过 run_code SDK 调用 12 个 `ria_*` 工具：`ria_resolve`、`ria_ticket`、`ria_status`、`ria_spawn`、`ria_model`、`ria_title`、`ria_request`、`ria_read`、`ria_queue`、`ria_memory`、`ria_approval`、`ria_grant`。其中 `ria_title` 只改会话名，不发消息、不建 ticket、不唤醒 worker，也不改其它状态；完整参数和失败码见 [docs/tools.md](docs/tools.md)。
+
 ## 安装
 
 在仓库目录执行：

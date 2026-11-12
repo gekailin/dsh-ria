@@ -16,9 +16,9 @@ DSH_HOME/state/ria
 
 DSH 的正常会话界面要求 Session 属于一个 Workspace。插件会为该目录创建一个标题为 Ria 的专用 Workspace，并把 Ria 挂进去。因此工作区列表里会多一个名为 Ria 的条目，这是输入框可用的必要条件，不是可选的 UI 装饰。
 
-Ria 运行 PTC 模式：模型直接看到 run_code 和生成的 SDK，11 个 ria_* 工具通过 SDK 调用。创建时固定 agentPreset=ptc；如果 ptc preset/runtime 不可用，会明确报错，不会退回 standard。
+Ria 运行 PTC 模式：模型直接看到 run_code 和生成的 SDK，12 个 ria_* 工具通过 SDK 调用。创建时固定 agentPreset=ptc；如果 ptc preset/runtime 不可用，会明确报错，不会退回 standard。
 
-Ria 自己是一个普通的顶层 DSH Session，运行 PTC preset，带管理者 prompt 和 11 个 ria_* 工具。worker 侧不需要安装任何东西，收到的就是普通用户消息；防误发提示由 agent 作用域的 system prompt section 提供，不修改消息内容。
+Ria 自己是一个普通的顶层 DSH Session，运行 PTC preset，带管理者 prompt 和 12 个 ria_* 工具。worker 侧不需要安装任何东西，收到的就是普通用户消息；防误发提示由 agent 作用域的 system prompt section 提供，不修改消息内容。
 
 ## 欢迎提示
 

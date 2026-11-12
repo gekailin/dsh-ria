@@ -38,6 +38,8 @@ export async function createFixture(options = {}) {
   let riaId = RIA_ID
   let concluded = 0
   let promptFailure = undefined
+  const queues = new Map(Object.entries(options.queues || {}).map(([id, queue]) => [String(id), Array.isArray(queue) ? queue.map(item => ({ ...item })) : null]))
+  const updateQueueCalls = []
   const models = new Map()
   models.set(riaId, { provider: 'provider-ok', model: 'model-vision' })
   models.set('session-worker', { provider: 'provider-ok', model: 'model-vision' })
@@ -240,7 +242,28 @@ export async function createFixture(options = {}) {
         if (summary) summary.projections.values.modelSelection = { next: selected }
         return { selected }
       },
-      async state() { return { cursor: 1, active: false, running: false, queue: 0, pendingInput: [] } },
+      async state(request) {
+        const id = String(request && request.sessionId)
+        if (!queues.has(id)) return { cursor: 1, active: false, running: false, queue: null, pendingInput: [] }
+        return {
+          cursor: 1,
+          active: true,
+          running: options.running === undefined ? true : Boolean(options.running),
+          queue: queues.get(id),
+          pendingInput: [],
+        }
+      },
+      async updateQueue(request) {
+        updateQueueCalls.push(request)
+        const failure = typeof options.failUpdateQueue === 'function' ? options.failUpdateQueue(request) : options.failUpdateQueue
+        if (failure) throw failure
+        const queue = queues.get(String(request.sessionId))
+        if (!Array.isArray(queue)) throw Object.assign(new Error('session has no live queue'), { code: 'session/queue-item-not-found' })
+        const index = queue.findIndex(item => String(item.id) === String(request.itemId))
+        if (index < 0) throw Object.assign(new Error('queue item not found'), { code: 'session/queue-item-not-found' })
+        const removed = queue.splice(index, 1)[0]
+        return { accepted: true, removed }
+      },
       async events() { return { records: [], hasMore: false, cursor: 0 } },
       async projections(request) {
         const id = request && request.sessionId ? String(request.sessionId) : ''
@@ -301,6 +324,8 @@ export async function createFixture(options = {}) {
     riaAgent,
     call,
     cleanup,
+    queues,
+    updateQueueCalls,
     setPromptFailure(error) { promptFailure = error },
     get concluded() { return concluded },
     resetConcluded() { concluded = 0 },

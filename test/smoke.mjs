@@ -324,7 +324,7 @@ assert.equal(storedNote.isTicket, true)
 assert.equal(storedNote.ticketId, ticket.ticket.ticketId)
 assert.equal(typeof storedNote.at, 'number')
 assertLossless(notesAtTurn.body)
-assert.deepEqual(wechatNotes, [{ note: dispatchNote, options: { isTask: true } }])
+assert.deepEqual(wechatNotes, [{ note: dispatchNote, options: { isTask: true, durable: true } }])
 const notesWrongSession = await request('GET', '/plugins/dsh-ria/api/dispatch-notes?sessionId=session-worker&turn=' + riaTurn)
 assert.deepEqual(notesWrongSession.body, { notes: [] })
 const notesAll = await request('GET', '/plugins/dsh-ria/api/dispatch-notes?sessionId=' + encodeURIComponent(riaId))
@@ -360,7 +360,7 @@ assert.equal(notesAfterSnapshotFailure.body.notes.length, notesBeforeSnapshotFai
 const recordedAnyway = notesAfterSnapshotFailure.body.notes.find(item => item.note === '展示失败也要继续派发。')
 assert.equal(recordedAnyway.turn, riaTurn)
 assert.equal(recordedAnyway.ticketId, ticket.ticket.ticketId)
-assert.deepEqual(wechatNotes[1], { note: '展示失败也要继续派发。', options: { isTask: true } })
+assert.deepEqual(wechatNotes[1], { note: '展示失败也要继续派发。', options: { isTask: true, durable: true } })
 assertLossless(snapshotFailure)
 const originalSendDispatchNote = service.wechat.sendDispatchNote
 service.wechat.sendDispatchNote = async () => { throw new Error('wechat unavailable') }
@@ -376,7 +376,7 @@ assert.equal(pendingWechatNote.lastError, 'wechat unavailable')
 service.wechat.sendDispatchNote = originalSendDispatchNote
 pendingWechatNote.due = 0
 await service.pumpOutbox('smoke retry')
-assert.deepEqual(wechatNotes[2], { note: '微信发送失败也要继续派发。', options: { isTask: true } })
+assert.deepEqual(wechatNotes[2], { note: '微信发送失败也要继续派发。', options: { isTask: true, durable: true } })
 assert.equal(service.outbox.entry(pendingWechatNote.id).status, 'delivered')
 assertLossless(wechatFailure)
 concluded = 0

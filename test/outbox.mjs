@@ -248,4 +248,34 @@ import { createFixture } from './support/ria-fixture.mjs'
   }
 }
 
+// Real service pause/offline conditions defer without spending network retries.
+{
+  const fixture = await createFixture()
+  const service = fixture.service
+  try {
+    const queued = service.outbox.enqueue({ kind: 'wechat_dispatch_note', dedupeKey: 'long-pause', payload: { note: 'after resume' } }).entry
+    service.wechat.state.data.paused = true
+    service.wechat.outbound = { enqueue: async () => { throw new Error('must not send while paused') } }
+    for (let tick = 0; tick < 10; tick += 1) await service.pumpOutbox('paused-tick')
+    assert.equal(queued.status, 'pending')
+    assert.equal(queued.attempts, 0)
+    service.wechat.state.data.paused = false
+    service.wechat.outbound = undefined
+    await service.pumpOutbox('offline-tick')
+    assert.equal(queued.attempts, 0)
+    const sent = []
+    service.wechat.outbound = { enqueue: async text => { sent.push(text) } }
+    await service.pumpOutbox('connected-tick')
+    assert.equal(queued.status, 'delivered')
+    assert.equal(sent.length, 1)
+    const failed = service.outbox.enqueue({ kind: 'wechat_dispatch_note', dedupeKey: 'real-failure', payload: { note: 'fail' } }).entry
+    service.wechat.outbound = { enqueue: async () => { throw new Error('network down') } }
+    await service.pumpOutbox('network-error')
+    assert.equal(failed.attempts, 1)
+    assert.equal(failed.lastError, 'network down')
+  } finally {
+    fixture.cleanup()
+  }
+}
+
 console.log('outbox ok')

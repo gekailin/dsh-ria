@@ -526,6 +526,56 @@ assert.equal(missingDispatch.results[0].code, 'session_missing')
 assert.match(missingDispatch.results[0].message, /session-nope/)
 assert.equal(prompts.length, preflightPromptsBefore)
 
+// A blocked ticket is parked. Dispatching it must not deliver, touch the
+// recent-worker table, or change the ticket; the state machine has no
+// blocked -> working edge, so a blind dispatch would send and then fail.
+const blockedPromptsBefore = prompts.length
+const blockedReasons = { user: '等待用户选择方向', approval: '等待审批', environment: '等待 GPU 空闲' }
+let blockedDispatch
+for (const waitingOn of ['user', 'approval', 'environment']) {
+  const blockedTicket = await call('ria_ticket', {
+    goal: 'blocked ' + waitingOn,
+    executor: 'session-worker-2',
+    status: 'blocked',
+    blockedReason: blockedReasons[waitingOn],
+    waitingOn,
+  })
+  assert.equal(blockedTicket.ticket.status, 'blocked')
+  blockedDispatch = await call('ria_request', {
+    targetSessionIds: ['session-worker-2'],
+    message: 'should not arrive',
+    ticketId: blockedTicket.ticket.ticketId,
+    note: 'blocked 票不会派发。',
+  })
+  assert.equal(blockedDispatch.code, 'ticket_blocked')
+  assert.equal(blockedDispatch.results[0].ok, false)
+  assert.equal(blockedDispatch.results[0].code, 'ticket_blocked')
+  assert.equal(blockedDispatch.results[0].ticketId, blockedTicket.ticket.ticketId)
+  assert.equal(blockedDispatch.results[0].waitingOn, waitingOn)
+  assert.match(blockedDispatch.results[0].message, new RegExp('waitingOn=' + waitingOn))
+  assert.match(blockedDispatch.results[0].message, new RegExp(blockedReasons[waitingOn]))
+  assert.match(blockedDispatch.results[0].message, /ria_ticket/)
+  assert.equal(prompts.length, blockedPromptsBefore)
+  const blockedStatus = await call('ria_status', { scope: 'tickets' })
+  const blockedRow = blockedStatus.tickets.find(item => item.ticketId === blockedTicket.ticket.ticketId)
+  assert.equal(blockedRow.status, 'blocked')
+  assert.equal(blockedRow.waitingOn, waitingOn)
+  assertLossless(blockedDispatch)
+}
+// Every target is reported as blocked when the ticket itself is parked.
+const blockedMulti = await call('ria_request', {
+  targetSessionIds: ['session-worker-2', 'session-child'],
+  message: 'still should not arrive',
+  ticketId: blockedDispatch.ticketId,
+  note: 'blocked 票多目标也不会派发。',
+})
+assert.deepEqual(blockedMulti.results.map(item => item.code), ['ticket_blocked', 'ticket_blocked'])
+assert.equal(prompts.length, blockedPromptsBefore)
+assert.equal(concluded, 0)
+const recentAfterBlocked = await call('ria_status', { scope: 'recent' })
+assert.equal(recentAfterBlocked.workers.some(item => item.sessionId === 'session-worker-2'), false)
+assertLossless(blockedMulti)
+
 const mixedPromptsBefore = prompts.length
 const mixedTicket = await call('ria_ticket', { goal: 'mixed targets', executor: 'session-worker' })
 const mixed = await call('ria_request', {

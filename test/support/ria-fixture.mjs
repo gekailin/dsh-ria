@@ -35,6 +35,7 @@ export async function createFixture(options = {}) {
   const effects = []
   const listeners = new Map()
   const summaries = []
+  const routes = []
   let riaId = RIA_ID
   let concluded = 0
   let promptFailure = undefined
@@ -153,7 +154,7 @@ export async function createFixture(options = {}) {
       }
       return undefined
     },
-    webServer: { register() { return () => {} } },
+    webServer: { register(route) { routes.push(route); return () => {} } },
     workspaceRegistry: {
       get archivedSessionIds() { return options.archivedSessionIds || [] },
       async create(path, title) {
@@ -321,6 +322,7 @@ export async function createFixture(options = {}) {
     workspaces,
     workspaceCalls,
     workspaceAttachments,
+    routes,
     riaAgent,
     call,
     cleanup,

@@ -769,13 +769,13 @@ Phase 27：ticket 排队与依赖 P0。schema v3（dependsOn/readyAt/readyNotifi
 文件：
 
 - lib/tickets.mjs：ticket 归一化、状态机与 22 条不变量、attention、依赖校验/评估/就绪纯函数、v1→v3 迁移。
-- lib/index.js：Host、RiaStore（含 recentWorkers、dispatchNotes）、11 个工具（含 ria_queue）、manager prompt、启动恢复、HTTP API（含 settings、dispatch-notes）、模型解析与 selectModel 接线、approval observer 接线、grant 接线、微信服务接线、DispatchGuard 接线。
+- lib/index.js：Host、RiaStore（含 recentWorkers、dispatchNotes）、11 个工具（含 ria_queue）、manager prompt、启动恢复、HTTP API（含 settings、dispatch-notes、只读 board）、模型解析与 selectModel 接线、approval observer 接线、grant 接线、微信服务接线、DispatchGuard 接线。
 - lib/dispatch-guard.mjs：agent 作用域静态 system prompt section 的安装、agent/created 与 disposed 监听、开关求值、dispose。
 - lib/approvals.mjs：approval/request 只读观察器、pending 列表、TTL/abort/shutdown 清理。
 - lib/worker-idle.mjs：agent/status 只读监听、working ticket executor 过滤、Ria 排除、按 worker+task 节流、配置/环境变量归一化。
 - lib/outbox.mjs：副作用队列、原子写、幂等 key、退避重试、delivered 清理、失败保留、summary、按谓词作废（依赖退回等待时删除 queue wake）。
 - lib/grants.mjs：临时权限 set/list/reset、原值记录、task close/expiry/startup 恢复、审计、失败重试。
-- lib/client.js：侧边栏入口、瞬时 launcher、入口右侧微信 chip 和登录弹层（含推送状态卡、暂停/恢复按钮、自动暂停轻提示）、设置页 Ria section、conversation.chat.turnTail 派发 note 卡片、conversation.input.dock 的 blank 欢迎卡片。
+- lib/client.js：侧边栏入口、瞬时 launcher、入口右侧微信 chip 和登录弹层（含推送状态卡、暂停/恢复按钮、自动暂停轻提示）、设置页 Ria section、conversation.chat.turnTail 派发 note 卡片、conversation.input.dock 的 blank 欢迎卡片、侧栏 Ria 入口右侧（看板→设置→连接）的任务看板图标与全屏只读看板。
 - lib/wechat/wxweb.mjs：文件传输助手协议、扫码登录、文本发送、uploadMedia 单块 multipart 上传、.md 文件 appmsg 发送、图片 sendImage（mediatype=pic、MediaType=3、webwxsendmsgimg Type=3），以及 requestBuffer/downloadImage 原图下载（webwxgetmsgimg，回落文件域名与 webwxgetmedia）。
 - lib/wechat/markdown.mjs：长度/代码块/表格/标题/链接判定、配置归一化、文件名。
 - lib/wechat/image.mjs：wechatImage.inbound/outbound 归一化（默认都 true）、MsgType 3 识别、<img> 元数据/原文字解析、入站原图校验与 stateDir/wechat-inbound 落盘、30 天/500 个清理、失败文本，以及 imageMediaType 文件头识别。
@@ -787,6 +787,7 @@ Phase 27：ticket 排队与依赖 P0。schema v3（dependsOn/readyAt/readyNotifi
 - test/queue.mjs：ria_queue 的三种 placement 列表、ria_read.queue、itemId/rpcId 撤回与 itemId 优先、找不到/解析失败、session_missing/not_top_level/session_archived、冷会话 queue=null、updateQueue 错误映射。
 - test/ticket-queue.mjs：依赖创建/等待不可派、ready 只唤醒一次与 queueToken、缺 token/过期 token、worker_busy（queue 拒绝、steer 放行、空闲放行）、依赖输入校验（自指/重复/缺失/环/上限且不写入）、failed/cancelled 告警与 blocked 不告警、级联取消 deferred、merge 边转移、ria_status queue 输出、ria_resolve dependsOn。
 - test/ticket-queue-restart.mjs：v2→v3 迁移与备份、startup 重算、恢复单位排除 waiting 票、排队摘要合并、未派发 ready 票补发 boot wake。
+- test/board.mjs：GET /board 投影（counts/lanes/queue/dependsOn、self 归 Ria、缺失 worker 进未分配、workspaceRegistry 失败降级、归档标记）与路由 JSON 响应。
 - test/smoke.mjs：Host 流程 smoke；近期 worker 记录、scope=recent/sessions 字段、空窗口、失败不更新、prompt 规则与 lossless 断言；dispatch-notes 按 session/turn 过滤、错误 session 空列表、note 持久化、snapshot 读取失败仍派发并记录 note；派发 note 的微信镜像调用、失败隔离与 outbox 重试。
 - test/attention.mjs：attention 设置/读取/清空、旧 blockedReason 票、ria_status 输出。
 - test/outbox.mjs：outbox 单元与服务集成测试（幂等、退避、失败上限、清理、坏文件、无 turn 排队、补投）。

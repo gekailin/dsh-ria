@@ -119,7 +119,10 @@ export async function createFixture(options = {}) {
       if (name === 'llm') {
         return {
           listProviders() { return [{ id: 'provider-ok' }, { id: 'provider-text' }] },
-          async listModels(provider) { return MODEL_CATALOG.filter(item => item.provider === provider).map(item => ({ ...item, id: item.model })) },
+          async listModels(provider) {
+            if (options.failListModelsProvider === provider) throw new Error('provider catalog unavailable')
+            return MODEL_CATALOG.filter(item => item.provider === provider).map(item => ({ ...item, id: item.model }))
+          },
           async resolveModelInfo(provider, model) {
             return { provider, model, inputModalities: provider === 'provider-text' ? ['text'] : ['text', 'image'] }
           },

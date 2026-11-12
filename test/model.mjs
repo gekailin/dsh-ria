@@ -93,4 +93,22 @@ try {
   selectFailure.cleanup()
 }
 
+// A partial catalog must not turn an ambiguous id into a guessed route.
+const partialCatalog = await createFixture({ failListModelsProvider: 'provider-text' })
+try {
+  const changed = await partialCatalog.call('ria_model', { sessionId: 'session-worker', model: 'model-shared' })
+  assert.equal(changed.ok, false)
+  assert.equal(changed.code, 'model_not_found')
+  assert.match(changed.message, /唯一性.*provider/)
+  const beforeSpawn = partialCatalog.creates.length
+  const spawned = await partialCatalog.call('ria_spawn', { cwd: partialCatalog.stateDir, model: 'model-shared' })
+  assert.equal(spawned.code, 'model_not_found')
+  assert.equal(partialCatalog.creates.length, beforeSpawn)
+  const explicit = await partialCatalog.call('ria_model', { sessionId: 'session-worker', model: 'model-shared', provider: 'provider-ok' })
+  assert.equal(explicit.ok, true)
+  assert.equal(explicit.selected.provider, 'provider-ok')
+} finally {
+  partialCatalog.cleanup()
+}
+
 console.log('model ok')

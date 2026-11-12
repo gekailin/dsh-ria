@@ -327,7 +327,7 @@ try {
     const saved = JSON.parse(readFileSync(file, 'utf8'))
     assert.equal(saved.recentWorkers['session-old'].lastTicketId, 'task_old')
     assert.equal(saved.recentWorkers['session-old'].lastTaskId, undefined)
-    assert.equal(saved.schemaVersion, 2)
+    assert.equal(saved.schemaVersion, 3)
     assert.equal(readFileSync(join(dir, 'ria.json.v1.bak')).equals(before), true)
   } finally {
     rmSync(dir, { recursive: true, force: true })

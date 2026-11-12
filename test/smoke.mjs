@@ -18,6 +18,8 @@ const installed = new Map()
 const prompts = []
 let created = false
 let riaId = 'session-ria'
+let workerRunning = false
+let workerQueue = []
 
 const workerEvents = []
 const guardSections = []
@@ -169,7 +171,9 @@ const ctx = {
       if (failPrompts.has(String(request.sessionId))) throw new Error('prompt failed')
       return { accepted: true }
     },
-    async state() { return { cursor: 1, active: false, running: true, queue: 0, pendingInput: [] } },
+    async state() {
+      return { cursor: 1, active: workerRunning || workerQueue.length > 0, running: workerRunning, queue: workerQueue, pendingInput: [] }
+    },
     async events(request) {
       if (request.address && request.address.sessionId === 'session-seeded') {
         return {

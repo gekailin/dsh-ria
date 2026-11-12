@@ -72,6 +72,10 @@ try {
   assert.equal(partial.results[1].code, 'ticket_executor_mismatch')
   assert.equal(fixture.prompts.length, before + 1)
   assert.equal(fixture.concluded, 0)
+  const partialNote = fixture.service.outbox.entries.find(entry => entry.kind === 'dispatch_note' && entry.payload.ticketId === probe.ticket.ticketId)
+  assert.ok(partialNote, 'accepted partial dispatch must retain a user-visible confirmation')
+  assert.match(partialNote.payload.note, /Worker One/)
+  assert.match(partialNote.payload.note, /未投递的目标：session-no-image/)
   assert.deepEqual(partial.results[0].requestId, fixture.prompts.at(-1).requestId)
 
   fixture.resetConcluded()

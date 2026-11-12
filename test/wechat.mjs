@@ -216,13 +216,13 @@ try {
   }
 
   {
-    assert.deepEqual(DEFAULT_WECHAT_IMAGE_OPTIONS, { inbound: false, outbound: true })
-    assert.deepEqual(normalizeWechatImageOptions(undefined), { inbound: false, outbound: true })
-    assert.deepEqual(normalizeWechatImageOptions({ inbound: true, outbound: 'yes' }), { inbound: true, outbound: true })
+    assert.deepEqual(DEFAULT_WECHAT_IMAGE_OPTIONS, { inbound: true, outbound: true })
+    assert.deepEqual(normalizeWechatImageOptions(undefined), { inbound: true, outbound: true })
+    assert.deepEqual(normalizeWechatImageOptions({ inbound: false, outbound: 'yes' }), { inbound: false, outbound: true })
     assert.equal(isImageMessage({ type: 3 }), true)
     assert.equal(isImageMessage({ type: '3' }), true)
     assert.equal(isImageMessage({ type: 1 }), false)
-    await assert.rejects(() => imagePartFromMessage({ type: 3 }), /reserved but not implemented/)
+    await assert.rejects(() => imagePartFromMessage({ type: 3 }), error => error.code === 'image_no_state')
 
     const sentTexts = []
     const withPrefix = new Outbound({ async send(text) { sentTexts.push(text); return 'id' } })
@@ -245,9 +245,29 @@ try {
   }
 
   {
-    // Default off: an image is still "unsupported", and text keeps working.
+    // Default on: an image routes to the image path, not the unsupported notice, and text is unaffected.
     const ctx = fakeCtx()
     const service = makeService(ctx, dir)
+    const sent = []
+    const delivered = []
+    service.session = { client: { sentIds: new Set() } }
+    service.outbound = { async enqueue(text) { sent.push(text); return 'id' } }
+    service.deliverImageFromWechat = async message => { delivered.push(message) }
+    const bridge = new InboundBridge(service)
+    await bridge.handle({ id: 'img-on-1', to: 'filehelper', type: 3, text: '<img />' })
+    assert.equal(delivered.length, 1)
+    assert.equal(delivered[0].id, 'img-on-1')
+    assert.equal(ctx.prompts.length, 0)
+    assert.equal(sent.some(text => /只能接收文本消息/.test(text)), false)
+    await bridge.handle({ id: 'img-on-text', to: 'filehelper', type: 1, text: 'still text' })
+    assert.equal(ctx.prompts.length, 1)
+    assert.deepEqual(ctx.prompts[0].content, [{ type: 'text', text: 'still text' }])
+  }
+
+  {
+    // Explicit off: an image is "unsupported", and text keeps working.
+    const ctx = fakeCtx()
+    const service = makeService(ctx, dir, { wechatImage: { inbound: false } })
     const sent = []
     service.session = { client: { sentIds: new Set() } }
     service.outbound = { async enqueue(text) { sent.push(text); return 'id' } }
@@ -255,24 +275,21 @@ try {
     await bridge.handle({ id: 'img-off-1', to: 'filehelper', type: 3, text: '<img />' })
     assert.equal(ctx.prompts.length, 0)
     assert.ok(sent.some(text => /只能接收文本消息/.test(text)))
-    await bridge.handle({ id: 'img-off-text', to: 'filehelper', type: 1, text: 'still text' })
-    assert.equal(ctx.prompts.length, 1)
-    assert.deepEqual(ctx.prompts[0].content, [{ type: 'text', text: 'still text' }])
   }
 
   {
-    // Reserved inbound switch: recognition routes to the stub, text is unaffected.
+    // Explicit inbound:true: recognition routes to the image path, text is unaffected.
     const ctx = fakeCtx()
     const service = makeService(ctx, dir, { wechatImage: { inbound: true } })
     service.session = { client: { sentIds: new Set() } }
     const delivered = []
     service.deliverImageFromWechat = async message => { delivered.push(message) }
     const bridge = new InboundBridge(service)
-    await bridge.handle({ id: 'img-on-1', to: 'filehelper', type: 3, text: '<img />' })
+    await bridge.handle({ id: 'img-explicit-1', to: 'filehelper', type: 3, text: '<img />' })
     assert.equal(delivered.length, 1)
-    assert.equal(delivered[0].id, 'img-on-1')
+    assert.equal(delivered[0].id, 'img-explicit-1')
     assert.equal(ctx.prompts.length, 0)
-    await bridge.handle({ id: 'img-on-text', to: 'filehelper', type: 1, text: 'text with images on' })
+    await bridge.handle({ id: 'img-explicit-text', to: 'filehelper', type: 1, text: 'text with images on' })
     assert.equal(ctx.prompts.length, 1)
     assert.deepEqual(ctx.prompts[0].content, [{ type: 'text', text: 'text with images on' }])
   }

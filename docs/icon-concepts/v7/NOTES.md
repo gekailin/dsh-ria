@@ -68,8 +68,18 @@ Q   = skimage.measure.approximate_polygon(c, tolerance)
 
 结论：**24px 用 standard，16px 用 minimal，48px 以上用 faithful**。如果只允许一个文件，选 standard，并把 16px 视为可接受的降级。
 
+## 侧栏 18px 实测（2026-11-12）
+
+`RiaIcon` 已改用 faithful。`riaicon-sidebar-check.png` 是无头 Chrome 的 16/18/24/48px × 浅色 `#ffffff` / 深色 `#1e1e1e` 对照（2× 截图），并带 18px 侧栏模拟和与旧图标的新旧对照。
+
+- 16–18px：faithful 明显退化，三处飞白和回浪尾缺口糊成灰边，只剩中央卷口，读不成完整的浪；18px 侧栏里像一个灰色小卷，与上面 16px 的结论一致。
+- 24px：外轮廓勉强成立，笔触细节仍损失。
+- 48px：笔触和缺口完整，是 faithful 的舒适区。
+
+按要求先上 faithful。如果侧栏 18px 的可读性优先，建议 18px 换 `wave-standard.svg`（16px 则用 `wave-minimal.svg`），24px 以上保留 faithful；`RiaIcon` 仍是一个组件，不按尺寸分叉，替换时只改 path。
+
 ## 没有动的东西
 
-- 没有改 `lib/client.js`，没有重启 dsh web，没有 push。
-- 没有动 `docs/icon-concepts/v3`–`v6` 的任何文件。
+- 2026-11-12：`lib/client.js` 的 `RiaIcon` 已改为 faithful，新增 `riaicon-sidebar-check.png`；没有重启 dsh web，没有同步安装副本，没有 push。
+- 本次只改 `RiaIcon` 的 path，侧栏折叠/展开仍共用同一个组件。
 - 没有新增水滴；v6 的水滴 circle 在 faithful 里已删，standard / minimal 只有 A3e-1 原有的小点。

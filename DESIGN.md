@@ -15,6 +15,17 @@ Ria 是全局唯一的普通顶层 DSH Session。
 - 默认不替用户干活：把需求整理成 ticket，转交给 worker；用户明确要求时，也可以自己完成具体任务，不限于总结。
 - 用户可以像普通会话一样打开、对话、看历史。
 
+### 名字
+
+<img src="docs/ria-avatar.png" width="120" align="right" alt="阿汐的头像">
+
+**阿汐**，英文 **Ria**（西班牙语 *ría*，潮汐河口）。潮水有去有回；她做的事也一样：把事送出海，再把结果带回来。
+
+> 潮起潮落，事事有着落。
+> *Tide may roam — every wave comes home.*
+
+文档和消息里，🌊 是她的签名，也是微信出站消息的标记；日志、状态文件和代码里不用 emoji。
+
 ### PTC 启动
 
 - ensure 创建 Ria 时固定传 agentPreset: 'ptc'。
@@ -710,6 +721,8 @@ Phase 25：排队消息控制。ria_queue 支持 list/remove，读取 sessionCon
 
 截至当前版本：
 
+当前状态：单例与侧边栏入口、PTC 创建、ticket 任务模型（intake、8 态状态机、resolve 定性、merge、归档、重启恢复）、转述与 note 卡片、worker 完成自动唤醒、审批可见性与临时权限、worker 模型选择、附件投递、排队消息撤回、结构化 attention、副作用 outbox，以及进程内微信（文本、.md、本机图片出站，推送可暂停）均已实现。已验证环境为 DSH 0.2.2-rc.1、Node 26，使用真实 Web profile 的隔离副本；微信入站目前只投递文本，入站图片仍预留。逐阶段的落地记录见第 15 节。
+
 - Phase 0–25 已实现；Phase 0–4、Phase 6、Phase 13 和 Phase 16 的 turn-tail 卡片通过隔离环境的真实 DSH 验证，其余阶段由单元测试和 smoke 覆盖。Phase 16 的截图使用手工写入 ria.json 的 note 验证渲染；真实 toolRequest 写入路径由 smoke 覆盖。
 - Phase 17 的微信 note 镜像由 test/wechat.mjs 和 smoke 覆盖：ticket 格式、未登录/暂停/发送异常不影响派发和 concludeTurn，失败条目进入副作用 outbox 并按退避补投；没有用真实微信账号验证实际收件。
 - 副作用 outbox 由 test/outbox.mjs 覆盖：幂等入队、重载、退避与 6 次上限、delivered 清理、坏文件恢复、无活跃 turn 排队、turn 开始后补投、失败原因可见、startup 补投；smoke 覆盖卡片写入失败仍记录 note、微信异常后按 due 重试并 delivered。
@@ -756,6 +769,12 @@ Phase 25：排队消息控制。ria_queue 支持 list/remove，读取 sessionCon
 - test/startup.mjs：未收敛 ticket 恢复、forked 递归、恢复上限、blocked 状态、更新/成功派发清零、启动异常通知；另由 test/task-state、test/intake、test/merge、test/archive 覆盖状态机、强制点、合并与归档。
 - test/dispatch-guard.mjs：section 安装、agent/created 与 disposed、重复安装、开关文本、失败 warning、shutdown。
 - docs/system-dispatch-guard.md：系统级防误发提示调研，含 DSH 注入点、对比、推荐方案和落地步骤；v0.23 已按静态 section + 设置页方案实施。
+- docs/operations.md：运行入口、欢迎提示、ticket 生命周期与转述、派发 note 卡片、副作用 outbox、派发提示开关、归档、重启恢复、worker idle 唤醒。
+- docs/tools.md：11 个 ria_* 工具参考、排队消息、worker 模型、attention、近期 worker、审批可见性和临时权限、manager prompt 约束。
+- docs/wechat.md：微信连接、暂停推送、长回复转 .md、出站图片与入站预留。
+- docs/state-and-api.md：状态目录文件清单与 HTTP API。
+- docs/testing.md：22 个测试套件的覆盖范围与本地隔离验证方式。
+- docs/limitations.md：已知限制与安全边界。
 - docs/ui-settings.png：隔离 DSH 中“设置 > Ria”开关的真实界面截图。
 - docs/ui-dispatch-note.png：隔离 DSH 中 Ria 会话轮次末尾的“任务已派发”卡片截图（note 为手工写入 ria.json 的验证数据）。
 

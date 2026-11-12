@@ -43,10 +43,17 @@ A/B 保留原字标「阿汐 · Ria」；**C 已选定**，并把 R 换成 v7 �
 - icon 来源：`docs/icon-concepts/v7/wave-faithful.svg`（侧栏同一个 v7 faithful 浪形）。4× 渲染，按 alpha 通道重新着色为 `#0F3540`，高度 74px（略高于 R 的 70px cap height），底边对齐标题基线；相对原 R 位置左移 6px，与 `ia` 间距 5px。
 - `C.jpg`：`ia` 用当前 Noto Sans CJK SC Black 94px，字距 2px；标题总宽约 525px，结束于 x≈629。与中文同族，最稳。
 - `C-icon-serif-italic.jpg`：`ia` 用 Noto Serif CJK SC Black 94px，再向右斜切 10%；衬线的粗细对比和斜势更接近浪形 icon，更像一个独立 mark。
-- 两版并排：`C-icon-options.png`。选定后把对应文件替换为 `C.jpg` 即可，其余版式不需要动。
+- 两版并排：`C-icon-options.png`。`C.jpg` 保留当前字体版；如果要换，另存新文件，不覆盖现有 `A.jpg` / `C.jpg`。
 
 ## 取舍
 
 C 已选定：光影和灯笼最突出，R 换成 icon 后左文右图的品牌感也最强。A/B 保留作对照；如果最后改用 A/B，需要同样做一次 R 替换。三版都没有覆盖 `docs/hero.jpg`，确定最终版本后再单独替换。
 
 > 说明：漂浮票据里只有抽象线条，没有可读文字；三版生成时都要求 no text / no letters，排版文字和 C 的 icon 都是后期叠加的。
+
+## C 的 ia 改为模型绘制（新增，保留 C.jpg）
+
+- 按用户要求，`ia` 也交给图像模型绘制，不使用现成字体；`A.jpg`、`C.jpg` 和现有候选都不覆盖。
+- 新文件 `C-model-ia.jpg`（推荐）：`gemini-3-pro-image`，1:1 2K，seed 20261124；提示词要求 high-contrast serif、短促上挑的浪尾、纯白底、画面只有 `i` 和 `a`。提取 alpha 后重着色 `#0F3540`，按 x-height 对齐，基线仍是 y=280，标题结束 x≈631。
+- 备选 `C-model-ia-classic.jpg`（seed 20261121，经典衬线）、`C-model-ia-wave.jpg`（seed 20261122，长浪尾）；`C-model-ia-options.png` 是 2× 标题对照（包含当前 C.jpg 的字体版）。
+- 模型只画 `ia`；中文「阿汐 · 」和 icon 仍是后期合成。`C.jpg` 保持原样。

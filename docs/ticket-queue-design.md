@@ -1,6 +1,6 @@
 # Ria ticket 排队 / 依赖机制设计
 
-- 状态：设计草案，待用户评审；本文不包含实现
+- 状态：P0 已按本文实现（见 DESIGN.md §4.2 与 Phase 27）；P1 项（onDependencyFailure、fan-out join 自动策略、批量派发等）仍未实现
 - 日期：2026-11-12
 - 范围：ticket 之间的先后顺序、跨 executor 链、fan-out 汇聚、失败/取消传播、重启恢复与可见性
 - 关系：本文是 docs/task-model-design.md（T1–T28、10 条不变量）的增量设计，不另起一套任务模型；新增部分统一编号为 T29 起

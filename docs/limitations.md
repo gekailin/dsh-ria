@@ -29,6 +29,11 @@
 - 临时权限只在单元测试和 smoke 中验证过，还没有在真实 worker 会话里触发；首次使用时需要确认 DSH 的 sandbox/approval 事件投影和恢复行为。
 - “近期 worker”只记录 Ria 成功派发过的会话；用户手工在其他会话里做的使用不会计入。挑选本身是 prompt 行为约束，不是 Host 强制，模型仍可能违背；尚未用真实模型验证。
 - DSH 的 sandbox override 无法清除；恢复会写回原 effective mode，因此可能留下一个同值 override。
+- ticket 依赖由 Host 计算并写持久信号，但实际派发仍只由 Ria 通过 ria_request 完成；没有第二调度器，Ria 不响应 [Queue ready] 时票会停在 ready。
+- 上游 failed/cancelled 只发 [Queue blocked]，不会自动跳过、改写或关闭下游；需要 Ria 报告用户后决定。上游 blocked 只继续等待，不告警。
+- queue wake 依赖 Ria 会话可被 prompt 叫醒；没有活跃 turn 时靠 outbox、turn/end 与 startup 补泵，不依赖 worker idle。Ria 会话不可用时会留 pending。
+- 忙碌判定读 sessionController.state：有运行中的 turn 或非空 pending 队列即 busy。状态读取失败按不 busy 放行，因此极端情况下仍可能给忙碌 worker 排上队。
+- P0 只做顺序链与跨 executor 依赖，onDependencyFailure、fan-out join 的自动策略与批量派发属 P1；split 仍未实现。
 
 ## 安全
 

@@ -248,6 +248,49 @@ import { createFixture } from './support/ria-fixture.mjs'
   }
 }
 
+// An automatic channel pause queues exactly one notice, keyed by pausedAt so a
+// replay after restart cannot send it twice. Manual pauses and an offline
+// WeChat never queue one.
+{
+  const fixture = await createFixture()
+  const service = fixture.service
+  const notices = []
+  const originalSend = service.wechat.sendPauseNotice
+  const originalOutbound = service.wechat.outbound
+  service.wechat.outbound = {}
+  service.wechat.sendPauseNotice = async (text, options) => {
+    notices.push({ text, options })
+    return true
+  }
+  try {
+    const status = { paused: true, pausedBy: 'channel', pausedAt: '2026-11-12T06:00:00.000Z' }
+    assert.equal(service.notifyWechatAutoPause(status), true)
+    await service.pumpOutbox('test-auto-pause')
+    assert.equal(notices.length, 1)
+    assert.equal(notices[0].options.durable, true)
+    assert.match(notices[0].text, /Ria 已自动暂停微信推送/)
+    const entries = service.outbox.all().filter(entry => entry.kind === 'wechat_pause_notice')
+    assert.equal(entries.length, 1)
+    assert.equal(entries[0].status, 'delivered')
+
+    assert.equal(service.notifyWechatAutoPause(status), true)
+    await service.pumpOutbox('test-auto-pause-replay')
+    assert.equal(notices.length, 1)
+    assert.equal(service.outbox.all().filter(entry => entry.kind === 'wechat_pause_notice').length, 1)
+
+    assert.equal(service.notifyWechatAutoPause({ ...status, pausedBy: 'manual' }), false)
+    service.wechat.outbound = undefined
+    assert.equal(service.notifyWechatAutoPause({ ...status, pausedAt: '2026-11-12T07:00:00.000Z' }), false)
+    await service.pumpOutbox('test-auto-pause-offline')
+    assert.equal(notices.length, 1)
+    assert.equal(service.outbox.all().filter(entry => entry.kind === 'wechat_pause_notice').length, 1)
+  } finally {
+    service.wechat.sendPauseNotice = originalSend
+    service.wechat.outbound = originalOutbound
+    fixture.cleanup()
+  }
+}
+
 // Real service pause/offline conditions defer without spending network retries.
 {
   const fixture = await createFixture()

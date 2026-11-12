@@ -20,10 +20,10 @@ DSH_HOME/state/ria/
 
 - POST /ensure：创建或打开全局唯一的 Ria。
 - GET /state：riaSessionId、tickets、pendingDeliveries、grants、settings、workerIdleNotifications（enabled/throttleMs）。
-- GET/POST /settings：读取或设置 {dispatchGuard:boolean}；POST 的值不是布尔返回 400。
+- GET/POST /settings：读取或设置 {dispatchGuard:boolean, wechatAutoPause:boolean}（GET 还返回 progressCards）；POST 可只传其中一个，传了非布尔值或一个都没传返回 400。
 - GET /dispatch-notes?sessionId&turn：读取 Ria 的派发 note；sessionId 必须是当前 Ria，turn 可选且必须是非负整数；返回 {notes}。
 - GET /health：健康检查。
-- GET /wechat/status：微信登录和连接状态，含 paused/pausedBy/pauseReason/pausedAt/resumedAt/resumedBy。
+- GET /wechat/status：微信登录和连接状态，含 paused/pausedBy/pauseReason/pausedAt/resumedAt/resumedBy 和 wechatAutoPause。
 - POST /wechat/login：获取登录二维码。
 - POST /wechat/logout：退出微信登录。
 - POST /wechat/start：用已有凭据重连。

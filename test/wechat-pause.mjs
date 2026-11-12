@@ -16,13 +16,14 @@ function fakeCtx() {
   }
 }
 
-function makeService(ctx, dir, logs) {
+function makeService(ctx, dir, logs, overrides = {}) {
   return new WechatService({
     ctx,
     stateDir: dir,
     ensureRia: async () => 'ria-1',
     getRiaId: () => 'ria-1',
     log: (level, message) => logs.push({ level, message }),
+    ...overrides,
   })
 }
 
@@ -99,6 +100,72 @@ try {
     assert.equal(service.statusView().paused, false)
     assert.equal(service.statusView().resumedBy, 'channel')
     assert.equal(logs.some(item => item.message.startsWith('resume: ') && item.message.includes('微信消息')), true)
+  }
+
+  // wechatAutoPause defaults on, can be disabled, and the callback fires once per
+  // real channel transition (not for repeated messages or a manual pause).
+  {
+    const logs = []
+    const ctx = fakeCtx()
+    const statuses = []
+    const service = makeService(ctx, dir, logs, { onAutoPause: status => statuses.push(status) })
+    assert.equal(service.statusView().wechatAutoPause, true)
+    dispatch(service, 'web-callback-1')
+    assert.equal(service.statusView().paused, true)
+    assert.equal(statuses.length, 1)
+    assert.equal(statuses[0].pausedBy, 'channel')
+    assert.match(statuses[0].pausedAt, /^\d{4}-\d{2}-\d{2}T/)
+    dispatch(service, 'web-callback-2')
+    assert.equal(statuses.length, 1)
+    dispatch(service, 'wx_callback')
+    assert.equal(service.statusView().paused, false)
+    dispatch(service, 'web-callback-3')
+    assert.equal(statuses.length, 2)
+    assert.equal(statuses[1].pausedBy, 'channel')
+
+    const services = makeService(ctx, dir, logs, { autoPauseEnabled: () => false })
+    services.setPaused(false, { by: 'manual', reason: '测试前恢复' })
+    assert.equal(services.statusView().wechatAutoPause, false)
+    const before = services.statusView()
+    dispatch(services, 'web-disabled')
+    assert.equal(services.statusView().paused, false)
+    assert.equal(services.statusView().pausedBy, before.pausedBy)
+    assert.equal(services.statusView().pauseReason, before.pauseReason)
+  }
+
+  // A manual pause must not be presented as an automatic one.
+  {
+    const logs = []
+    const ctx = fakeCtx()
+    const statuses = []
+    const service = makeService(ctx, dir, logs, { onAutoPause: status => statuses.push(status) })
+    service.setPaused(true, { by: 'manual', reason: '用户手动暂停' })
+    dispatch(service, 'web-manual')
+    assert.equal(service.statusView().pausedBy, 'manual')
+    assert.equal(statuses.length, 0)
+    service.setPaused(false, { by: 'manual', reason: '用户恢复' })
+  }
+
+  // The one explanatory notice can be sent while paused; ordinary pushes still
+  // reject until the channel resumes.
+  {
+    const logs = []
+    const ctx = fakeCtx()
+    const service = makeService(ctx, dir, logs)
+    const sent = []
+    const outbound = new Outbound({
+      prefix: '',
+      gapMs: 0,
+      send: async text => { sent.push(text); return 'msg-' + sent.length },
+    })
+    service.outbound = outbound
+    service.session = { client: {} }
+    service.setPaused(true, { by: 'channel', reason: '提示测试' })
+    const accepted = await service.sendPauseNotice('🌊 已自动暂停微信推送')
+    assert.equal(accepted, true)
+    assert.deepEqual(sent, ['🌊 已自动暂停微信推送'])
+    await assert.rejects(outbound.enqueue('ordinary push'), PauseError)
+    assert.equal(service.statusView().pendingOutbox, 0)
   }
 
   // An automatic pause never turns a manual pause into a channel pause.

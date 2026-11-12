@@ -299,6 +299,8 @@ try {
     const service = makeService(ctx, dir)
     assert.equal(service.statusView().loggedIn, false)
     assert.equal(service.statusView().login.phase, 'idle')
+    assert.equal(service.statusView().wechatAutoPause, true)
+    assert.equal(makeService(ctx, dir, { autoPauseEnabled: () => false }).statusView().wechatAutoPause, false)
     service.session = { client: {}, self: { NickName: 'me', UserName: '@me' }, startedAt: '2026-01-01T00:00:00.000Z' }
     const view = service.statusView()
     assert.equal(view.loggedIn, true)

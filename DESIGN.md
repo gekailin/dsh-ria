@@ -524,7 +524,7 @@ ria.json schema v2 只存 schemaVersion、riaSessionId、riaPreset、tickets、t
 - tickets：8 态 ticket，字段见第 4 节；非终态全留，终态按 24h/50 条窗口保留。
 - ticketFeedback：kind、code、ticketId、body（≤500）、card、mirror、workerTurn、at；每 ticket 保留最近若干条，5 秒内同 (ticketId,kind,code,workerTurn) 去重；与状态同一次 save。
 - recentWorkers：sessionId -> lastUsedAt、lastTicketId?；只在 request 成功投递后写入，30 天后清理。
-- settings：dispatchGuard（boolean，默认 true）、progressCards（boolean，默认 false）。
+- settings：dispatchGuard（boolean，默认 true）、progressCards（boolean，默认 false）、wechatAutoPause（boolean，默认 true）。
 - dispatchNotes：noteId、sessionId、turn、note、isTicket、at、ticketId?；最多保留 100 条，供 turn-tail 卡片读取。
 - attention：ticket 内可选，blocked + waitingOn=user 时记录 kind、question、options?、askedAt、askedBy、ref?；离开 blocked 或关闭时清空。
 
@@ -553,7 +553,7 @@ ria.json 和 memory.md 都不存 transcript。
 - 早期实现是 Host 侧由 Session.append 写一个合成的完整 turn（turn 1/step 1）。该 turn 的 assistant/message 会成为 surface 的首个节点，排在真实 turn 的 system/message 之前，DSH session-format v4 校验要求 system/message 是 protected first surface head，因此重启 resume 报 corrupt（`system/message requires a protected first surface head`），已移除。
 - 带 ticketId 的派发 note 由 Host 记录到 ria.json（最多保留 100 条），插件 client 在 `conversation.chat.turnTail` slot 渲染为当前轮次末尾的卡片，标题「任务已派发」/「消息已转交」。卡片不属于 turn process，不会被完成后折叠；不进入模型上下文；通过 GET /api/dispatch-notes?sessionId&turn 读取。早期用 command/run + command/done，卡片被 ChatNodeSeat 当作 process member 折叠，真实 UI 不可见，已移除。
 - 微信 chip 在 Ria 入口标题右侧，点击打开微信弹层。
-- 设置页注册 settings.section：id=ria-settings、order=25、label=Ria；一个“任务转交提示”开关，默认打开，POST /settings 持久化。说明文字明确：只影响后续 system prompt，不改 worker 历史、工具或预设。
+- 设置页注册 settings.section：id=ria-settings、order=25、label=Ria；外层是独立的白色卡片（#ffffff、浅灰边框、固定深色文字），不依赖 DSH 主题变量，背景图下仍可读。卡片内有两个开关：“任务转交提示”和“自动暂停微信推送”，默认都打开，POST /settings 持久化。说明文字明确：前者只影响后续 system prompt，不改 worker 历史、工具或预设；后者关闭后非微信消息不再自动暂停。
 
 ## 14. 安全
 
@@ -648,23 +648,24 @@ Phase 26：微信入站图片。InboundBridge 识别 MsgType 3 后由 WebWxClien
 23. 通知投递失败只记 warn，不影响 worker 状态，也不改变 ticket。
 24. 微信暂停只停出站，连接、登录态、轮询和入站不受影响，不需要重新扫码。
 25. 手动暂停/恢复通过 POST /wechat/pause，状态在 GET /wechat/status 可见，并跨 DSH 重启保持。
-26. 非微信用户消息自动暂停，微信入站自动恢复；host_ 合成消息和 schedule 提醒不触发切换。
+26. 非微信用户消息自动暂停，微信入站自动恢复；host_ 合成消息和 schedule 提醒不触发切换；设置 wechatAutoPause=false 时非微信消息既不暂停也不改 pausedBy/pauseReason，已处于 channel 暂停则保持原状。
 27. 手动暂停不被自动暂停覆盖；微信入站可以恢复手动暂停；手动恢复后下一条非微信消息再次暂停。
 28. 暂停期间在途消息发送完成，微信内部 Outbound 队列的排队消息丢弃并记录日志；插件副作用 outbox 保持 pending，恢复后按退避或下一次 tick 补投。
 29. 暂停相关测试覆盖手动开关、自动切换、合成消息过滤、优先级、队列竞态、日志和重启持久化。
 30. 带 ticketId 派发必须传 note（最多 500 字）；缺失、空白或超长直接报错，不投递、不 concludeTurn；成功后 Host 把 note 与微信镜像入 outbox，有活跃 turn 时写入 ria.json，由 client 在 conversation.chat.turnTail 渲染为当前轮次末尾的可见卡片，再 concludeTurn；已持久化条目的后续投递写入失败退避重试并保留原因；入队写盘失败不在此保证内。ria_request 的 ticketId 与 note 均必填，没有 quick relay 例外。
-31. 设置页默认 dispatchGuard=true；关闭后所有已安装 section 的 text 返回空字符串；POST /settings 只接受 boolean 并持久化到 ria.json；GET /state 可见 settings。
+31. 设置页默认 dispatchGuard=true、wechatAutoPause=true；关闭 dispatchGuard 后所有已安装 section 的 text 返回空字符串；POST /settings 接受 dispatchGuard 和/或 wechatAutoPause（至少一个 boolean，非法值 400）并持久化到 ria.json；GET /state 与 ria_status 可见 settings。
 32. manager prompt 明确：用户未指定 worker 时只从 scope=recent 选择，不遍历全部会话，不凭空挑没用过的；没有合适候选时先问用户。
 33. “近期用过”定义为成功 ria_request 过的顶层 worker，窗口 7 天、最多 10 个、保留 30 天；task 创建/更新不算，用户手工会话不算。
 34. scope=recent 返回 sessionId、title、cwd、lastUsedAt、lastTicketGoal、lastTicketStatus；scope=sessions 也带 title、lastUsedAt；缺失字段省略且输出 lossless。
 35. 投递失败不更新 recentWorkers；只有成功派发才更新 lastUsedAt 和 lastTicketId。
-36. 微信弹层显示推送状态（正常“推送中”，暂停“已暂停推送”+ 来源 + 时间），按钮可手动暂停/恢复并立即刷新；自动暂停时只出现轻提示，不弹窗；设置页不重复提供同一开关。
+36. 微信弹层显示推送状态（正常“推送中”，暂停“已暂停推送”+ 来源 + 时间），按钮可手动暂停/恢复并立即刷新；自动暂停时只出现轻提示，不弹窗；设置页只提供“自动暂停”策略开关，不重复提供暂停/恢复按钮。
 37. ticket 派发成功后，微信收到一条“📌 任务已派发：<note>”。note 走副作用 outbox 再进 sendDispatchNote：暂停/未登录/发送失败按 10s/1m/5m/15m/1h 最多重试 6 次，failed 保留原因，不影响派发和 concludeTurn。网页卡片与微信文本并存，使用同一段 note 原文。
 38. 微信图片双向可用：出站把 assistant 文本里指向本机存在图片文件的 Markdown 图片作为微信图片发出，图片语法从文本中移除，走与文本/.md 相同的串行队列和暂停门禁；入站把 MsgType 3 的原图下载、校验后落盘到 stateDir/wechat-inbound 并作为 text+image 用户消息投给 Ria，纯图片有占位文字；下载/超限/类型/校验失败仍投原文字并附 `[图片接收失败：<原因>]`；inbound/outbound 默认都是 true，可分别关闭。
 39. 派发卡片、微信镜像、恢复/blocked 提示都先写副作用 outbox；已持久化条目有活跃 turn 立即投 card，无 turn 留待补投；至少一次、幂等 noteId、失败退避且 failed 可见；ria_status 能按 ticketId 查看。
 40. blocked + waitingOn=user 的 ticket 可带结构化 attention；旧 blockedReason 仍可读；离开 blocked 或关闭清空；ria_approval 只读 worker 审批，与 attention 不混。
 41. ria_spawn 可在创建时指定模型；ria_model 可改已存在顶层会话（含 Ria 自己，不含 subagent）；未知/歧义模型返回 model_not_found，不在创建前留下会话；ria_status 的 sessions/recent 带当前 provider/model/reasoningEffort。
 42. ria_queue 可列出 pending 队列（queued/steering/context 三种 placement，冷会话 queue=null）并按 itemId 或 rpcId 撤回；rpcId 来自 ria_request 的 requestId；找不到返回 queue_item_not_found，宿主其它失败返回 queue_remove_failed；撤回不停止当前 turn、不改 ticket、不影响 recentWorkers；ria_read 返回同一份 queue。
+43. channel 自动暂停真正从运行态转入时，副作用 outbox 只入队一条提示，dedupeKey 为 pausedAt；该提示允许在暂停态发出（allowPaused），但只此一条，不放行后续推送；发送失败按 outbox 退避重试，最终失败只记日志；微信未连接不排，手动暂停不排。
 
 ## 17. 已确认
 
@@ -678,7 +679,7 @@ Phase 26：微信入站图片。InboundBridge 识别 MsgType 3 后由 WebWxClien
 - worker idle 通知默认开启，节流 30 秒；只对 working ticket 的 executor 触发。
 - 微信暂停默认不启用；手动 pause 优先于自动 pause；微信入站总是恢复。
 - 防误发提示使用静态 system prompt section，对所有 agent 生效；任务消息不加前缀。
-- 设置页提供 dispatchGuard 开关，默认打开。
+- 设置页提供 dispatchGuard 与 wechatAutoPause 开关，默认都打开。
 - 派发 note 先写副作用 outbox；有活跃 turn 时记录到 ria.json 供网页卡片读取，微信镜像由 outbox 投递；当前 ria_request 的 ticketId 与 note 均必填，已移除 quick relay。
 - 微信出站图片只发本机文件：assistant 文本里的 Markdown 图片路径必须落在 stateDir、进程 cwd 或绝对路径；不支持远程 URL、DSH imagePart 或粘贴图片。入站图片会下载原图并落盘到 stateDir/wechat-inbound，不支持从 CDN URL 直接引用。
 

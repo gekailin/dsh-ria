@@ -202,4 +202,32 @@ const workerTicket = (overrides = {}) => ({
   assert.equal(normalizeWorkerIdleOptions({}, { DSH_RIA_WORKER_IDLE_THROTTLE_MS: '900000' }).throttleMs, 600_000)
 }
 
+// A user cancellation in the previous notification's throttle window still blocks.
+{
+  const ticket = workerTicket()
+  const updates = []
+  const h = setup({ tickets: [ticket], transitionTicket: (id, to, patch) => {
+    updates.push({ id, to, patch })
+    ticket.status = to
+    return { ok: true, ticket }
+  } })
+  const events = [{ type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } }]
+  const payload = { status: 'idle', agent: { id: 'session-worker', session: { snapshotEvents: () => events } } }
+  await h.watcher.handle(payload)
+  assert.equal(h.prompts.length, 1)
+  h.advance(1)
+  events.push({ type: 'turn/end', data: { turn: 2, reason: { kind: 'aborted', reason: { kind: 'user' } } } })
+  await h.watcher.handle(payload)
+  assert.equal(ticket.status, 'blocked')
+  assert.equal(updates.length, 1)
+  assert.equal(updates[0].patch.waitingOn, 'user')
+  assert.equal(h.prompts.length, 2)
+  assert.match(h.prompts[1].content[0].text, /必须停下来等用户决定/)
+  assert.doesNotMatch(h.prompts[1].content[0].text, /发送 continuation/)
+  await h.watcher.handle(payload)
+  assert.equal(updates.length, 1)
+  assert.equal(h.prompts.length, 2)
+  h.dispose()
+}
+
 console.log('worker-idle ok')

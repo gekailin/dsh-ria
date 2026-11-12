@@ -15,7 +15,7 @@
   "type": "module",
   "main": "lib/index.js",
   "scripts": {
-    "test": "node test/smoke.mjs && node test/wechat.mjs && node test/wechat-pause.mjs && node test/wechat-file.mjs && node test/wechat-image.mjs && node test/wechat-image-inbound.mjs && node test/approvals.mjs && node test/grants.mjs && node test/startup.mjs && node test/worker-idle.mjs && node test/dispatch-guard.mjs && node test/spawn.mjs && node test/model.mjs && node test/workspace-spawn.mjs && node test/workspace-reconcile.mjs && node test/attachments.mjs && node test/task-state.mjs && node test/intake.mjs && node test/merge.mjs && node test/archive.mjs && node test/attention.mjs && node test/queue.mjs && node test/outbox.mjs && node test/approval-visibility.mjs"
+    "test": "node test/smoke.mjs && node test/wechat.mjs && node test/wechat-pause.mjs && node test/wechat-file.mjs && node test/wechat-image.mjs && node test/wechat-image-inbound.mjs && node test/channels.mjs && node test/approvals.mjs && node test/grants.mjs && node test/startup.mjs && node test/worker-idle.mjs && node test/dispatch-guard.mjs && node test/spawn.mjs && node test/model.mjs && node test/workspace-spawn.mjs && node test/workspace-reconcile.mjs && node test/attachments.mjs && node test/task-state.mjs && node test/intake.mjs && node test/merge.mjs && node test/archive.mjs && node test/attention.mjs && node test/queue.mjs && node test/outbox.mjs && node test/approval-visibility.mjs"
   },
   "exports": {
     ".": "./lib/index.js",
@@ -34,6 +34,7 @@
     "lib/outbox.mjs",
     "lib/dispatch-guard.mjs",
     "lib/wechat",
+    "lib/channels",
     "cordis.patch.yml",
     "DESIGN.md",
     "README.md",
@@ -59,5 +60,9 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "~4.0.5"
+  },
+  "dependencies": {
+    "@tencent-connect/qqbot-nodejs": "^1.0.5",
+    "qrcode": "^1.5.4"
   }
 }

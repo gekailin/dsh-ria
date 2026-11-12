@@ -9,6 +9,10 @@
 - 微信文件上传/发送链路按网页版协议实现并用 mock 覆盖，尚未用真实微信账号完成一次 .md 文件收发验证。
 - 出站图片只在 assistant 文本里提取本机图片，不支持直接把 DSH 的 imagePart 或远程 URL 转成微信图片。入站图片会下载并落盘原图，但只接受 PNG/JPEG/GIF/WebP、单张上限 min(20 MB, 宿主附件上限)，且不做 OCR、不转存微信 CDN URL；清理固定为 30 天/500 个，暂不可配置。
 - 扫码登录、消息收发和派发 note 的微信镜像仍需要真实微信账号验证。
+- 微信 Claw 与 QQ 机器人只同步 assistant 文本：不镜像派发 note、审批提醒、图片或文件，也不支持语音/视频；入站非文本只回一句提示。需要这些能力时用微信「文件传输助手」通道。
+- 两个新通道都没有在真实账号上完成扫码收发：微信 Claw 只覆盖到 iLink 的 get_bot_qrcode/get_qrcode_status/getupdates/sendmessage，QQ 只覆盖 create_bind_task/poll_bind_result 与 AES-GCM 解密，消息网关用 mock SDK 替换；平台权限、消息窗口和真实 WebSocket 仍需在目标环境确认。
+- QQ 群消息必须 @ 机器人；QQ 机器人还需要开放平台的消息权限，否则网关已连接也可能收不到消息。
+- 多通道同时登录时，DSH 重启后各自恢复暂停状态；在第一条新入站消息把其他通道自动暂停之前，可能短暂重复推送。
 - 审批可见性会主动把 ticket 标成 blocked+approval、排卡片/微信提醒并支持 TTL 与重启对账，但仍不代批、不自动批准；临时权限需要用户明确指令，Ria 不能自行判断后提权。
 - worker 自动唤醒由 `agent/status` 的 `idle` 触发，能读到最后一轮 `turn/end` 的 reason（含 `aborted(user)`），但“明确拒绝”只能由 Ria 读消息判断；提示措辞不假设完成，需要 Ria 再 read。
 - 不做 needs_input/failed 的独立事件级唤醒；需要时用官方 schedule 或用户回来问。

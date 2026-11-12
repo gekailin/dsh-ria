@@ -1,6 +1,6 @@
 # 微信接入
 
-Ria 入口标题右侧有一个“微信”chip。点开后可以扫码登录微信「文件传输助手」网页版、查看连接状态和退出登录。
+Ria 入口标题右侧有一个“连接”chip。点开后默认是微信 tab，可以扫码登录微信「文件传输助手」网页版、查看连接状态和退出登录；同一个面板里还有微信 Claw 和 QQ 机器人两个通道，见 [channels.md](channels.md)。
 
 ![微信连接弹层](ui-wechat.png)
 
@@ -20,9 +20,9 @@ Ria 入口标题右侧有一个“微信”chip。点开后可以扫码登录微
 暂停只关闭“Ria -> 微信”的出站推送：连接、登录态、长轮询和心跳保持，微信入站照常投递给 Ria。状态存在 `wechat/state.json`，DSH 重启后保持。
 
 - 面板：已登录时 chip 弹层里有一张推送状态卡。正常显示“推送中”；暂停显示“已暂停推送”、来源（“手动”或“自动（非微信通道消息）”）和暂停时间，旁边是“暂停推送 / 恢复推送”按钮。点击后立即用 POST 的返回值刷新，不等下一次轮询。
-- 自动暂停开关：设置页的“自动暂停微信推送”（`wechatAutoPause`，默认开）控制是否在非微信通道消息到达时自动暂停；关闭后不自动暂停，也不改当前的 pausedBy/pauseReason。
+- 自动暂停开关：设置页的“自动暂停微信推送”（`wechatAutoPause`，默认开）控制是否在非微信通道消息到达时自动暂停；关闭后不自动暂停，也不改当前的 pausedBy/pauseReason。该开关只作用于微信「文件传输助手」通道；微信 Claw 与 QQ 通道仍按自己的“最后消息通道”规则暂停其他通道。
 - 自动暂停提示：弹层轮询或侧边栏轮询发现 paused 从 false 变为 true 且 pausedBy=channel 时，显示一条 8 秒自动消失的轻提示“已自动暂停推送：检测到非微信通道消息”，不弹窗、不打断输入。chip 圆点同时变橙色。同时 Ria 通过副作用 outbox 往微信发一条说明，回一条微信消息即可恢复。
-- 手动：`POST /plugins/dsh-ria/api/wechat/pause`，body 为 `{"paused":true}` 或 `{"paused":false}`，可选 `reason`；`paused` 不是布尔值返回 400。
+- 手动：`POST /plugins/dsh-ria/api/wechat/pause`，body 为 `{"paused":true}` 或 `{"paused":false}`，可选 `reason`；`paused` 不是布尔值返回 400。三个通道统一的多通道接口见 [channels.md](channels.md#http-api)。
 - 查询：`GET /wechat/status` 返回 `paused`、`pausedBy`、`pauseReason`、`pausedAt`、`resumedAt`、`resumedBy` 和 `wechatAutoPause`。
 - 自动：Web/手机等非微信用户消息进入 Ria 时自动暂停（`pausedBy=channel`）；微信入站自动恢复，包括恢复手动暂停；`wechatAutoPause=false` 时整个自动暂停分支跳过。
 - 合成消息（`host_` 开头的启动恢复、启动失败、worker idle 唤醒）和官方 schedule 提醒不触发切换。

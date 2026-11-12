@@ -8,8 +8,13 @@ DSH_HOME/state/ria/
   outbox.json    # 副作用待投递/失败记录（dispatch note、微信镜像），0600
   memory.md       # 用户偏好和长期记忆
   audit.jsonl     # 临时权限审计，0600
-  wechat/creds.json  # 微信登录凭据，0600
-  wechat/state.json  # 已处理消息 id、Outbound 队列、暂停状态与时间
+  wechat/creds.json        # 微信文件传输助手登录凭据，0600
+  wechat/state.json        # 已处理消息 id、Outbound 队列、暂停状态与时间
+  wechat-claw/creds.json   # 微信 Claw bot_token、accountId、baseUrl、userId，0600
+  wechat-claw/state.json   # 暂停状态
+  wechat-claw/cursor.json  # getupdates 长轮询游标
+  qq-bot/creds.json        # QQ 机器人 appId、appSecret、userOpenid，0600
+  qq-bot/state.json        # 暂停状态
 ~~~
 
 不保存聊天 transcript。Ria 的原始 Session 日志仍由 DSH 写在 DSH_HOME/sessions 下。
@@ -28,5 +33,12 @@ DSH_HOME/state/ria/
 - POST /wechat/logout：退出微信登录。
 - POST /wechat/start：用已有凭据重连。
 - POST /wechat/pause：手动暂停或恢复推送，body {paused, reason?}。
+- GET /channels/status：三个聊天通道（wechat、wechat-claw、qq-bot）的登录和连接状态；每项含 paused/pausedBy/pauseReason/pausedAt/resumedAt/resumedBy，wechat 项另有 wechatAutoPause。
+- GET /channels/<id>/status：单个通道状态，id 为 wechat、wechat-claw 或 qq-bot。
+- POST /channels/<id>/login：获取二维码并开始扫码登录。
+- POST /channels/<id>/logout：退出该通道并删除本机凭据。
+- POST /channels/<id>/start：用已有凭据重连。
+- POST /channels/<id>/pause：手动暂停或恢复推送，body {paused, reason?}。
+- /wechat/status|login|logout|start|pause 仍然保留，等价于 wechat 通道。
 
 所有请求校验 DSH 同源；没有额外的 loopback 端口。

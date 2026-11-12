@@ -17,6 +17,16 @@ Ria 是 DSH Web 的一个常驻管理者插件，全局只有一个阿汐。她�
 - 让阿汐给 worker 换个模型再继续；或让一个 worker 全仓体检后出报告。
 - 长任务跑到一半被打断时，阿汐会停下来问我要下一步。
 
+## 聊天连接
+
+侧边栏 Ria 标题右侧的“连接”chip 里有三个通道，都可以扫码登录、查看状态和暂停推送：
+
+- 微信「文件传输助手」网页版：文本、图片、.md 文件双向；见 [docs/wechat.md](docs/wechat.md)。
+- 微信 Claw：直接对接腾讯 iLink 机器人接口，扫码后由 `bot_token` 收发文本。
+- QQ 机器人：用 QQ 开放平台的扫码绑定拿 AppID/AppSecret，再通过官方 SDK 的 WebSocket 网关收发文本。
+
+后两个通道只处理文本，不依赖 OpenClaw，也不启动额外进程。扫码、协议、状态文件、HTTP API 和多通道暂停规则见 [docs/channels.md](docs/channels.md)。
+
 ## 微信图片
 
 微信里的图片可以双向收发，默认都开启。你在微信发一张图，Ria 会下载原图、校验后保存到 `DSH_HOME/state/ria/wechat-inbound/`，再以“原文字 + 图片”的普通用户消息接收；纯图片会补一句“（用户发来一张图片）”。之后你让她把这张图转给 worker 时，可以直接用保存路径作为附件。

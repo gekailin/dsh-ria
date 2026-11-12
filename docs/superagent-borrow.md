@@ -4,12 +4,13 @@
 > 对照基线：本仓库 `dsh-ria`（`lib/index.js`、`lib/tickets.mjs`、`lib/worker-idle.mjs` 等）与 `DESIGN.md`、`docs/task-model-design.md`
 > 性质：**只读评估**。本文不改 `lib/`、`test/`，不跑会改文件的脚本，不重启、不推送。
 > 引用：`文件:行号`，行号以评估时的 HEAD 为准；跨仓库时以文件名区分。
+> 历史基线说明：本文是 Phase 22/23 实施前的评估，下面“Ria 现状”及旧代码位置仅指评估时基线，不是当前缺陷清单。outbox 与结构化 attention 已分别在 Phase 22/23 落地；跨 worker 的 idle 合并投递仍是建议。outbox 对已成功持久化条目提供至少一次（at-least-once）投递与有限重试，不保证派发接受到落盘前的窗口或入队写盘失败不会丢确认。当前状态以 README.md 与 DESIGN.md 第 20 节为准。
 
 ---
 
 ## 0. 先说结论
 
-prototype 值得借的**不是**它的多源获客体系（GitHub/Feishu 触发 → Eval → 订阅），而是它为了让「人不会错过任何需要自己的事」而建的三件基础设施。Ria 已经解决了「每条用户消息都有家」（intake + T28 转移表），但**出口**（卡片、微信、派发说明）还是 fire-and-forget。
+prototype 值得借的**不是**它的多源获客体系（GitHub/Feishu 触发 → Eval → 订阅），而是它为了让「人不会错过任何需要自己的事」而建的三件基础设施。Ria 已经解决了「每条用户消息都有家」（intake + T28 转移表），但评估时的**出口**（卡片、微信、派发说明）还是 fire-and-forget（现已落地 outbox，见上方历史基线说明）。
 
 | # | 借鉴点 | 解决的 Ria 具体痛点 | 代价 | Ria 侧主要落点 |
 |---|---|---|---|---|

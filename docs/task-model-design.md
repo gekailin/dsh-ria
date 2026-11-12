@@ -1,6 +1,8 @@
 # Ria 完整任务模型设计方案
 
-- 状态：草案 v1（待确认后实施）
+- 状态：历史方案 v1（P0 已实施，P1 分叉待实施）
+
+> 现状说明：本文保留实施前的术语、示意代码与旧行号，不是当前 API 契约。P0 已实施并完成 task → ticket 改名：当前工具为 ria_ticket，参数为 ticketId，状态入口为 RiaStore.transitionTicket；已删除顶层 inFlight。split/forked 执行属于 P1，当前 ria_resolve kind=split 返回 not_supported。当前实现状态以 README.md 与 DESIGN.md 第 20 节为准；下文“现有插件”等措辞指方案形成时的基线。
 - 日期：2026-11-11
 - 范围：Ria 插件（`dsh-ria`）的任务生命周期、反馈契约、持久化结构与重启恢复
 - 不在本方案：多 Ria 实例、跨机器同步、worker 内部实现、UI 视觉设计

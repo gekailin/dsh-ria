@@ -7,7 +7,7 @@
 
 一个 DSH Web 插件：全局只有一个 Ria。她不直接承担实现工作，而是管理用户已有的顶层 Session：转述需求、跟踪进度、总结经验并分发。
 
-Ria 自己是一个普通的顶层 DSH Session，运行 PTC preset，带管理者 prompt 和 8 个 ria_* 工具。worker 侧不需要安装任何东西，收到的就是普通用户消息；防误发提示由 agent 作用域的 system prompt section 提供，不修改消息内容。
+Ria 自己是一个普通的顶层 DSH Session，运行 PTC preset，带管理者 prompt 和 10 个 ria_* 工具。worker 侧不需要安装任何东西，收到的就是普通用户消息；防误发提示由 agent 作用域的 system prompt section 提供，不修改消息内容。
 
 ![Ria 入口打开后的会话界面](docs/ui-final.png)
 
@@ -23,7 +23,7 @@ Ria 自己是一个普通的顶层 DSH Session，运行 PTC preset，带管理�
 
 ## 当前状态
 
-- Phase 0–24 已实现：单例、PTC 创建、完整任务模型（用户消息自动登记 intake、8 态状态机、ria_resolve 定性、合并、归档、重启恢复）、转述、读取、memory、重启恢复（task 与 Ria 自己未完成 turn 都能续上，含恢复上限可见性）、侧边栏入口、进程内微信和入口右侧的微信 chip、worker 审批可见性、new-session 欢迎卡片、系统 prompt 防误发提示与设置页开关、临时 worker 权限调整、微信长回复/复杂 Markdown 自动转 .md 文件，worker 结束 turn 后自动唤醒 Ria，微信推送的暂停/恢复，以及暂停状态和手动开关的 UI，带 ticketId 派发的 note 硬约束与可见的 turn-tail 派发卡片、同步到微信的派发确认文本，以及保证这些副作用不丢的持久化 outbox；blocked+waitingOn=user 的 ticket 可带结构化 attention；微信出站图片已实现（assistant 回复里的本机图片会作为微信图片发出），入站图片仍预留；Ria 可为新建或已有 worker 选择/切换模型（失败码 model_not_found），ria_status 会显示当前模型。
+- Phase 0–24 已实现：单例、PTC 创建、任务模型 P0（split 属于 P1、当前返回 not_supported；用户消息自动登记 intake、8 态状态机、ria_resolve 定性、合并、归档、重启恢复）、转述、读取、memory、重启恢复（task 与 Ria 自己未完成 turn 都能续上，含恢复上限可见性）、侧边栏入口、进程内微信和入口右侧的微信 chip、worker 审批可见性、new-session 欢迎卡片、系统 prompt 防误发提示与设置页开关、临时 worker 权限调整、微信长回复/复杂 Markdown 自动转 .md 文件，worker 结束 turn 后自动唤醒 Ria，微信推送的暂停/恢复，以及暂停状态和手动开关的 UI，带 ticketId 派发的 note 硬约束与可见的 turn-tail 派发卡片、同步到微信的派发确认文本，以及对已持久化条目提供至少一次投递与失败可见性的 outbox；blocked+waitingOn=user 的 ticket 可带结构化 attention；微信出站图片已实现（assistant 回复里的本机图片会作为微信图片发出），入站图片仍预留；Ria 可为新建或已有 worker 选择/切换模型（失败码 model_not_found），ria_status 会显示当前模型。
 - 已验证环境：DSH 0.2.2-rc.1，Node 26，真实 Web profile 的隔离副本。
 - 微信入站目前只投递文本（入站图片仍预留）；出站可发文本、.md 文件与本机图片，见“图片（出站）”。扫码登录需要在弹层里完成一次，之后 DSH 重启会自动复用凭据。
 
@@ -62,7 +62,7 @@ DSH_HOME/state/ria
 
 DSH 的正常会话界面要求 Session 属于一个 Workspace。插件会为该目录创建一个标题为 Ria 的专用 Workspace，并把 Ria 挂进去。因此工作区列表里会多一个名为 Ria 的条目，这是输入框可用的必要条件，不是可选的 UI 装饰。
 
-Ria 运行 PTC 模式：模型直接看到 run_code 和生成的 SDK，8 个 ria_* 工具通过 SDK 调用。创建时固定 agentPreset=ptc；如果 ptc preset/runtime 不可用，会明确报错，不会退回 standard。
+Ria 运行 PTC 模式：模型直接看到 run_code 和生成的 SDK，10 个 ria_* 工具通过 SDK 调用。创建时固定 agentPreset=ptc；如果 ptc preset/runtime 不可用，会明确报错，不会退回 standard。
 
 ## 欢迎提示
 
@@ -221,7 +221,7 @@ Ria 的系统 prompt 要求：每条真实用户消息都要用 `ria_resolve` �
 - 8 个状态：`intake`、`open`、`working`、`blocked`、`forked`、`done`、`failed`、`cancelled`。`answered`、`merged`、`control` 是 `done.resolution.kind`。只有 `RiaStore.transitionTicket` 能改状态，非法转移返回错误而不是静默改写。
 - request 是真正的 Session 消息。发送前先写 pending delivery，prompt 被接受后删除；失败保留，重启或下次 ensure 时按原 requestId 重试。
 - `ria_request` 必须带 `ticketId` 和 `note`；ticket 的 executor 必须等于目标 sessionId。消息内容原样发送，不加任何前缀。防误发提示由 Host 注册在每个 agent 上的 system prompt section 提供：只有在做另一件明显不同的事或完全对不上时，才先向用户确认、不直接执行。
-- note 最多 500 字。派发成功后，Host 把卡片和微信镜像都先写进副作用 outbox（`stateDir/outbox.json`）。有活跃 turn 时立即把 note 写入 `ria.json`（最多保留 100 条），插件 client 通过 `GET /plugins/dsh-ria/api/dispatch-notes?sessionId=...&turn=...` 读取，并在 `conversation.chat.turnTail` slot 渲染成当前轮次末尾的卡片；没有活跃 turn 时条目留在 outbox，下一次 turn/start、startup 或 30 秒 tick 补投，不会静默丢失。
+- note 最多 500 字。派发成功后，Host 把卡片和微信镜像都先写进副作用 outbox（`stateDir/outbox.json`）。有活跃 turn 时立即把 note 写入 `ria.json`（最多保留 100 条），插件 client 通过 `GET /plugins/dsh-ria/api/dispatch-notes?sessionId=...&turn=...` 读取，并在 `conversation.chat.turnTail` slot 渲染成当前轮次末尾的卡片；没有活跃 turn 时条目留在 outbox，下一次 turn/start、startup 或 30 秒 tick 补投；此保证仅适用于已成功持久化的条目。
 - 卡片不属于 turn process，不会被完成后的流程折叠隐藏；它不进入模型上下文，也不依赖 session log；已经写入的卡片在重启后仍能从 ria.json 读到。
 - note 缺失、纯空白或超过 500 字时，工具直接报错，消息不投递、不 concludeTurn。卡片写入失败会按 outbox 退避重试；6 次仍失败则标 failed 并保留原因，`ria_status` 可查，不阻断已经成功的派发。
 - 同一个 note 也会在派发成功后进入副作用 outbox，再由微信内部 Outbound 队列发送“📌 任务已派发：<note>”。
@@ -240,7 +240,7 @@ Ria 的系统 prompt 要求：每条真实用户消息都要用 `ria_resolve` �
 
 ### 副作用 outbox
 
-派发卡片、微信镜像，以及恢复/blocked 时发给 Ria 的提示，都是“消息已经派发成功之后”的副作用。插件不再直接 fire-and-forget，而是先写入 `stateDir/outbox.json`，再由投递器执行；进程在写入后崩溃也能在下次启动补投。
+派发卡片、微信镜像，以及恢复/blocked 时发给 Ria 的提示，都是“消息已经派发成功之后”的副作用。插件先将条目写入 `stateDir/outbox.json`，再由投递器执行；已成功持久化的条目在重启后可继续按退避和重试上限投递。这是至少一次（at-least-once）语义，发送成功但送达状态未落盘时可能重复；并非派发与副作用的原子事务。派发接受到 outbox 落盘前的崩溃，以及入队写盘失败，仍可能丢失确认，不能承诺所有副作用绝不丢失。
 
 - 至少一次：条目在成功投递后才标 `delivered`；中途崩溃会重试。因此极端情况下微信可能收到重复文本；卡片按 `noteId` 去重，不会重复插入同一条 dispatch note。
 - 幂等键由 kind、ticketId、note 文本与 turn 生成；重复入队返回已有条目，不重复发送。卡片与微信镜像共用同一个 noteId，卡片写入 ria.json 时再按 noteId 去重。

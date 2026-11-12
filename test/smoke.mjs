@@ -298,6 +298,34 @@ assertLossless(recentEmpty)
 
 const ticket = await call('ria_ticket', { goal: 'fix tests', acceptance: 'green', executor: 'session-worker' })
 assert.equal(ticket.ticket.ticketId.startsWith('ticket_'), true)
+
+// A worker with no turn in flight cannot be given a working ticket: it will
+// never emit [Worker idle], so the ticket would stick. self is exempt.
+const ticketsBeforeIdleGuard = service.store.tickets().length
+workerRunning = false
+const idleWorking = await call('ria_ticket', { goal: 'track an idle worker', executor: 'session-worker', status: 'working' })
+assert.equal(idleWorking.ok, false)
+assert.equal(idleWorking.code, 'executor_idle')
+assert.match(idleWorking.message, /没有运行中的 turn/)
+assert.equal(service.store.tickets().length, ticketsBeforeIdleGuard)
+
+const guardTicket = await call('ria_ticket', { goal: 'open before guard', executor: 'session-worker' })
+const guardRevision = service.store.ticket(guardTicket.ticket.ticketId).revision
+const idleUpdate = await call('ria_ticket', { ticketId: guardTicket.ticket.ticketId, status: 'working' })
+assert.equal(idleUpdate.ok, false)
+assert.equal(idleUpdate.code, 'executor_idle')
+assert.equal(service.store.ticket(guardTicket.ticket.ticketId).status, 'open')
+assert.equal(service.store.ticket(guardTicket.ticket.ticketId).revision, guardRevision)
+
+const selfWorking = await call('ria_ticket', { goal: 'Ria works in this turn', executor: 'self', status: 'working' })
+assert.equal(selfWorking.ticket.status, 'working')
+
+workerRunning = true
+const runningWorking = await call('ria_ticket', { goal: 'track a running worker', executor: 'session-worker', status: 'working' })
+assert.equal(runningWorking.ticket.status, 'working')
+const runningUpdate = await call('ria_ticket', { ticketId: guardTicket.ticket.ticketId, status: 'working' })
+assert.equal(runningUpdate.ticket.status, 'working')
+workerRunning = false
 concluded = 0
 const promptsBeforeNoteErrors = prompts.length
 await assert.rejects(

@@ -21,6 +21,15 @@ Ria 自己是一个普通的顶层 DSH Session，运行 PTC preset，带管理�
 
 文档和消息里，🌊 是她的签名，也是微信出站消息的标记；日志、状态文件和代码里不用 emoji。
 
+## 典型场景
+
+- 把一件事交给指定的顶层 worker session，Ria 转述需求、跟踪进度，并在 `done` 或 `blocked` 后回报结论。
+- 让 Ria 用 `ria_spawn` 新建 worker，再用 `ria_request` 把任务和本地截图一起发过去。
+- worker 拒绝任务或用户中途叫停时，Ria 停下来问下一步，不自行改派。
+- dsh web 重启后，未收敛的工单会自动续跑并回报，不会静默丢。
+- 在微信里发消息、收结果，长文自动转成 .md，Ria 回复里的本机图片也会直接发到微信。
+- 用 `ria_model` 给已有 worker 换模型，或让一个 worker 做全仓审计后产出报告。
+
 ## 当前状态
 
 - Phase 0–25 已实现：单例、PTC 创建、任务模型 P0（split 属于 P1、当前返回 not_supported；用户消息自动登记 intake、8 态状态机、ria_resolve 定性、合并、归档、重启恢复）、转述、读取、memory、重启恢复（task 与 Ria 自己未完成 turn 都能续上，含恢复上限可见性）、侧边栏入口、进程内微信和入口右侧的微信 chip、worker 审批可见性、new-session 欢迎卡片、系统 prompt 防误发提示与设置页开关、临时 worker 权限调整、微信长回复/复杂 Markdown 自动转 .md 文件，worker 结束 turn 后自动唤醒 Ria，微信推送的暂停/恢复，以及暂停状态和手动开关的 UI，带 ticketId 派发的 note 硬约束与可见的 turn-tail 派发卡片、同步到微信的派发确认文本，以及对已持久化条目提供至少一次投递与失败可见性的 outbox；blocked+waitingOn=user 的 ticket 可带结构化 attention；微信出站图片已实现（assistant 回复里的本机图片会作为微信图片发出），入站图片仍预留；Ria 可为新建或已有 worker 选择/切换模型（失败码 model_not_found），ria_status 会显示当前模型；待处理消息可列出或撤回（ria_queue，支持按 itemId 或 ria_request 的 requestId 撤回）。

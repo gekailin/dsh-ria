@@ -297,9 +297,56 @@ async function waitForStatus(service, predicate, label) {
       item_list: [{ type: 1, text_item: { text: 'hello from Claw' } }],
     })
     assert.deepEqual(prompts[1].content, [{ type: 'text', text: 'hello from Claw' }])
+    assert.ok(claw.lastInboundAt > 0, 'inbound Claw messages should mark the channel as active')
     await qq.shutdown()
     await claw.shutdown()
   } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+// WeChat Claw can carry the same text notes as the legacy channel: dispatch,
+// approval and the auto-pause notice. It defers while paused or without a
+// reply target instead of dropping the outbox entry.
+{
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-ria-claw-notes-'))
+  const claw = new WechatClawService({
+    ctx: fakeContext(),
+    stateDir: dir,
+    ensureRia: async () => 'ria-session',
+    getRiaId: () => 'ria-session',
+    log: () => {},
+  })
+  const sent = []
+  claw.session = { token: 'token-1', baseUrl: 'http://127.0.0.1:1', abort: new AbortController() }
+  claw.outbound = {
+    enqueue(text) { sent.push({ system: false, text }); return Promise.resolve('msg-1') },
+    enqueueSystem(text, { prefix } = {}) { sent.push({ system: true, text, prefix }); return Promise.resolve('msg-2') },
+    setPaused() {},
+  }
+  try {
+    assert.deepEqual(await claw.sendDispatchNote('hello', { durable: true }), { deferred: true }, 'no peer should defer')
+    claw.peer = { userId: 'user-1', contextToken: 'context-1' }
+    assert.equal(await claw.sendDispatchNote('hello', { isTask: true, durable: true }), true)
+    assert.equal(sent[0].text, '📌 任务已派发：hello')
+    assert.equal(await claw.sendDispatchNote('note', { isTask: false, durable: true }), true)
+    assert.equal(sent[1].text, '📌 消息已转交：note')
+    assert.equal(await claw.sendApprovalNote('allow?', { durable: true }), true)
+    assert.equal(sent[2].text, '🔐 等待权限审批：allow?')
+
+    claw.paused = true
+    assert.deepEqual(await claw.sendDispatchNote('later', { durable: true }), { deferred: true }, 'paused channel should defer')
+    assert.equal(await claw.sendPauseNotice('🌊 paused', { durable: true }), true)
+    assert.deepEqual(sent[3], { system: true, text: '🌊 paused', prefix: false })
+
+    claw.paused = false
+    claw.observeUserMessage({ source: { kind: 'user', rpcId: 'wx_123' } })
+    assert.equal(claw.pauseReason, '微信「文件传输助手」通道消息')
+    claw.setPaused(false)
+    claw.observeUserMessage({ source: { kind: 'user', rpcId: 'qq_123' } })
+    assert.equal(claw.pauseReason, 'QQ 通道消息')
+  } finally {
+    await claw.shutdown()
     rmSync(dir, { recursive: true, force: true })
   }
 }

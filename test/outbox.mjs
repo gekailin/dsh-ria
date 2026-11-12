@@ -268,7 +268,8 @@ import { createFixture } from './support/ria-fixture.mjs'
     await service.pumpOutbox('test-auto-pause')
     assert.equal(notices.length, 1)
     assert.equal(notices[0].options.durable, true)
-    assert.match(notices[0].text, /Ria 已自动暂停微信推送/)
+    assert.match(notices[0].text, /Ria 已自动暂停微信/)
+    assert.match(notices[0].text, /非微信通道消息/)
     const entries = service.outbox.all().filter(entry => entry.kind === 'wechat_pause_notice')
     assert.equal(entries.length, 1)
     assert.equal(entries[0].status, 'delivered')
@@ -287,6 +288,98 @@ import { createFixture } from './support/ria-fixture.mjs'
   } finally {
     service.wechat.sendPauseNotice = originalSend
     service.wechat.outbound = originalOutbound
+    fixture.cleanup()
+  }
+}
+
+// When only WeChat Claw is connected, the auto-pause notice is queued and
+// delivered there; it names the paused legacy channel and its trigger.
+{
+  const fixture = await createFixture()
+  const service = fixture.service
+  const notices = []
+  const originalOutbound = service.wechatClaw.outbound
+  const originalPeer = service.wechatClaw.peer
+  const originalSend = service.wechatClaw.sendPauseNotice
+  service.wechat.outbound = undefined
+  service.wechatClaw.outbound = {}
+  service.wechatClaw.peer = { userId: 'user-1', contextToken: 'context-1' }
+  service.wechatClaw.sendPauseNotice = async (text, options) => {
+    notices.push({ text, options })
+    return true
+  }
+  try {
+    const status = { paused: true, pausedBy: 'channel', pausedAt: '2026-11-12T08:06:11.949Z', pauseReason: '微信 Claw 通道消息' }
+    assert.equal(service.notifyWechatAutoPause(status), true)
+    await service.pumpOutbox('test-auto-pause-claw')
+    assert.equal(notices.length, 1)
+    assert.match(notices[0].text, /Ria 已自动暂停微信「文件传输助手」推送/)
+    assert.match(notices[0].text, /微信 Claw 通道消息/)
+    const entry = service.outbox.all().find(item => item.kind === 'wechat_pause_notice')
+    assert.equal(entry.status, 'delivered')
+  } finally {
+    service.wechatClaw.outbound = originalOutbound
+    service.wechatClaw.peer = originalPeer
+    service.wechatClaw.sendPauseNotice = originalSend
+    fixture.cleanup()
+  }
+}
+
+// Dispatch, approval and pause notes follow the most recently active
+// WeChat-side channel. A deferred preferred channel falls through to the next
+// one; when both defer the entry stays pending without spending an attempt.
+{
+  const fixture = await createFixture()
+  const service = fixture.service
+  const calls = []
+  const originalLegacy = service.wechat.sendDispatchNote
+  const originalClaw = service.wechatClaw.sendDispatchNote
+  const originalLegacyApproval = service.wechat.sendApprovalNote
+  const originalClawApproval = service.wechatClaw.sendApprovalNote
+  const originalLegacyPause = service.wechat.sendPauseNotice
+  const originalClawPause = service.wechatClaw.sendPauseNotice
+  try {
+    service.wechat.sendDispatchNote = async () => { calls.push('legacy'); return true }
+    service.wechatClaw.sendDispatchNote = async () => { calls.push('claw'); return true }
+    service.wechat.lastInboundAt = 100
+    service.wechatClaw.lastInboundAt = 200
+    service.outbox.enqueue({ kind: 'wechat_dispatch_note', dedupeKey: 'route-recent', payload: { note: 'recent' } })
+    await service.pumpOutbox('route-recent')
+    assert.deepEqual(calls.splice(0), ['claw'], 'the most recent channel should get the note')
+
+    service.wechat.lastInboundAt = 300
+    service.wechat.sendDispatchNote = async () => { calls.push('legacy:deferred'); return { deferred: true } }
+    service.outbox.enqueue({ kind: 'wechat_dispatch_note', dedupeKey: 'route-fallback', payload: { note: 'fallback' } })
+    await service.pumpOutbox('route-fallback')
+    assert.deepEqual(calls.splice(0), ['legacy:deferred', 'claw'], 'a deferred channel should fall through')
+
+    service.wechat.sendDispatchNote = async () => { calls.push('legacy:deferred'); return { deferred: true } }
+    service.wechatClaw.sendDispatchNote = async () => { calls.push('claw:deferred'); return { deferred: true } }
+    const both = service.outbox.enqueue({ kind: 'wechat_dispatch_note', dedupeKey: 'route-both-deferred', payload: { note: 'later' } }).entry
+    await service.pumpOutbox('route-both-deferred')
+    assert.deepEqual(calls.splice(0), ['legacy:deferred', 'claw:deferred'])
+    assert.equal(both.status, 'pending')
+    assert.equal(both.attempts, 0)
+    service.outbox.markDelivered(both.id)
+
+    service.wechat.sendApprovalNote = async () => { calls.push('legacy:approval'); return { deferred: true } }
+    service.wechatClaw.sendApprovalNote = async () => { calls.push('claw:approval'); return true }
+    service.outbox.enqueue({ kind: 'wechat_approval_note', dedupeKey: 'route-approval', payload: { note: 'allow?' } })
+    await service.pumpOutbox('route-approval')
+    assert.deepEqual(calls.splice(0), ['legacy:approval', 'claw:approval'])
+
+    service.wechat.sendPauseNotice = async () => { calls.push('legacy:pause'); return { deferred: true } }
+    service.wechatClaw.sendPauseNotice = async () => { calls.push('claw:pause'); return true }
+    service.outbox.enqueue({ kind: 'wechat_pause_notice', dedupeKey: 'route-pause', payload: { text: 'paused' } })
+    await service.pumpOutbox('route-pause')
+    assert.deepEqual(calls.splice(0), ['legacy:pause', 'claw:pause'])
+  } finally {
+    service.wechat.sendDispatchNote = originalLegacy
+    service.wechatClaw.sendDispatchNote = originalClaw
+    service.wechat.sendApprovalNote = originalLegacyApproval
+    service.wechatClaw.sendApprovalNote = originalClawApproval
+    service.wechat.sendPauseNotice = originalLegacyPause
+    service.wechatClaw.sendPauseNotice = originalClawPause
     fixture.cleanup()
   }
 }

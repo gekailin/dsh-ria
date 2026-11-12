@@ -102,6 +102,26 @@ try {
     assert.equal(logs.some(item => item.message.startsWith('resume: ') && item.message.includes('微信消息')), true)
   }
 
+  // Messages from the other WeChat-side channels get a reason that names the
+  // channel, not the generic "non-WeChat" wording.
+  {
+    const logs = []
+    const ctx = fakeCtx()
+    const service = makeService(ctx, dir, logs)
+    dispatch(service, 'wc_claw_1')
+    assert.equal(service.statusView().paused, true)
+    assert.equal(service.statusView().pausedBy, 'channel')
+    assert.equal(service.statusView().pauseReason, '微信 Claw 通道消息')
+    dispatch(service, 'wx_resume_1')
+    assert.equal(service.statusView().paused, false)
+    assert.ok(service.lastInboundAt > 0)
+    dispatch(service, 'qq_bot_1')
+    assert.equal(service.statusView().paused, true)
+    assert.equal(service.statusView().pauseReason, 'QQ 通道消息')
+    dispatch(service, 'wx_resume_2')
+    assert.equal(service.statusView().paused, false)
+  }
+
   // wechatAutoPause defaults on, can be disabled, and the callback fires once per
   // real channel transition (not for repeated messages or a manual pause).
   {

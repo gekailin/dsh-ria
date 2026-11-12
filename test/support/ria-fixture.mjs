@@ -44,6 +44,7 @@ export async function createFixture(options = {}) {
   let concluded = 0
   let promptFailure = undefined
   const queues = new Map(Object.entries(options.queues || {}).map(([id, queue]) => [String(id), Array.isArray(queue) ? queue.map(item => ({ ...item })) : null]))
+  const runningOverrides = new Map()
   const updateQueueCalls = []
   const models = new Map()
   models.set(riaId, { provider: 'provider-ok', model: 'model-vision' })
@@ -257,11 +258,14 @@ export async function createFixture(options = {}) {
       },
       async state(request) {
         const id = String(request && request.sessionId)
-        if (!queues.has(id)) return { cursor: 1, active: false, running: false, queue: null, pendingInput: [] }
+        const running = runningOverrides.has(id)
+          ? Boolean(runningOverrides.get(id))
+          : queues.has(id) ? (options.running === undefined ? true : Boolean(options.running)) : false
+        if (!queues.has(id)) return { cursor: 1, active: running, running, queue: null, pendingInput: [] }
         return {
           cursor: 1,
-          active: true,
-          running: options.running === undefined ? true : Boolean(options.running),
+          active: running || queues.get(id).length > 0,
+          running,
           queue: queues.get(id),
           pendingInput: [],
         }
@@ -339,6 +343,7 @@ export async function createFixture(options = {}) {
     call,
     cleanup,
     queues,
+    setRunning(sessionId, value) { runningOverrides.set(String(sessionId), Boolean(value)) },
     updateQueueCalls,
     setPromptFailure(error) { promptFailure = error },
     get concluded() { return concluded },

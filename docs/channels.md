@@ -5,12 +5,12 @@ Ria 入口标题右侧有一个“连接”chip。点开后是一个通道面板
 | 通道 | id | 扫码后得到 | 入站 | 出站 |
 |---|---|---|---|---|
 | 微信「文件传输助手」网页版 | `wechat` | Cookie / sid / skey | 文本、图片 | 文本、.md 文件、本机图片 |
-| 微信 Claw | `wechat-claw` | bot_token、账号、baseUrl | 文本 | 文本 |
+| 微信 Claw | `wechat-claw` | bot_token、账号、baseUrl | 文本、图片 | 文本、本机图片 |
 | QQ 机器人 | `qq-bot` | AppID、AppSecret、openid | 文本 | 文本 |
 
 三个通道都运行在 DSH 进程内，不启动 bridge 进程，不额外占端口（QQ 使用出站 WebSocket）。扫码只需要在面板里做一次，凭据保存在本机，DSH 重启后自动重连。
 
-微信「文件传输助手」的细节、图片和长回复转 .md 的规则见 [wechat.md](wechat.md)；本文说明三个通道共用的面板、微信 Claw 与 QQ 机器人的协议和限制。
+微信「文件传输助手」的细节、长回复转 .md 的规则见 [wechat.md](wechat.md)；图片两条微信通道都支持，差异见下文与 [wechat.md](wechat.md#图片)。本文说明三个通道共用的面板、微信 Claw 与 QQ 机器人的协议和限制。
 
 ## 微信 Claw
 
@@ -20,15 +20,38 @@ Ria 入口标题右侧有一个“连接”chip。点开后是一个通道面板
 2. 每 1.2 秒轮询 `GET {base}/ilink/bot/get_qrcode_status?qrcode=...`，带 `iLink-App-ClientVersion: 1`。状态依次是 `wait`、`scaned`、`confirmed`，过期是 `expired`。
 3. 二维码有效期 5 分钟；过期会自动刷新，最多刷新 3 次，总等待上限 480 秒。面板上看到“二维码已过期，正在刷新…”时不需要手动点。
 4. `confirmed` 后返回 `bot_token`、`ilink_bot_id`、`baseurl`、`ilink_user_id`。账号 id 会把 `-im-bot` 归一成 `@im.bot`、`-im-wechat` 归一成 `@im.wechat`，原始值也一并保存。
-5. 连接后用 `POST /ilink/bot/getupdates` 做 45 秒长轮询，游标保存在 `cursor.json`。文本消息的 `item_list` 里是 `type=1` 的 `text_item.text`。
+5. 连接后用 `POST /ilink/bot/getupdates` 做 45 秒长轮询，游标保存在 `cursor.json`。文本消息的 `item_list` 里是 `type=1` 的 `text_item.text`，图片是 `type=2` 的 `image_item`。
 6. 回复走 `POST /ilink/bot/sendmessage`，带 `context_token`（来自最近一条入站消息）和 `message_type=2`、`message_state=2`。没有收到过消息时没有可回复的目标，发送会报“尚未收到可回复的消息”。
+
+### 图片
+
+图片默认双向开启，可在设置页或 profile 里分别关闭：
+
+~~~yaml
+- id: ria
+  config:
+    wechatClawImage:
+      inbound: true
+      outbound: true
+~~~
+
+| 方向 | 触发 | 处理 |
+|---|---|---|
+| 入站 | `item_list` 中 `type=2` 的 `image_item` | 从 `media.full_url` 或加密 CDN 地址下载，用 `aeskey`/`media.aes_key` 做 AES-128-ECB 解密，按文件头只收 PNG/JPEG/GIF/WebP，上限 20 MB（且不超过宿主附件限制） |
+| 出站 | assistant 文本里的 `![alt](path)` | 本机真实图片；先 `getuploadurl`，AES-128-ECB 加密后 POST 到 CDN，取响应头 `x-encrypted-param`，再发 `type=2` 的 `image_item` |
+
+- 入站落盘：`DSH_HOME/state/ria/wechat-claw-inbound/YYYYMMDD-HHMMSS-<msgid>.<ext>`，目录 0700、文件 0600，重名追加 `-2`；保留最近 30 天、最多 500 个。图片作为 `{ type: 'image', mediaType, data }` 内容块和原文字一起投给 Ria，路径附在文字里，可直接作为 `ria_request` 的附件。
+- 入站失败：下载、解密、格式、大小或附件校验失败都不会丢消息；Ria 仍收到原文字（纯图用“（用户发来一张图片）”占位）加 `[图片接收失败：<原因>]`，日志记 `[claw inbound] image <id> rejected (<code>): <reason>`。
+- 出站失败：单张图片发送失败只回退成一条可见文本“图片 <name> 发送失败，请在 Ria 会话中查看原图”，不影响已发出的文本和其他图片；围栏代码块里的示例不发送；暂停推送时图片和文本一样不发送。
+- `inbound: false` 时图片消息仍回“目前只能接收文本消息。”，不下载、不落盘；`outbound: false` 时 Markdown 图片按原样当文本发送。
+- 协议来源：腾讯公开的 `Tencent/openclaw-weixin` 客户端实现（`docs/protocol.md`、`src/api/types.ts`、`src/messaging/send.ts`、`src/cdn/upload.ts`、`src/media/media-download.ts`）；CDN 下载不带 bot token，上传成功以响应头 `x-encrypted-param` 为准。
 
 限制与行为：
 
-- 只处理文本。图片、语音、文件、视频会回复一句“目前只能接收文本消息。”，不会交给 Ria。
+- 语音、文件、视频仍不处理：会回复一句“目前只能接收文本消息。”，不会交给 Ria。
 - 一个账号同一时间只能有一个 Claw 会话；退出登录后重新扫码可以换账号。
 - token 失效或长轮询持续失败时，状态卡会显示错误；重新扫码即可。失败后按 2 秒、30 秒退避重试，不会立刻断开。
-- 不读取历史消息，不支持群管理、@ 判断、引用回复或富媒体。
+- 不读取历史消息，不支持群管理、@ 判断、引用回复，也不支持语音、文件、视频。
 
 默认接口地址是 `https://ilinkai.weixin.qq.com`。开发和测试时可以用 `WX_CLAW_BASE` 指向本地假服务，用 `WX_CLAW_QR_POLL_MS` 调快轮询。
 
@@ -121,7 +144,7 @@ DSH_HOME/state/ria/
 
 ## 限制
 
-- 微信 Claw 和 QQ 机器人目前只支持文本，不支持图片、文件、语音和视频；入站非文本只回提示，出站只发文本（微信 Claw 可发派发/审批/暂停提示，QQ 不发这些 note）。需要发图或发文件时用微信「文件传输助手」通道，或直接在 Ria 会话里操作。
+- 微信 Claw 支持文本和图片，仍不支持文件、语音和视频；QQ 机器人只支持文本。微信 Claw 入站的非图片/非文本 item 只回提示，出站可发文本、本机图片、派发/审批/暂停提示；QQ 不发这些 note。需要发文件时用微信「文件传输助手」通道，或直接在 Ria 会话里操作。
 - 三个通道都没有在真实账号上完成一次完整的扫码收发验证；协议用本地 mock 服务覆盖，见 [testing.md](testing.md)。真实扫码、平台权限和消息窗口仍需要在目标环境确认。
 - 不保存聊天历史，也不做跨通道去重；同一条平台消息如果被重复投递，依靠各通道的 message id 去重。
 - QQ 群消息必须 @ 机器人；这是产品行为，不是可配置项。

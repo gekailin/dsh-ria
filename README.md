@@ -35,20 +35,20 @@ Ria 是 DSH Web 的一个常驻管理者插件，全局只有一个阿汐。她�
 侧边栏 Ria 标题右侧的“连接”chip 里有三个通道，都可以扫码登录、查看状态和暂停推送：
 
 - 微信「文件传输助手」网页版：文本、图片、.md 文件双向；见 [docs/wechat.md](docs/wechat.md)。
-- 微信 Claw：直接对接腾讯 iLink 机器人接口，扫码后由 `bot_token` 收发文本；也能接收派发 note、审批提醒和自动暂停提示（纯文本）。
+- 微信 Claw：直接对接腾讯 iLink 机器人接口，扫码后由 `bot_token` 收发文本和图片；也能接收派发 note、审批提醒和自动暂停提示（纯文本）。
 - QQ 机器人：用 QQ 开放平台的扫码绑定拿 AppID/AppSecret，再通过官方 SDK 的 WebSocket 网关收发文本。
 
-后两个通道只处理文本，不依赖 OpenClaw，也不启动额外进程。扫码、协议、状态文件、HTTP API 和多通道暂停规则见 [docs/channels.md](docs/channels.md)。
+后两个通道不依赖 OpenClaw，也不启动额外进程；QQ 只处理文本，微信 Claw 支持文本和图片。扫码、协议、图片字段、状态文件、HTTP API 和多通道暂停规则见 [docs/channels.md](docs/channels.md)。
 
 ## 微信图片
 
-微信里的图片可以双向收发，默认都开启。你在微信发一张图，Ria 会下载原图、校验后保存到 `DSH_HOME/state/ria/wechat-inbound/`，再以“原文字 + 图片”的普通用户消息接收；纯图片会补一句“（用户发来一张图片）”。之后你让她把这张图转给 worker 时，可以直接用保存路径作为附件。
+微信「文件传输助手」和微信 Claw 都能双向收发图片，默认都开启。你在微信发一张图，Ria 会下载原图、校验后保存（「文件传输助手」在 `DSH_HOME/state/ria/wechat-inbound/`，Claw 在 `wechat-claw-inbound/`），再以“原文字 + 图片”的普通用户消息接收；纯图片会补一句“（用户发来一张图片）”。之后你让她把这张图转给 worker 时，可以直接用保存路径作为附件。
 
-- 只接受 PNG、JPEG、GIF、WebP，单张上限 20 MB（且不超过宿主附件限制）；目录保留最近 30 天、最多 500 个文件。
+- 只接受 PNG、JPEG、GIF、WebP，单张上限 20 MB（且不超过宿主附件限制）；每个目录保留最近 30 天、最多 500 个文件。
 - 下载或校验失败不会丢消息：Ria 仍会收到原文字，并多一行 `[图片接收失败：<原因>]`。
-- 反向也成立：Ria 回复里的 Markdown 图片若指向本机文件，会作为微信图片发给你。
+- 反向也成立：Ria 回复里的 Markdown 图片若指向本机文件，会作为微信图片发给你；单张发送失败会回一条可见文本，不会吞掉整条回复。
 
-配置项是 `wechatImage.inbound` 和 `wechatImage.outbound`，都可以在 profile 的 `cordis.yml` 里单独关闭。协议、落盘和清理细节见 [docs/wechat.md](docs/wechat.md#图片)。
+配置项是 `wechatImage.inbound` / `wechatImage.outbound`（「文件传输助手」）和 `wechatClawImage.inbound` / `wechatClawImage.outbound`（微信 Claw），都可以在 profile 的 `cordis.yml` 或设置页里单独关闭。协议、落盘和清理细节见 [docs/wechat.md](docs/wechat.md#图片)。
 
 ## 设置
 

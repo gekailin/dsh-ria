@@ -10,7 +10,7 @@ Ria 入口标题右侧有一个“连接”chip。点开后默认是微信 tab�
 - 微信发来的文本原样作为普通用户消息进入 Ria，不加前缀，也不直接进 worker。
 - Ria 的每条 assistant 文本回复都会同步回微信，统一以 🌊 前缀标记；暂停推送时除外。
 - 带 note 的派发/转述成功后，note 也会作为一条普通微信文本推送（见 [派发 note 卡片与微信确认](operations.md#派发-note-卡片与微信确认)），发往当前活跃的微信侧通道（「文件传输助手」或微信 Claw），并受目标通道当时的暂停状态约束；一个通道暂停时会自动落到另一个可用通道。
-- 入站支持文本和图片：微信发来的图片会下载原图、落盘并作为带附件（图片）的普通用户消息进入 Ria，原文字（如有）保留；下载/校验失败时仍投递文字并附失败原因。出站支持文本、.md 文件与本机图片：assistant 回复里的 Markdown 图片若指向本机存在的图片文件，会作为微信图片发出。详见下文“图片”一节。
+- 入站支持文本和图片：微信「文件传输助手」和微信 Claw 发来的图片都会下载原图、落盘并作为带附件（图片）的普通用户消息进入 Ria，原文字（如有）保留；下载/校验失败时仍投递文字并附失败原因。出站支持文本、本机图片；「文件传输助手」还支持长回复转 .md。assistant 回复里的 Markdown 图片若指向本机存在的图片文件，会作为微信图片发出。详见下文“图片”一节。
 - 出站长回复或复杂 Markdown 时，默认改发完整的 .md 文件；短消息和简单文本保持原样。
 - DSH 重启后如有 creds 会自动重连；待发文本超过 10 条时只补发最后 10 条，并先提示跳过了多少条。
 - chip 只在宽侧边栏显示；折叠侧边栏不插入。
@@ -75,7 +75,7 @@ Ria 入口标题右侧有一个“连接”chip。点开后默认是微信 tab�
 
 ## 图片
 
-出站和入站图片默认都开启；两项可以分别关闭：
+微信「文件传输助手」和微信 Claw 都支持图片双向收发，默认全部开启。两个通道分别配置：
 
 ~~~yaml
 - id: ria
@@ -83,12 +83,18 @@ Ria 入口标题右侧有一个“连接”chip。点开后默认是微信 tab�
     wechatImage:
       inbound: true
       outbound: true
+    wechatClawImage:
+      inbound: true
+      outbound: true
 ~~~
 
-- `inbound: false` 时，微信图片消息只收到“目前只能接收文本消息”的提示，不下载、不落盘；文本消息不受影响。
-- `outbound: false` 时，assistant 文本里的 Markdown 图片按原样当文本发送；文本、.md 文件、暂停、去重和 outbox 路径不受影响。
+- `inbound: false` 时，该通道的图片消息只收到“目前只能接收文本消息”的提示，不下载、不落盘；文本消息不受影响。
+- `outbound: false` 时，assistant 文本里的 Markdown 图片按原样当文本发送；文本、暂停、去重和 outbox 路径不受影响。
+- 设置页的“微信 Claw 图片”一行也能改这两个 Claw 开关；`wechatImage` 只控制「文件传输助手」。
 
-### 出站
+下面先写「文件传输助手」，微信 Claw 的差异在最后一小节。
+
+### 文件传输助手：出站
 
 - 触发：Ria 的 assistant 文本里出现 `![alt](path)`，且 path 指向本机真实存在的图片文件时，该图片会作为微信图片发出；不扫描围栏代码块里的示例。
 - 路径：绝对路径，或相对 Ria 状态目录（`DSH_HOME/state/ria`）与 dsh 进程当前目录；`file://` 等带 scheme 的地址不处理。
@@ -96,7 +102,7 @@ Ria 入口标题右侧有一个“连接”chip。点开后默认是微信 tab�
 - 顺序与失败：先发文本（图片语法从文本里去掉），再逐张发图片。某张图片发送失败只记 warn，不影响已经发出的文本和其他图片；暂停推送时按普通出站规则丢弃。
 - 协议：与 .md 文件共用同一条串行限速队列；上传用 `mediatype=pic`、`MediaType=3`，发送用 `webwxsendmsgimg` 的 `Msg.Type=3`，返回的 MsgID 加入去重集合。`Outbound.enqueueImage()` 仍接受 `{ name, buffer, mime, ref }`，失败会 reject，调用方可重试。
 
-### 入站
+### 文件传输助手：入站
 
 - 触发：`InboundBridge` 用 `MsgType=3` 识别图片消息，进入 `deliverImageFromWechat`。图片消息的 `Content` 是 `<img>` 元数据（`MsgId`、`mediaid`、`encryfilename` 等），不是正文；Ria 收到的文字来自这个字段里可读的原文字，没有文字时用“（用户发来一张图片）”占位。
 - 下载：`WebWxClient.downloadImage` 复用当前登录的 Cookie、`skey`、`sid` 和 `pass_ticket`。先请求 `GET /cgi-bin/mmwebwx-bin/webwxgetmsgimg?MsgID=<MsgID>&skey=<skey>&mmweb_appid=<appid>`（不带 `type`，取原图）；失败后再试文件域名，并用 `<img>` 里的 `mediaid`/`encryfilename` 走 `webwxgetmedia`（`sender`、`fromuser`、`pass_ticket`、`webwx_data_ticket`、`sid`）。任一请求返回 JSON/文本、HTTP 非 2xx、空响应或超过大小上限都会明确报错并进入降级。
@@ -106,3 +112,14 @@ Ria 入口标题右侧有一个“连接”chip。点开后默认是微信 tab�
 - 清理：每次成功落盘后顺手清理该目录，删除超过 30 天的文件，并只保留最近 500 个（按 mtime，至少保留 1 个）；清理失败只记 warn，不影响本条消息。当前没有单独的保留天数/数量配置项。
 - 失败降级：下载失败、空文件、超限、类型不支持、附件校验失败或携带图片投递失败时，都不会静默丢消息；Ria 仍会收到原文字（或占位）加一行 `[图片接收失败：<原因>]`，日志记 `[wx inbound] image <id> rejected (<code>): <reason>`。
 - 协议备注：官方网页版对图片原图使用 `webwxgetmsgimg`，`type=slave` 才是缩略图；`webwxgetmedia` 用于文件/媒体，需要 `mediaid` 和加密文件名。入站图片不做 OCR、不转存微信 CDN URL，也不绕过宿主的附件大小限制。
+
+### 微信 Claw
+
+- 触发：`getupdates` 返回的 `item_list` 里 `type=2` 的 `image_item`；同一消息可以同时有文本和图片。入站开关关闭时纯图片仍回“目前只能接收文本消息。”。
+- 下载与解密：优先 `media.full_url`，否则用 `encrypted_query_param` 拼 CDN 下载地址；`aeskey`（32 位 hex）优先于 `media.aes_key`，按 AES-128-ECB + PKCS#7 解密。CDN 下载不带 bot token，也不带额外 header。
+- 落盘：`DSH_HOME/state/ria/wechat-claw-inbound/YYYYMMDD-HHMMSS-<msgid>.<ext>`，目录 0700、文件 0600，重名追加 `-2`；同样保留 30 天、最多 500 个。
+- 投递：原文字（纯图用占位）加每张图的“（图片已保存：<path>）”和 `{ type: 'image', mediaType, data }`；投递前走宿主 `validateImageBatch`/`validateImage`。
+- 失败：下载、解密、超限、格式或附件校验失败都保留文字并追加 `[图片接收失败：<原因>]`；日志是 `[claw inbound] image <id> rejected (<code>): <reason>`。
+- 出站：`![alt](path)` 指向本机图片时，先 `getuploadurl` 拿上传地址，AES-128-ECB 加密后 POST 到 CDN，成功以响应头 `x-encrypted-param` 为准，再发 `type=2` 的 `image_item`；一条消息一张图，caption 作为单独文本先发。
+- 出站失败：单张图失败只回退一条可见文本“图片 <name> 发送失败，请在 Ria 会话中查看原图”，不吞整条回复；围栏代码块不发送；暂停时图片和文本一样不发。
+- 协议来源：腾讯公开的 `Tencent/openclaw-weixin` 客户端实现（`docs/protocol.md`、`src/api/types.ts`、`src/messaging/send.ts`、`src/cdn/upload.ts`、`src/media/media-download.ts`）。

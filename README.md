@@ -7,7 +7,7 @@
 
 一个 DSH Web 插件：全局只有一个 Ria。她不直接承担实现工作，而是管理用户已有的顶层 Session：转述需求、跟踪进度、总结经验并分发。
 
-Ria 自己是一个普通的顶层 DSH Session，运行 PTC preset，带管理者 prompt 和 10 个 ria_* 工具。worker 侧不需要安装任何东西，收到的就是普通用户消息；防误发提示由 agent 作用域的 system prompt section 提供，不修改消息内容。
+Ria 自己是一个普通的顶层 DSH Session，运行 PTC preset，带管理者 prompt 和 11 个 ria_* 工具。worker 侧不需要安装任何东西，收到的就是普通用户消息；防误发提示由 agent 作用域的 system prompt section 提供，不修改消息内容。
 
 ![Ria 入口打开后的会话界面](docs/ui-final.png)
 
@@ -23,7 +23,7 @@ Ria 自己是一个普通的顶层 DSH Session，运行 PTC preset，带管理�
 
 ## 当前状态
 
-- Phase 0–24 已实现：单例、PTC 创建、任务模型 P0（split 属于 P1、当前返回 not_supported；用户消息自动登记 intake、8 态状态机、ria_resolve 定性、合并、归档、重启恢复）、转述、读取、memory、重启恢复（task 与 Ria 自己未完成 turn 都能续上，含恢复上限可见性）、侧边栏入口、进程内微信和入口右侧的微信 chip、worker 审批可见性、new-session 欢迎卡片、系统 prompt 防误发提示与设置页开关、临时 worker 权限调整、微信长回复/复杂 Markdown 自动转 .md 文件，worker 结束 turn 后自动唤醒 Ria，微信推送的暂停/恢复，以及暂停状态和手动开关的 UI，带 ticketId 派发的 note 硬约束与可见的 turn-tail 派发卡片、同步到微信的派发确认文本，以及对已持久化条目提供至少一次投递与失败可见性的 outbox；blocked+waitingOn=user 的 ticket 可带结构化 attention；微信出站图片已实现（assistant 回复里的本机图片会作为微信图片发出），入站图片仍预留；Ria 可为新建或已有 worker 选择/切换模型（失败码 model_not_found），ria_status 会显示当前模型。
+- Phase 0–25 已实现：单例、PTC 创建、任务模型 P0（split 属于 P1、当前返回 not_supported；用户消息自动登记 intake、8 态状态机、ria_resolve 定性、合并、归档、重启恢复）、转述、读取、memory、重启恢复（task 与 Ria 自己未完成 turn 都能续上，含恢复上限可见性）、侧边栏入口、进程内微信和入口右侧的微信 chip、worker 审批可见性、new-session 欢迎卡片、系统 prompt 防误发提示与设置页开关、临时 worker 权限调整、微信长回复/复杂 Markdown 自动转 .md 文件，worker 结束 turn 后自动唤醒 Ria，微信推送的暂停/恢复，以及暂停状态和手动开关的 UI，带 ticketId 派发的 note 硬约束与可见的 turn-tail 派发卡片、同步到微信的派发确认文本，以及对已持久化条目提供至少一次投递与失败可见性的 outbox；blocked+waitingOn=user 的 ticket 可带结构化 attention；微信出站图片已实现（assistant 回复里的本机图片会作为微信图片发出），入站图片仍预留；Ria 可为新建或已有 worker 选择/切换模型（失败码 model_not_found），ria_status 会显示当前模型；待处理消息可列出或撤回（ria_queue，支持按 itemId 或 ria_request 的 requestId 撤回）。
 - 已验证环境：DSH 0.2.2-rc.1，Node 26，真实 Web profile 的隔离副本。
 - 微信入站目前只投递文本（入站图片仍预留）；出站可发文本、.md 文件与本机图片，见“图片（出站）”。扫码登录需要在弹层里完成一次，之后 DSH 重启会自动复用凭据。
 
@@ -62,7 +62,7 @@ DSH_HOME/state/ria
 
 DSH 的正常会话界面要求 Session 属于一个 Workspace。插件会为该目录创建一个标题为 Ria 的专用 Workspace，并把 Ria 挂进去。因此工作区列表里会多一个名为 Ria 的条目，这是输入框可用的必要条件，不是可选的 UI 装饰。
 
-Ria 运行 PTC 模式：模型直接看到 run_code 和生成的 SDK，10 个 ria_* 工具通过 SDK 调用。创建时固定 agentPreset=ptc；如果 ptc preset/runtime 不可用，会明确报错，不会退回 standard。
+Ria 运行 PTC 模式：模型直接看到 run_code 和生成的 SDK，11 个 ria_* 工具通过 SDK 调用。创建时固定 agentPreset=ptc；如果 ptc preset/runtime 不可用，会明确报错，不会退回 standard。
 
 ## 欢迎提示
 
@@ -161,10 +161,15 @@ Ria 入口标题右侧有一个“微信”chip。点开后可以扫码登录微
 | ria_spawn | 新建一个顶层 worker 会话。cwd 必须是存在且可读的绝对目录；agentPreset 可选；title 可选（创建后用 title 服务重命名，失败只返回 titleError，不影响创建）；model、provider、reasoningEffort 可选，用于给新会话选模型。model 在创建前按宿主模型注册表解析，未知或歧义（同名模型属于多个 provider 且未给 provider）会直接返回 model_not_found，不创建会话；创建后 selectModel 失败会返回 ok=false + 已创建的 sessionId，并说明它仍使用默认模型，可用 ria_model 重试。失败码：workspace_missing、preset_not_found、spawn_failed、model_not_found。新会话作为 top-level worker 出现在 ria_status scope=sessions，不会被当成 subagent。 |
 | ria_model | 改一个已存在顶层会话（默认 worker；明确要求时也可改 Ria 自己）的模型。只改模型选择，不发消息、不建 ticket、不唤醒会话。改前按 ria_request 的预检检查会话存在、非 subagent、未归档、cwd 可用，另加 model_not_found。model 必填；模型名在多个 provider 下都存在时必须显式给 provider。成功返回 selected {provider, model, reasoningEffort?} 与已知的 previous；ria_status scope=sessions/recent 会立即反映新模型。 |
 | ria_request | 把 ticket 的消息发给一个或多个 worker。ticketId 与 note 均必填；mode=queue 或 steer；content 支持 text/image/file；attachments 支持最多 20 个图片绝对路径（png/jpeg/webp/gif），与 content 一起作为 text + image parts 投递，交给宿主 attachment 服务统一校验和存储。目标 executor 必须等于 ticket.executor。Host 先把 note 和微信镜像写入副作用 outbox，有活跃 turn 时立即记录到 ria.json，由插件 client 在 Ria 会话当前轮次末尾显示成可见卡片，不进入模型上下文；没有活跃 turn 时留待下一次 turn/start、startup 或 30 秒 tick 补投。同时把 note 作为“📌 任务已派发：<note>”推送到微信；发送失败由 outbox 退避重试，不阻断派发。缺 note、空白或超长会直接报错且不投递。附件预检失败码：attachment_missing、attachment_invalid、model_no_image；预检失败不投递、不写 recentWorkers、不动 ticket。Host 不加消息前缀；防误发提示由 agent system prompt section 提供。 |
-| ria_read | 读某个 Session 的近期消息。live 用 snapshotEvents，冷会话用持久化 events，不 resume。 |
+| ria_read | 读某个 Session 的近期消息。live 用 snapshotEvents，冷会话用持久化 events，不 resume。返回值还带 queue：与 ria_queue list 相同的 pending 视图，冷会话为 null。 |
+| ria_queue | 列出或撤回一个顶层 worker 尚未执行的消息。action=list 返回 running 与 queue（id、placement=queued/steering/context、可选 rpcId、preview）；冷会话 queue=null。action=remove 接受 itemId 或 rpcId（rpcId 来自 ria_request 的 requestId；两者都给时 itemId 优先），不可恢复，只删 pending，不停止当前 turn、不改 ticket、不影响 recentWorkers。失败码 queue_item_not_found、queue_remove_failed；预检同 ria_request。 |
 | ria_approval | 列出正在等待审批的 worker（仅限有 active ticket 的 executor）。只读：不批准、不拒绝、不替 UI answerer 作答。 |
 | ria_grant | 临时调整一个 worker 的 sandbox mode 和/或 approval policy。action=set/list/reset；set 必须带 userConfirmed=true，并记录原值、到期时间、审计，任务结束或 reset 时恢复。 |
 | ria_memory | read/remember/forget。写 stateDir/memory.md，0600，上限 4096 字节。 |
+
+### 排队消息（ria_queue）
+
+`ria_queue` 管理一个顶层 worker 尚未执行的消息。`action=list` 返回 running 和 queue：`queued` 是下一轮才执行的消息，`steering` 是插进当前轮的插播，`context` 是其它非用户上下文；每项带 id、placement、可选的 rpcId 和约 120 字 preview。冷会话没有内存队列，queue 为 null。`action=remove` 接受 itemId 或 rpcId（都给时 itemId 优先）；rpcId 就是 `ria_request` 返回的 requestId，是 Ria 找回排队消息的唯一句柄。撤回不可恢复，只删除仍 pending 的条目：不停止当前 turn、不改 ticket、不影响 recentWorkers。目标预检与 `ria_request` 一致，Ria 自己和 subagent 会被拒绝；找不到条目返回 `queue_item_not_found`，宿主其它失败返回 `queue_remove_failed`。`ria_read` 的返回值也带同一份 queue。
 
 ### Worker 模型
 
@@ -344,7 +349,7 @@ DSH_HOME/state/ria/
 npm test
 ~~~
 
-smoke 使用 mock ctx 覆盖 ensure、Workspace 挂载、10 个工具、request、ticket 派发都不加前缀、dispatch guard section 安装到 worker 和 Ria、GET/POST /settings 与 GET /state 的 settings、status、read、memory、持久化、grant 的 set/list/reset 与 ticket 关闭恢复，以及新建 Ria 不写任何 session 事件和第二次 ensure 不重复；近期 worker 覆盖空列表、ticket 派发后候选的 title/cwd/lastUsedAt/lastTicketGoal/lastTicketStatus、失败请求不更新、scope=sessions 字段、ria.json 持久化和 lossless；dispatch-guard 测试覆盖 installAll、agent/created 与 disposed、重复安装、开关关闭时 text 为空、注册失败只 warn 和 shutdown；wechat 测试覆盖 assistant 文本提取、入口事件过滤、微信入站去重/回显过滤、失败标记、reconnect skip、状态视图，以及图片入站预留；wechat-image 测试覆盖图片上传/发送字段与去重、成功发送、暂停、本机相对路径图片提取、缺失/非图片回退、围栏代码跳过和 outbound 关闭；wechat-file 测试覆盖阈值/代码块/表格/标题/链接判定、配置/env 覆盖、文件名、短消息不变、长消息发 .md、失败回退文本，以及上传 multipart 和 appmsg 的字段/签名/去重；approvals 测试覆盖只记录活跃 executor、始终 next()、abort/超时/shutdown 清理和 lossless 输出；grants 测试覆盖过期、startup、ticket 缺失/关闭、漂移跳过、恢复失败和审计；startup 测试覆盖达到恢复上限后的通知与 blocked 状态、更新/成功派发清零、以及启动异常通知；worker-idle 测试覆盖正常触发、排除 Ria、非 working ticket/running 状态不触发、按 ticket 节流、开关关闭，以及提示文本要求 read/不假设完成/等用户输入时标 blocked；wechat-pause 测试覆盖手动开关与持久化、非微信消息自动暂停、微信入站自动恢复、host_/schedule 合成消息不触发、manual 优先级、暂停时不出站且丢日志、排队丢弃而在途完成、重启保持，以及恢复后补发 outbox；smoke 还验证 pause/unpause 往返后 pausedAt、resumedAt、pausedBy 和重复读取 status 的字段一致；以及 dispatch-notes 按 session/turn 过滤、错误 session 返回空列表、note 持久化、无 note 的请求不记录、snapshot 读取失败仍派发并记录 note；wechat 和 smoke 还覆盖派发 note 的微信镜像：ticket 格式、未登录/暂停/发送异常都不影响派发与 concludeTurn，失败条目留在 outbox 并可按退避补投；spawn 测试覆盖新建顶层 worker 的参数、title、失败码与 ria_status 可见性；model 测试覆盖 ria_spawn 带 model、创建前拒绝未知模型、创建后 selectModel 失败的回执、ria_model 改模型与 previous、未知/歧义模型、归档/subagent/不存在会话、改 Ria 自己，以及 sessions/recent 的模型字段；attachments 测试覆盖图片 content 投递、attachment_missing/attachment_invalid/model_no_image、多目标部分成功，以及失败不投递、不写 recentWorkers、不动 ticket；attention 测试覆盖结构化问题的设置/读取/清空、旧 blockedReason 票和 ria_status 输出；outbox 测试覆盖幂等入队、重载、退避与 6 次上限、delivered 清理、坏文件恢复、无活跃 turn 排队、turn 开始后补投、失败原因可见和 startup 补投。
+smoke 使用 mock ctx 覆盖 ensure、Workspace 挂载、11 个工具、request、ticket 派发都不加前缀、dispatch guard section 安装到 worker 和 Ria、GET/POST /settings 与 GET /state 的 settings、status、read、memory、持久化、grant 的 set/list/reset 与 ticket 关闭恢复，以及新建 Ria 不写任何 session 事件和第二次 ensure 不重复；近期 worker 覆盖空列表、ticket 派发后候选的 title/cwd/lastUsedAt/lastTicketGoal/lastTicketStatus、失败请求不更新、scope=sessions 字段、ria.json 持久化和 lossless；dispatch-guard 测试覆盖 installAll、agent/created 与 disposed、重复安装、开关关闭时 text 为空、注册失败只 warn 和 shutdown；wechat 测试覆盖 assistant 文本提取、入口事件过滤、微信入站去重/回显过滤、失败标记、reconnect skip、状态视图，以及图片入站预留；wechat-image 测试覆盖图片上传/发送字段与去重、成功发送、暂停、本机相对路径图片提取、缺失/非图片回退、围栏代码跳过和 outbound 关闭；wechat-file 测试覆盖阈值/代码块/表格/标题/链接判定、配置/env 覆盖、文件名、短消息不变、长消息发 .md、失败回退文本，以及上传 multipart 和 appmsg 的字段/签名/去重；approvals 测试覆盖只记录活跃 executor、始终 next()、abort/超时/shutdown 清理和 lossless 输出；grants 测试覆盖过期、startup、ticket 缺失/关闭、漂移跳过、恢复失败和审计；startup 测试覆盖达到恢复上限后的通知与 blocked 状态、更新/成功派发清零、以及启动异常通知；worker-idle 测试覆盖正常触发、排除 Ria、非 working ticket/running 状态不触发、按 ticket 节流、开关关闭，以及提示文本要求 read/不假设完成/等用户输入时标 blocked；wechat-pause 测试覆盖手动开关与持久化、非微信消息自动暂停、微信入站自动恢复、host_/schedule 合成消息不触发、manual 优先级、暂停时不出站且丢日志、排队丢弃而在途完成、重启保持，以及恢复后补发 outbox；smoke 还验证 pause/unpause 往返后 pausedAt、resumedAt、pausedBy 和重复读取 status 的字段一致；以及 dispatch-notes 按 session/turn 过滤、错误 session 返回空列表、note 持久化、无 note 的请求不记录、snapshot 读取失败仍派发并记录 note；wechat 和 smoke 还覆盖派发 note 的微信镜像：ticket 格式、未登录/暂停/发送异常都不影响派发与 concludeTurn，失败条目留在 outbox 并可按退避补投；spawn 测试覆盖新建顶层 worker 的参数、title、失败码与 ria_status 可见性；model 测试覆盖 ria_spawn 带 model、创建前拒绝未知模型、创建后 selectModel 失败的回执、ria_model 改模型与 previous、未知/歧义模型、归档/subagent/不存在会话、改 Ria 自己，以及 sessions/recent 的模型字段；attachments 测试覆盖图片 content 投递、attachment_missing/attachment_invalid/model_no_image、多目标部分成功，以及失败不投递、不写 recentWorkers、不动 ticket；attention 测试覆盖结构化问题的设置/读取/清空、旧 blockedReason 票和 ria_status 输出；outbox 测试覆盖幂等入队、重载、退避与 6 次上限、delivered 清理、坏文件恢复、无活跃 turn 排队、turn 开始后补投、失败原因可见和 startup 补投；queue 测试覆盖 queued/steering/context 三种 placement、itemId/rpcId 撤回、item 不存在、rpcId 解析失败、session_missing/not_top_level/session_archived、冷会话 queue=null，以及 updateQueue 抛错映射 queue_remove_failed。
 
 ## 限制
 

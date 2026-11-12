@@ -63,8 +63,9 @@ async function waitForStatus(service, predicate, label) {
   assert.fail(label + ' timed out: ' + JSON.stringify(view.login))
 }
 
-// Client channel catalog: the file-transfer helper is listed last, but the
-// dialog must still open on it. Keep the default pinned by name, not by index.
+// Client channel catalog: the file-transfer helper is listed last. The dialog
+// opens on the last channel the user picked, falling back to WeChat; the
+// default must not be tied to catalog order.
 {
   const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
   const catalog = source.match(/var CHANNELS = \[([\s\S]*?)\n    \];/)
@@ -72,8 +73,18 @@ async function waitForStatus(service, predicate, label) {
   const ids = [...catalog[1].matchAll(/\{ id: "([^"]+)"/g)].map(match => match[1])
   assert.deepEqual(ids, ['wechat-claw', 'qq-bot', 'wechat'], 'WeChat file transfer should be the last tab')
   assert.match(source, /var DEFAULT_CHANNEL = "wechat"/)
-  assert.match(source, /React\.useState\(DEFAULT_CHANNEL\)/)
+  assert.match(source, /var LAST_CHANNEL_KEY = "dsh\.ria\.channels\.last\.v1"/)
+  assert.match(source, /React\.useState\(lastChannel\)/, 'the dialog should open on the remembered channel')
+  assert.doesNotMatch(source, /React\.useState\(DEFAULT_CHANNEL\)/, 'the default must not ignore the remembered channel')
   assert.doesNotMatch(source, /React\.useState\("wechat"\)/, 'default must not be an inline tab literal')
+  assert.match(source, /rememberChannel\(channel\.id\)/, 'switching tabs should remember the channel')
+
+  // The dialog is portalled under the Ria entry row in the React tree. Without
+  // local event isolation, a click inside it also activates the host row and
+  // remounts the conversation behind the dialog (visible as a flicker).
+  assert.match(source, /if \(event\.target === event\.currentTarget\) onClose\(\)/)
+  assert.match(source, /onMouseDown: function \(event\) \{ event\.stopPropagation\(\); \}/)
+  assert.match(source, /onPointerDown: function \(event\) \{ event\.stopPropagation\(\); \}/)
 }
 
 // Pure helpers: account-id normalization, QR rendering, request-id prefixes and

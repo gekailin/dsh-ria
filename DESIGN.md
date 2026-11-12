@@ -483,17 +483,20 @@ turn-tail 卡片是插件 client 渲染的，微信桥只转发 assistant/messag
 - 长度：前缀加 note 后按现有规则判断，阈值按包含前缀的完整文本计算；note 上限 500 字，默认 800 字阈值下不会转 .md，若配置更低阈值则照常转文件。
 - 与 turn-tail 卡片的关系：网页显示卡片、微信收到文本是预期双份；两处使用同一个标题语义和同一段 note 原文，措辞一致。
 
-### 11.4 图片（出站已实现，入站预留）
+### 11.4 图片（入站与出站）
 
-配置为 wechatImage.inbound / wechatImage.outbound：出站默认 true，入站默认 false。文本和文件路径不受入站开关影响。
+配置为 wechatImage.inbound / wechatImage.outbound：两项默认都是 true；只认显式 boolean，缺省或非 boolean 时回落默认值。文本和文件路径不受入站开关影响。
 
 - 出站提取：WechatService.deliverAssistant 在发送前调用 extractAssistantImages(text, workspaceRoots)，扫描 ![alt](path)（不扫描三反引号/三波浪线围栏内的示例）。path 必须是绝对路径，或相对 stateDir 与 dsh 进程 cwd 的路径；带 scheme 的地址不处理。
 - 出站校验：statSync 必须是普通文件、大小 1B–20MB，读文件头识别 PNG/JPEG/GIF/WebP。命中则从文本中移除该 Markdown 图片语法并收集为 { name, buffer, mime, path }；缺失、非图片、超限或不可读时保留原 Markdown 文本。
 - 出站顺序：短回复先 enqueue(clean) 再逐张 enqueueImage；长回复先发“已转为 Markdown 文件”提示与 .md（失败回退文本），最后逐张发图片。图片语法不进入 .md 正文，避免微信里显示破图。
 - 出站失败：单张图片失败只记 warn；PauseError 照常上抛并计入暂停丢弃。Outbound.enqueueImage 失败会 reject，调用方可重试。
 - 协议：Outbound.enqueueImage 与文本/文件共用同一条串行队列。WebWxClient.uploadMedia 抽出原 sendFile 的 multipart 单块上传，图片用 formMediaType=pic、uploadMediaType=3；随后 POST /webwxsendmsgimg，Msg.Type=3、MediaId 来自上传响应、Scene=0 仅 filehelper；Ret!==0 抛 WebWxError；MsgID 加入 sentIds。
-- 入站：InboundBridge 用 isImageMessage 判断 MsgType 3。inbound=false 时仍走“目前只能接收文本消息”提示；inbound=true 时调用 deliverImageFromWechat，但 imagePartFromMessage 仍是预留签名，明确抛 “WeChat inbound images are reserved but not implemented”，不投递半成品。
-- outbound=false 时 extractAssistantImages 不运行，assistant 文本按原样发送；文本、.md 文件、暂停、去重和 outbox 路径不变。
+- 入站触发：InboundBridge 用 isImageMessage 判断 MsgType 3。inbound=false 时仍走“目前只能接收文本消息”提示，不下载；inbound=true 时调用 deliverImageFromWechat，Content 里的 <img> 只当元数据（MsgId/mediaid/encryfilename），原文字单独提取，纯图片用“（用户发来一张图片）”占位。
+- 入站下载：WebWxClient.downloadImage 复用当前 Cookie/skey/sid/pass_ticket，先 GET /cgi-bin/mmwebwx-bin/webwxgetmsgimg?MsgID&skey&mmweb_appid（不带 type，取原图），失败再试文件域名；有 mediaid 时再走 webwxgetmedia（sender/mediaid/encryfilename/fromuser/pass_ticket/webwx_data_ticket/sid）。requestBuffer 拒绝 JSON/文本响应、非 2xx 和超过上限的流；downloadImage 把空 Buffer 也视为失败。
+- 入站校验与落盘：receiveInboundImage 依次检查 MsgType、stateDir、downloader、MsgID/MediaId、非空、大小（min(20MB, 宿主 imageLimits.maxImageBytes)）和文件头（PNG/JPEG/GIF/WebP）。成功后写到 <stateDir>/wechat-inbound/YYYYMMDD-HHMMSS-<MsgID>.<ext>，目录 0700、文件 0600，冲突追加 -2/-3；每次成功后删除超过 30 天的文件并只保留最近 500 个，清理失败只 warn。
+- 入站投递：内容是“原文字（或占位）+ 图片已保存绝对路径”的 text part 加 { type:'image', mediaType, data, name }，投递前调用宿主 validateImageBatch/validateImage。携带图片的 prompt 失败时重试纯文本；下载/空/超限/类型/校验失败时投“原文字 + [图片接收失败：<原因>]”，并记 [wx inbound] image <id> rejected (<code>): <reason>，不静默丢消息。保存路径可直接用于后续 ria_request 的 attachments。
+- outbound=false 时 extractAssistantImages 不运行，assistant 文本按原样发送；文本、.md 文件、暂停、去重和 outbox 路径不变。inbound=false 时入站图片不下载、不落盘，只回“目前只能接收文本消息”。
 
 ## 12. 状态文件
 
@@ -509,6 +512,7 @@ stateDir/
   wechat/
     creds.json      # 登录凭据，0600
     state.json      # seen 消息 id（上限 500）、outbox（上限 50）、暂停状态与时间
+  wechat-inbound/   # 入站图片原图，YYYYMMDD-HHMMSS-<MsgID>.<ext>，目录 0700、文件 0600
 ~~~
 
 没有 lessons、lock、briefs。`outbox.json` 是唯一独立于 ria.json 的副作用队列，不与微信内部的 Outbound 队列混用。
@@ -596,13 +600,13 @@ Phase 16：note 硬约束（带 ticketId 的 request 必须传 note，最多 500
 
 Phase 17：派发 note 同步微信（ticket note 发“📌 任务已派发：<note>”，当时带 note 的 quick relay 发“📌 消息已转交：<note>”（历史行为，Phase 20 已移除）；走 outbox + sendDispatchNote；暂停/未登录/发送失败由 outbox 退避重试，不影响派发和 concludeTurn）。
 
-Phase 18：微信图片接口预留（识别 MsgType 3、入站下载/转换/投递签名与 TODO、出站 enqueueImage 签名与 TODO；wechatImage.inbound/outbound 默认 false，文本路径不变）。
+Phase 18：微信图片接口预留（识别 MsgType 3、入站下载/转换/投递签名与 TODO、出站 enqueueImage 签名与 TODO；当时 inbound/outbound 默认 false，文本路径不变；Phase 26 已补齐入站）。
 
 Phase 19：完整任务模型 P0。schema v2（tickets[]、8 态、waitingOn、attempts、recovery、parent/child、resolution、revision、ticketFeedback）；RiaStore.transitionTicket 唯一状态入口与 28 条转移/10 条不变量；agent/pre-step 自动登记 intake + ria_resolve 定性 + turn-stopping 兜底 + turn/end 异常收尾四层强制点；merge（M1 消息并入、M2 ticket→ticket）；终态 24h/50 条窗口归档与月度日志、history/ticketId/reopen；删除顶层 inFlight，改为扫未收敛 ticket 恢复，恢复上限按 ticket 计。
 
 Phase 20：任务术语改名为 ticket：ria_task→ria_ticket、taskId→ticketId、内部 store 与状态机字段统一；ria_request 的 ticketId 与 note 均必填，移除 quick relay。
 
-Phase 21：微信出站图片。assistant 文本中的本机 Markdown 图片提取为图片消息（绝对或相对 stateDir/cwd，按文件头识别 PNG/JPEG/GIF/WebP，上限 20MB，跳过围栏代码）；与文本/.md 共用串行队列、暂停门禁和去重；图片上传用 mediatype=pic、MediaType=3，发送用 webwxsendmsgimg Type=3；outbound 默认 true，入站仍预留。
+Phase 21：微信出站图片。assistant 文本中的本机 Markdown 图片提取为图片消息（绝对或相对 stateDir/cwd，按文件头识别 PNG/JPEG/GIF/WebP，上限 20MB，跳过围栏代码）；与文本/.md 共用串行队列、暂停门禁和去重；图片上传用 mediatype=pic、MediaType=3，发送用 webwxsendmsgimg Type=3；outbound 默认 true。该阶段入站仍预留，Phase 26 补齐。
 
 Phase 22：副作用 outbox（stateDir/outbox.json；dispatch note、微信镜像、恢复/blocked 提示先入队；有 turn 立即投，无 turn 等 turn/start、startup 或 30 秒 tick；至少一次、幂等 noteId、10s/1m/5m/15m/1h 最多 6 次、failed 保留、delivered 24h 清理、上限 500、ria_status 可查）。
 
@@ -611,6 +615,8 @@ Phase 23：结构化 attention（blocked + waitingOn=user 时可带 kind/questio
 Phase 24：worker 模型选择。ria_spawn 支持 model/provider/reasoningEffort，create 前解析注册表、create 后 selectModel；新增 ria_model 改已存在会话（含 Ria 自己，subagent 拒绝）；失败码 model_not_found；ria_status 的 sessions/recent 暴露 provider/model/reasoningEffort。
 
 Phase 25：排队消息控制。ria_queue 支持 list/remove，读取 sessionController.state 的 pending 队列（queued/steering/context），只删 pending、不 cancel turn、不改 ticket、不影响 recentWorkers；remove 支持 itemId 或 rpcId（ria_request 的 requestId）；ria_read 返回值增加 queue。
+
+Phase 26：微信入站图片。InboundBridge 识别 MsgType 3 后由 WebWxClient.downloadImage 复用登录态取原图（webwxgetmsgimg，失败回落文件域名与 webwxgetmedia）；receiveInboundImage 校验大小/文件头并落盘 stateDir/wechat-inbound（30 天/500 个清理）；以原文字或占位加 image 内容块投给 Ria，成功后路径可直接用于 ria_request attachments；失败仍投文字并附 `[图片接收失败：原因]`；inbound 默认改为 true。
 
 ## 16. 验收
 
@@ -652,7 +658,7 @@ Phase 25：排队消息控制。ria_queue 支持 list/remove，读取 sessionCon
 35. 投递失败不更新 recentWorkers；只有成功派发才更新 lastUsedAt 和 lastTicketId。
 36. 微信弹层显示推送状态（正常“推送中”，暂停“已暂停推送”+ 来源 + 时间），按钮可手动暂停/恢复并立即刷新；自动暂停时只出现轻提示，不弹窗；设置页不重复提供同一开关。
 37. ticket 派发成功后，微信收到一条“📌 任务已派发：<note>”。note 走副作用 outbox 再进 sendDispatchNote：暂停/未登录/发送失败按 10s/1m/5m/15m/1h 最多重试 6 次，failed 保留原因，不影响派发和 concludeTurn。网页卡片与微信文本并存，使用同一段 note 原文。
-38. 微信出站图片可用：assistant 文本里指向本机存在图片文件的 Markdown 图片会作为微信图片发出，图片语法从文本中移除；文件缺失/非图片/超限时保留原文并照常发文本；图片走与文本/.md 相同的串行队列和暂停门禁；outbound 默认 true，outbound=false 时保持纯文本；入站图片仍预留，转换函数明确报未实现。
+38. 微信图片双向可用：出站把 assistant 文本里指向本机存在图片文件的 Markdown 图片作为微信图片发出，图片语法从文本中移除，走与文本/.md 相同的串行队列和暂停门禁；入站把 MsgType 3 的原图下载、校验后落盘到 stateDir/wechat-inbound 并作为 text+image 用户消息投给 Ria，纯图片有占位文字；下载/超限/类型/校验失败仍投原文字并附 `[图片接收失败：<原因>]`；inbound/outbound 默认都是 true，可分别关闭。
 39. 派发卡片、微信镜像、恢复/blocked 提示都先写副作用 outbox；已持久化条目有活跃 turn 立即投 card，无 turn 留待补投；至少一次、幂等 noteId、失败退避且 failed 可见；ria_status 能按 ticketId 查看。
 40. blocked + waitingOn=user 的 ticket 可带结构化 attention；旧 blockedReason 仍可读；离开 blocked 或关闭清空；ria_approval 只读 worker 审批，与 attention 不混。
 41. ria_spawn 可在创建时指定模型；ria_model 可改已存在顶层会话（含 Ria 自己，不含 subagent）；未知/歧义模型返回 model_not_found，不在创建前留下会话；ria_status 的 sessions/recent 带当前 provider/model/reasoningEffort。
@@ -672,7 +678,7 @@ Phase 25：排队消息控制。ria_queue 支持 list/remove，读取 sessionCon
 - 防误发提示使用静态 system prompt section，对所有 agent 生效；任务消息不加前缀。
 - 设置页提供 dispatchGuard 开关，默认打开。
 - 派发 note 先写副作用 outbox；有活跃 turn 时记录到 ria.json 供网页卡片读取，微信镜像由 outbox 投递；当前 ria_request 的 ticketId 与 note 均必填，已移除 quick relay。
-- 微信出站图片只发本机文件：assistant 文本里的 Markdown 图片路径必须落在 stateDir、进程 cwd 或绝对路径；不支持远程 URL、DSH imagePart 或粘贴图片。入站图片仍预留。
+- 微信出站图片只发本机文件：assistant 文本里的 Markdown 图片路径必须落在 stateDir、进程 cwd 或绝对路径；不支持远程 URL、DSH imagePart 或粘贴图片。入站图片会下载原图并落盘到 stateDir/wechat-inbound，不支持从 CDN URL 直接引用。
 
 ## 18. 风险
 
@@ -714,23 +720,26 @@ Phase 25：排队消息控制。ria_queue 支持 list/remove，读取 sessionCon
 | attention 与 blockedReason 漂移 | blocked+waitingOn=user 才允许 attention；没有 question 时用 blockedReason 兜底；离开 blocked/关闭自动清空 |
 | 出站图片被当成通用图床 | 只扫描 assistant 文本里的 Markdown 图片，只接受本机 stateDir/cwd/绝对路径和四种图片文件头；远程 URL、DSH imagePart 和粘贴图片都不处理 |
 | 图片发送失败拖垮整条回复 | 文本先发；单张图片失败只 warn，PauseError 按暂停规则丢弃；缺失/非图片在提取阶段就保留原 Markdown 文本 |
+| 入站图片协议变化或下载失败 | webwxgetmsgimg 失败回落文件域名和 webwxgetmedia；仍失败则投原文字并附 `[图片接收失败：原因]`，不静默丢消息 |
+| 入站图片占满磁盘 | 保存到 stateDir/wechat-inbound，目录 0700、文件 0600；每次成功落盘后删除超过 30 天的文件并只保留最近 500 个，清理失败只 warn |
+| 入站图片过大或伪装类型 | 上限取 20MB 与宿主 imageLimits.maxImageBytes 的较小值，按文件头只认 PNG/JPEG/GIF/WebP；拒绝后仍投文字 |
 | 排队消息撤回不可恢复 | 只接受 itemId/rpcId，rpcId 来自 ria_request 的 requestId；先 list 核对 preview 再 remove；remove 只删 pending，不停止当前 turn |
 
 ## 19. 总结
 
-全局一个 Ria，PTC preset（agentPreset=ptc）+ 管理者 prompt、memory.md 和 11 个工具；模型通过 run_code SDK 调用工具；用 ticket 管理谁做什么，request 就是普通会话消息；通过可开关的 agent system prompt section 提供通用防误发提示（简短英文，不提具体会话），任务消息不加前缀；派发必须提供 note，Host 记录后由 client 在 turn 末尾显示卡片，并把同一段 note 以“📌 任务已派发”文本同步微信，然后结束本轮；worker idle 时自动唤醒 Ria（只读事件、30 秒节流）；重启按未收敛 ticket 继续；派发卡片、微信镜像和恢复提示走副作用 outbox，至少一次、失败退避、failed 可见；blocked + waitingOn=user 的 ticket 可带结构化 attention，说明在等用户回答什么；微信客户端进程内运行，长回复/复杂 Markdown 自动转 .md 文件；推送可暂停（手动或按消息通道自动切换），暂停只停出站、连接保持；新建会话在 blank 状态显示一张 client 侧欢迎卡片（不写日志、不调用模型）；微信出站图片可用（assistant 文本里的本机 Markdown 图片会作为图片发出），入站图片仍预留。
+全局一个 Ria，PTC preset（agentPreset=ptc）+ 管理者 prompt、memory.md 和 11 个工具；模型通过 run_code SDK 调用工具；用 ticket 管理谁做什么，request 就是普通会话消息；通过可开关的 agent system prompt section 提供通用防误发提示（简短英文，不提具体会话），任务消息不加前缀；派发必须提供 note，Host 记录后由 client 在 turn 末尾显示卡片，并把同一段 note 以“📌 任务已派发”文本同步微信，然后结束本轮；worker idle 时自动唤醒 Ria（只读事件、30 秒节流）；重启按未收敛 ticket 继续；派发卡片、微信镜像和恢复提示走副作用 outbox，至少一次、失败退避、failed 可见；blocked + waitingOn=user 的 ticket 可带结构化 attention，说明在等用户回答什么；微信客户端进程内运行，长回复/复杂 Markdown 自动转 .md 文件；推送可暂停（手动或按消息通道自动切换），暂停只停出站、连接保持；新建会话在 blank 状态显示一张 client 侧欢迎卡片（不写日志、不调用模型）；微信图片双向可用：出站把 assistant 文本里的本机 Markdown 图片作为图片发出；入站下载微信原图、校验落盘后以“文字+图片”投给 Ria，失败仍投文字并附原因。
 
 ## 20. 实现状态
 
 截至当前版本：
 
-当前状态：单例与侧边栏入口、PTC 创建、ticket 任务模型（intake、8 态状态机、resolve 定性、merge、归档、重启恢复）、转述与 note 卡片、worker 完成自动唤醒、审批可见性（自动 blocked+attention、卡片/微信提醒、TTL 与重启对账）与临时权限、worker 模型选择、附件投递、排队消息撤回、结构化 attention、副作用 outbox，以及进程内微信（文本、.md、本机图片出站，推送可暂停）均已实现。已验证环境为 DSH 0.2.2-rc.1、Node 26，使用真实 Web profile 的隔离副本；微信入站目前只投递文本，入站图片仍预留。逐阶段的落地记录见第 15 节。
+当前状态：单例与侧边栏入口、PTC 创建、ticket 任务模型（intake、8 态状态机、resolve 定性、merge、归档、重启恢复）、转述与 note 卡片、worker 完成自动唤醒、审批可见性（自动 blocked+attention、卡片/微信提醒、TTL 与重启对账）与临时权限、worker 模型选择、附件投递、排队消息撤回、结构化 attention、副作用 outbox，以及进程内微信（文本、.md、本机图片出站、图片入站，推送可暂停）均已实现。已验证环境为 DSH 0.2.2-rc.1、Node 26，使用真实 Web profile 的隔离副本。逐阶段的落地记录见第 15 节。
 
-- Phase 0–25 已实现；Phase 0–4、Phase 6、Phase 13 和 Phase 16 的 turn-tail 卡片通过隔离环境的真实 DSH 验证，其余阶段由单元测试和 smoke 覆盖。Phase 16 的截图使用手工写入 ria.json 的 note 验证渲染；真实 toolRequest 写入路径由 smoke 覆盖。
+- Phase 0–26 已实现；Phase 0–4、Phase 6、Phase 13 和 Phase 16 的 turn-tail 卡片通过隔离环境的真实 DSH 验证，其余阶段由单元测试和 smoke 覆盖。Phase 16 的截图使用手工写入 ria.json 的 note 验证渲染；真实 toolRequest 写入路径由 smoke 覆盖。
 - Phase 17 的微信 note 镜像由 test/wechat.mjs 和 smoke 覆盖：ticket 格式、未登录/暂停/发送异常不影响派发和 concludeTurn，失败条目进入副作用 outbox 并按退避补投；没有用真实微信账号验证实际收件。
 - 副作用 outbox 由 test/outbox.mjs 覆盖：幂等入队、重载、退避与 6 次上限、delivered 清理、坏文件恢复、无活跃 turn 排队、turn 开始后补投、失败原因可见、startup 补投；smoke 覆盖卡片写入失败仍记录 note、微信异常后按 due 重试并 delivered。
 - 结构化 attention 由 test/attention.mjs 覆盖：设置/读取/清空、旧 blockedReason 票、ria_status 输出；ria_approval 仍只读 worker 审批，不处理 attention。
-- Phase 18 的入站图片仍是预留：test/wechat.mjs 覆盖开关归一化、MsgType 3 识别和转换函数明确报未实现。
+- Phase 26 的入站图片由 test/wechat-image-inbound.mjs 与 test/wechat.mjs 覆盖：下载主请求失败后回落 webwxgetmedia、Cookie 透传、Content-Length/流式超限、无 Cookie 错误传播、落盘命名与重名、纯图片占位、带文字保留、下载失败/空/超限/未知类型降级、30 天与 500 个清理、宿主附件校验失败与图片投递失败回退纯文本、InboundBridge 投递 [text,image]；没有用真实微信账号验证原图下载。
 - Phase 21 的微信出站图片由 test/wechat-image.mjs 覆盖：multipart 的 mediatype=pic、MediaType=3、webwxsendmsgimg 的 Type=3/MediaId/去重、Outbound 成功与暂停、相对路径图片提取并从文本移除、缺失/非图片回退、围栏代码跳过、outbound=false 保持纯文本；没有用真实微信账号验证实际上传和图片消息。
 - Phase 15 的暂停状态卡、手动开关和自动暂停轻提示没有在真实微信账号下走完整链路；弹层只在已登录时显示状态卡，隔离 profile 无法伪造成已登录。
 - Phase 14 的近期 worker 记录、scope=recent 候选字段、空窗口和无 lastUsedAt 字段的 lossless 输出由 smoke 覆盖；挑选行为本身是 prompt 约束，未用真实模型验证。
@@ -750,10 +759,10 @@ Phase 25：排队消息控制。ria_queue 支持 list/remove，读取 sessionCon
 - lib/outbox.mjs：副作用队列、原子写、幂等 key、退避重试、delivered 清理、失败保留、summary。
 - lib/grants.mjs：临时权限 set/list/reset、原值记录、task close/expiry/startup 恢复、审计、失败重试。
 - lib/client.js：侧边栏入口、瞬时 launcher、入口右侧微信 chip 和登录弹层（含推送状态卡、暂停/恢复按钮、自动暂停轻提示）、设置页 Ria section、conversation.chat.turnTail 派发 note 卡片、conversation.input.dock 的 blank 欢迎卡片。
-- lib/wechat/wxweb.mjs：文件传输助手协议、扫码登录、文本发送、uploadMedia 单块 multipart 上传、.md 文件 appmsg 发送、图片 sendImage（mediatype=pic、MediaType=3、webwxsendmsgimg Type=3）。
+- lib/wechat/wxweb.mjs：文件传输助手协议、扫码登录、文本发送、uploadMedia 单块 multipart 上传、.md 文件 appmsg 发送、图片 sendImage（mediatype=pic、MediaType=3、webwxsendmsgimg Type=3），以及 requestBuffer/downloadImage 原图下载（webwxgetmsgimg，回落文件域名与 webwxgetmedia）。
 - lib/wechat/markdown.mjs：长度/代码块/表格/标题/链接判定、配置归一化、文件名。
-- lib/wechat/image.mjs：wechatImage.inbound/outbound 归一化（outbound 默认 true）、MsgType 3 识别、文件头识别 imageMediaType，以及入站 imagePartFromMessage 签名与 TODO（当前明确报未实现）。
-- lib/wechat/service.mjs：进程内连接、assistant 文本回传、派发 note 文本镜像、长回复转文件/失败回退、出站 Markdown 图片提取与发送、入站去重、Ria 投递、重连积压处理、暂停状态与按通道自动切换，以及默认关闭的图片入站预留分支（deliverImageFromWechat）。
+- lib/wechat/image.mjs：wechatImage.inbound/outbound 归一化（默认都 true）、MsgType 3 识别、<img> 元数据/原文字解析、入站原图校验与 stateDir/wechat-inbound 落盘、30 天/500 个清理、失败文本，以及 imageMediaType 文件头识别。
+- lib/wechat/service.mjs：进程内连接、assistant 文本回传、派发 note 文本镜像、长回复转文件/失败回退、出站 Markdown 图片提取与发送、入站去重、入站图片下载/校验/落盘/文本+图片投递与失败降级、Ria 投递、重连积压处理、暂停状态与按通道自动切换。
 - lib/wechat/request-ids.mjs：wx_ / host_ requestId 前缀与来源判定。
 - lib/wechat/outbound.mjs：串行发送、图片/文件/文本共用队列、暂停门禁、排队丢弃、在途完成。
 - cordis.patch.yml：插件 patch。
@@ -762,8 +771,9 @@ Phase 25：排队消息控制。ria_queue 支持 list/remove，读取 sessionCon
 - test/smoke.mjs：Host 流程 smoke；近期 worker 记录、scope=recent/sessions 字段、空窗口、失败不更新、prompt 规则与 lossless 断言；dispatch-notes 按 session/turn 过滤、错误 session 空列表、note 持久化、snapshot 读取失败仍派发并记录 note；派发 note 的微信镜像调用、失败隔离与 outbox 重试。
 - test/attention.mjs：attention 设置/读取/清空、旧 blockedReason 票、ria_status 输出。
 - test/outbox.mjs：outbox 单元与服务集成测试（幂等、退避、失败上限、清理、坏文件、无 turn 排队、补投）。
-- test/wechat.mjs：微信服务单元测试，含派发 note 的 task/quick 格式、暂停丢弃、恢复发送、未登录跳过、发送异常，以及图片开关归一化、MsgType 3 识别和入站预留函数报错。
+- test/wechat.mjs：微信服务单元测试，含派发 note 的 task/quick 格式、暂停丢弃、恢复发送、未登录跳过、发送异常，以及图片开关归一化、MsgType 3 识别、默认开启投递与显式关闭提示。
 - test/wechat-image.mjs：图片上传/发送字段、去重、Outbound 成功与暂停、本机 Markdown 图片提取、缺失/非图片回退、围栏跳过、outbound=false。
+- test/wechat-image-inbound.mjs：入站图片下载（webwxgetmsgimg 失败回落 webwxgetmedia、Cookie/query）、requestBuffer 超限/无 Cookie、落盘与重名、纯图片占位、下载失败/空/超限/未知类型降级、30 天与 500 个清理、宿主附件校验失败与投递失败回退、InboundBridge 投递 text+image。
 - test/wechat-file.mjs：Markdown 判定、文件发送、失败回退和 multipart/appmsg 单元测试。
 - test/wechat-pause.mjs：手动暂停/恢复、自动按通道切换、合成消息过滤、manual 优先级、队列竞态、丢弃日志、重启持久化。
 - test/approvals.mjs：审批观察器单元测试。
@@ -774,9 +784,9 @@ Phase 25：排队消息控制。ria_queue 支持 list/remove，读取 sessionCon
 - docs/system-dispatch-guard.md：系统级防误发提示调研，含 DSH 注入点、对比、推荐方案和落地步骤；v0.23 已按静态 section + 设置页方案实施。
 - docs/operations.md：运行入口、欢迎提示、ticket 生命周期与转述、派发 note 卡片、副作用 outbox、派发提示开关、归档、重启恢复、worker idle 唤醒。
 - docs/tools.md：11 个 ria_* 工具参考、排队消息、worker 模型、attention、近期 worker、审批可见性和临时权限、manager prompt 约束。
-- docs/wechat.md：微信连接、暂停推送、长回复转 .md、出站图片与入站预留。
+- docs/wechat.md：微信连接、暂停推送、长回复转 .md、出站图片与入站图片（下载协议、落盘、清理、失败降级）。
 - docs/state-and-api.md：状态目录文件清单与 HTTP API。
-- docs/testing.md：22 个测试套件的覆盖范围与本地隔离验证方式。
+- docs/testing.md：24 个测试套件的覆盖范围与本地隔离验证方式。
 - docs/limitations.md：已知限制与安全边界。
 - docs/ui-settings.png：隔离 DSH 中“设置 > Ria”开关的真实界面截图。
 - docs/ui-dispatch-note.png：隔离 DSH 中 Ria 会话轮次末尾的“任务已派发”卡片截图（note 为手工写入 ria.json 的验证数据）。
@@ -792,7 +802,7 @@ Phase 25：排队消息控制。ria_queue 支持 list/remove，读取 sessionCon
 - 宽侧边栏中 chip 位于 Ria 标题右侧；折叠侧边栏不插入。
 - startup 测试覆盖 recoveryCount=3 的 working ticket：启动后产生一条通知、任务变 blocked 并带 blockedReason，status 可见；通知包含 ticketId/executor/goal；更新 task 和成功派发都会把 recoveryCount 清零；pending delivery 重试成功也不会误判为超限；resolveAgent 失败时产生启动失败通知。测试不调用模型。
 - smoke 覆盖近期 worker：首次派发前 scope=recent 为空；成功 ticket 派发后出现 1 个候选并带 title/cwd/lastTicketId/lastTicketGoal/lastTicketStatus/lastUsedAt；scope=sessions 带 title 和可选的 cwd/lastUsedAt；失败 request 不更新；ria.json 持久化 recentWorkers；所有工具输出递归检查为 lossless。
-- smoke 覆盖 Workspace 挂载、11 个工具注册（含 ria_queue）、request 投递、ticket 派发不加前缀、dispatch guard section 同时装到 worker 和 Ria、GET/POST /settings 与 GET /state 的 settings、status、read、memory、持久化，以及新建 Ria 不写任何 session 事件、第二次 ensure 不重复；dispatch-guard 测试覆盖安装、created/disposed、重复安装、开关文本、失败 warning、shutdown；wechat 测试覆盖文本提取、事件过滤、入站去重/回显过滤、失败标记、reconnect skip、状态视图，以及入站图片接口预留（默认关闭、MsgType 3 识别、转换明确报未实现）；wechat-image 覆盖默认开启的本机图片出站、上传/发送协议、文本回退、围栏示例过滤与 outbound 开关；approvals 测试覆盖活跃 executor 过滤、始终 next()、abort/TTL/shutdown 清理和 lossless 输出；grants 测试覆盖授权门槛、原值记录、ticket done 自动恢复、显式 reset、过期、startup、漂移跳过、恢复失败和审计；wechat-file 测试覆盖阈值/代码块/表格/标题/链接、配置/env、文件名、短消息不变、长消息发 .md、失败回退，以及上传和 appmsg 字段；wechat-pause 测试覆盖手动开关与持久化、非微信自动暂停、微信自动恢复、host_/schedule 过滤、manual 不被 channel 覆盖、暂停时不发送、排队丢弃而在途完成、恢复后补发 outbox，以及日志字段。spawn 测试覆盖 create 参数、title 重命名、workspace_missing/preset_not_found/spawn_failed、ria_status scope=sessions 可见且不是 subagent；model 测试覆盖 ria_spawn 带模型、ria_model 改 worker/Ria、previous、未知/歧义模型、归档/subagent/缺失会话、status 模型字段与失败后仍用默认模型；attachments 测试覆盖图片投递 content、attachment_missing/attachment_invalid/model_no_image、多目标部分成功、失败不投递且不动 ticket；attention 与 outbox 测试覆盖结构化等待项和副作用可靠投递；queue 测试覆盖三种 placement、itemId/rpcId 撤回、冷会话 queue=null 与错误映射。本次 npm test 二十二个 suite 全部通过（含 queue）；此前历史记录为十九个测试通过。
+- smoke 覆盖 Workspace 挂载、11 个工具注册（含 ria_queue）、request 投递、ticket 派发不加前缀、dispatch guard section 同时装到 worker 和 Ria、GET/POST /settings 与 GET /state 的 settings、status、read、memory、持久化，以及新建 Ria 不写任何 session 事件、第二次 ensure 不重复；dispatch-guard 测试覆盖安装、created/disposed、重复安装、开关文本、失败 warning、shutdown；wechat 测试覆盖文本提取、事件过滤、入站去重/回显过滤、失败标记、reconnect skip、状态视图，以及图片开关默认开启、MsgType 3 路由与显式关闭提示；wechat-image 覆盖默认开启的本机图片出站、上传/发送协议、文本回退、围栏示例过滤与 outbound 开关；wechat-image-inbound 覆盖原图下载与 webwxgetmedia 回落、超限/无 Cookie、落盘与重名、纯图片占位、各类失败降级、30 天/500 个清理、宿主校验失败与投递失败回退 text+image；approvals 测试覆盖活跃 executor 过滤、始终 next()、abort/TTL/shutdown 清理和 lossless 输出；grants 测试覆盖授权门槛、原值记录、ticket done 自动恢复、显式 reset、过期、startup、漂移跳过、恢复失败和审计；wechat-file 测试覆盖阈值/代码块/表格/标题/链接、配置/env、文件名、短消息不变、长消息发 .md、失败回退，以及上传和 appmsg 字段；wechat-pause 测试覆盖手动开关与持久化、非微信自动暂停、微信自动恢复、host_/schedule 过滤、manual 不被 channel 覆盖、暂停时不发送、排队丢弃而在途完成、恢复后补发 outbox，以及日志字段。spawn 测试覆盖 create 参数、title 重命名、workspace_missing/preset_not_found/spawn_failed、ria_status scope=sessions 可见且不是 subagent；model 测试覆盖 ria_spawn 带模型、ria_model 改 worker/Ria、previous、未知/歧义模型、归档/subagent/缺失会话、status 模型字段与失败后仍用默认模型；attachments 测试覆盖图片投递 content、attachment_missing/attachment_invalid/model_no_image、多目标部分成功、失败不投递且不动 ticket；attention 与 outbox 测试覆盖结构化等待项和副作用可靠投递；queue 测试覆盖三种 placement、itemId/rpcId 撤回、冷会话 queue=null 与错误映射。本次 npm test 二十四个 suite 全部通过（含 queue）；此前历史记录为十九个测试通过。
 - 新建 Ria 后真实 Web UI 在输入框上方显示欢迎卡片（blank 状态），发出第一条消息后消失；没有浏览器 runtime error。修复后的 Ria 会话日志通过 v4 校验（restoreReleasedV4Artifact：VALID，264 个事件），隔离 DSH 重启并重新打开 Ria 不再出现 corrupt。
 - 真实 Web UI 中 ticket 派发的 note 渲染在轮次末尾：DOM 有 [data-ria-dispatch-note="ticket"]，标题“任务已派发”，位于轮次末尾；无 runtime error；截图 docs/ui-dispatch-note.png。真实 ria_request 写入路径由 smoke 覆盖。
 - 审批观察器没有在真实 UI 中触发过；只做了单元测试和 smoke。首次实际审批时需确认 pending 列表和清理行为。
@@ -809,7 +819,7 @@ Phase 25：排队消息控制。ria_queue 支持 list/remove，读取 sessionCon
 - 临时权限没有在真实会话里触发过；只做了单元测试和 smoke，首次 grant 时需确认 DSH 事件投影和恢复行为。
 - sandbox override 无法清除；恢复写回原 effective mode，可能留下同值 override。
 - 微信 .md 文件发送只按网页版协议 mock 验证；真实账号的文件上传/下载尚未验证。
-- 微信出站图片只按网页版协议 mock 验证；真实账号的图片上传和 Type=3 消息尚未验证。只支持 assistant 文本里的本机图片文件，不支持远程 URL、DSH imagePart 或粘贴图片；入站图片仍未实现。
+- 微信图片双向都只按网页版协议 mock 验证；真实账号的图片上传/下载和 Type=3 消息尚未验证。出站只支持 assistant 文本里的本机图片文件，不支持远程 URL、DSH imagePart 或粘贴图片；入站落盘原图但只接受四种图片格式，上限取 20MB 与宿主附件限制的较小值。
 - .md 文件发送失败回退文本时，若文本仍超过 4 块，会按原有文本切块策略截断。
 - 恢复上限在启动时判定；如果给 Ria 的通知本身发送失败，只记录日志，任务仍会保持 blocked，等待用户或下次启动处理。
 - 微信暂停 UI 只在 chip 弹层已登录时出现；自动暂停提示依赖 2 秒/15 秒轮询，最迟约 15 秒才在侧边栏出现。真实微信账号未验证暂停期间的连接保持。

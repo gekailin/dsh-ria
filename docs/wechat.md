@@ -10,7 +10,7 @@ Ria 入口标题右侧有一个“微信”chip。点开后可以扫码登录微
 - 微信发来的文本原样作为普通用户消息进入 Ria，不加前缀，也不直接进 worker。
 - Ria 的每条 assistant 文本回复都会同步回微信，统一以 🌊 前缀标记；暂停推送时除外。
 - 带 note 的派发/转述成功后，note 也会作为一条普通微信文本推送（见 [派发 note 卡片与微信确认](operations.md#派发-note-卡片与微信确认)），同样受暂停开关约束。
-- 入站只投递文本（入站图片仍预留）；出站支持文本、.md 文件与本机图片：assistant 回复里的 Markdown 图片若指向本机存在的图片文件，会作为微信图片发出，见下文“图片”一节。
+- 入站支持文本和图片：微信发来的图片会下载原图、落盘并作为带附件（图片）的普通用户消息进入 Ria，原文字（如有）保留；下载/校验失败时仍投递文字并附失败原因。出站支持文本、.md 文件与本机图片：assistant 回复里的 Markdown 图片若指向本机存在的图片文件，会作为微信图片发出。详见下文“图片”一节。
 - 出站长回复或复杂 Markdown 时，默认改发完整的 .md 文件；短消息和简单文本保持原样。
 - DSH 重启后如有 creds 会自动重连；待发文本超过 10 条时只补发最后 10 条，并先提示跳过了多少条。
 - chip 只在宽侧边栏显示；折叠侧边栏不插入。
@@ -59,22 +59,36 @@ Ria 入口标题右侧有一个“微信”chip。点开后可以扫码登录微
 
 也可以直接写 `markdownFile: false` 关闭整套规则。环境变量优先级高于 profile 配置：`DSH_RIA_MD_FILE`、`DSH_RIA_MD_THRESHOLD`、`DSH_RIA_MD_CODE`、`DSH_RIA_MD_TABLE`、`DSH_RIA_MD_HEADINGS`、`DSH_RIA_MD_LINKS`。阈值会被限制在安全范围（80–100000 字符）。
 
-## 图片（出站已实现，入站预留）
+## 图片
 
-出站图片默认开启，入站图片仍默认关闭：
+出站和入站图片默认都开启；两项可以分别关闭：
 
 ~~~yaml
 - id: ria
   config:
     wechatImage:
-      inbound: false
+      inbound: true
       outbound: true
 ~~~
+
+- `inbound: false` 时，微信图片消息只收到“目前只能接收文本消息”的提示，不下载、不落盘；文本消息不受影响。
+- `outbound: false` 时，assistant 文本里的 Markdown 图片按原样当文本发送；文本、.md 文件、暂停、去重和 outbox 路径不受影响。
+
+### 出站
 
 - 触发：Ria 的 assistant 文本里出现 `![alt](path)`，且 path 指向本机真实存在的图片文件时，该图片会作为微信图片发出；不扫描围栏代码块里的示例。
 - 路径：绝对路径，或相对 Ria 状态目录（`DSH_HOME/state/ria`）与 dsh 进程当前目录；`file://` 等带 scheme 的地址不处理。
 - 类型和大小：按文件头识别 PNG、JPEG、GIF、WebP，大小上限 20 MB；文件不存在、不是图片或超过上限时保留原 Markdown 文本，整条回复照常发送，不会失败。
 - 顺序与失败：先发文本（图片语法从文本里去掉），再逐张发图片。某张图片发送失败只记 warn，不影响已经发出的文本和其他图片；暂停推送时按普通出站规则丢弃。
 - 协议：与 .md 文件共用同一条串行限速队列；上传用 `mediatype=pic`、`MediaType=3`，发送用 `webwxsendmsgimg` 的 `Msg.Type=3`，返回的 MsgID 加入去重集合。`Outbound.enqueueImage()` 仍接受 `{ name, buffer, mime, ref }`，失败会 reject，调用方可重试。
-- 入站：`InboundBridge` 能识别 MsgType 3，但 `imagePartFromMessage` 仍是预留签名（解析 `<img>`、下载原图、转 DSH 图片内容块）；当前明确报 “reserved but not implemented”，不会投递半成品。
-- `outbound: false` 时保留原来的纯文本行为；文本、.md 文件、暂停、去重和 outbox 路径不受影响。
+
+### 入站
+
+- 触发：`InboundBridge` 用 `MsgType=3` 识别图片消息，进入 `deliverImageFromWechat`。图片消息的 `Content` 是 `<img>` 元数据（`MsgId`、`mediaid`、`encryfilename` 等），不是正文；Ria 收到的文字来自这个字段里可读的原文字，没有文字时用“（用户发来一张图片）”占位。
+- 下载：`WebWxClient.downloadImage` 复用当前登录的 Cookie、`skey`、`sid` 和 `pass_ticket`。先请求 `GET /cgi-bin/mmwebwx-bin/webwxgetmsgimg?MsgID=<MsgID>&skey=<skey>&mmweb_appid=<appid>`（不带 `type`，取原图）；失败后再试文件域名，并用 `<img>` 里的 `mediaid`/`encryfilename` 走 `webwxgetmedia`（`sender`、`fromuser`、`pass_ticket`、`webwx_data_ticket`、`sid`）。任一请求返回 JSON/文本、HTTP 非 2xx、空响应或超过大小上限都会明确报错并进入降级。
+- 校验：先按文件头识别 PNG、JPEG、GIF、WebP；空文件、超过上限（20 MB，且不超过宿主 `attachments.imageLimits.maxImageBytes`）、未知类型都拒绝。上限按两者的较小值执行。
+- 落盘：成功保存到 `DSH_HOME/state/ria/wechat-inbound/`，文件名 `YYYYMMDD-HHMMSS-<MsgID>.<ext>`，同名冲突追加 `-2`、`-3`；目录 0700、文件 0600。文本里附一行绝对路径“（图片已保存：<path>）”，之后在 `ria_request` 的 `attachments` 里可以直接引用这个路径转给 worker。
+- 投递：作为一条普通用户消息投给 Ria，内容是原文字（或占位）加 `{ type: 'image', mediaType, data }` 内容块；投递前用宿主的 attachment 校验（`validateImageBatch`/`validateImage`），保持与 `ria_request` 相同的限制。纯图片、带文字图片都保留用户原话。
+- 清理：每次成功落盘后顺手清理该目录，删除超过 30 天的文件，并只保留最近 500 个（按 mtime，至少保留 1 个）；清理失败只记 warn，不影响本条消息。当前没有单独的保留天数/数量配置项。
+- 失败降级：下载失败、空文件、超限、类型不支持、附件校验失败或携带图片投递失败时，都不会静默丢消息；Ria 仍会收到原文字（或占位）加一行 `[图片接收失败：<原因>]`，日志记 `[wx inbound] image <id> rejected (<code>): <reason>`。
+- 协议备注：官方网页版对图片原图使用 `webwxgetmsgimg`，`type=slave` 才是缩略图；`webwxgetmedia` 用于文件/媒体，需要 `mediaid` 和加密文件名。入站图片不做 OCR、不转存微信 CDN URL，也不绕过宿主的附件大小限制。

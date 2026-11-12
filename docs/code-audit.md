@@ -22,7 +22,7 @@
 - inbound 失败 seen 是现有显式测试策略；改成 durable 重试会改变接受/去重语义，暂需用户拍板。
 - delivered 去重窗口是否扩为长期 tombstone、failed 超限丢弃是否允许，涉及存储保留政策。
 - atomicWrite fsync 文件未 fsync 目录：lib/outbox.mjs:30-35；进程退出原子写与掉电持久性不同，暂不扩大平台兼容改动。
-- 图片路径根限制/符号链接/遍历是否需要授权，需确认产品允许任意本地图片的边界；批量图片总预算、弱 magic、缩进 fence 与 Unicode 分片仍需进一步验证。
+- 图片路径根限制/符号链接/遍历是否需要授权，需确认产品允许任意本地图片的边界；批量图片总预算、弱 magic、缩进 fence 仍需进一步验证。Unicode分片已确认并修复，见下文。
 - legacy/task→ticket 迁移不能因历史遗留直接删，旧持久状态兼容仍需保留。
 - lib/image.mjs 不存在，本次审计实际模块为 lib/wechat/image.mjs。
 - .tmp-repair/ 留原处，不提交、不删除；.chrome-v2/ 本轮状态未出现。
@@ -33,6 +33,10 @@
 - 已补 self 错误更正、相对 import 发布清单、partial dispatch 可见确认、不完整 provider catalog 故障注入。
 - 已补暂停/离线 deferred 与真实失败、积压队列两个 await 竞态、取消节流、v2 legacy重载、空白attention重载。最近 npm test 21 suite 全绿（exit 0）。媒体重连/图片故障修复继续中；分片进度及远端事务仍未修。
 - 维护建议：用明确completion gates替换固定20ms/10ms等待；审批TTL注入可控时钟；补注册schema契约与图片/文本/文件跨类型串行测试。不要把共享fixture断言等同真实宿主图像解码测试。
+
+## 新增文本分片问题
+
+- **P2 Unicode分片破坏 emoji（已修 `5a628d3`）**：lib/wechat/outbound.mjs:23-27 按UTF-16长度slice，1800边界可拆开surrogate pair。最小复现：1799个a后接🌊与长文本；修复切点避开代理对，测试max=1/2/1800全部片段isWellFormed且拼接还原原文。不改变长文本最多4片的原有限制。
 
 ## 新增状态机审计结论
 

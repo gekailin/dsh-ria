@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createFixture } from './support/ria-fixture.mjs'
-import { assertTicketInvariants, migrateV1State, TICKET_TRANSITIONS } from '../lib/tickets.mjs'
+import { assertTicketInvariants, migrateV1State, normalizeTicket, TICKET_TRANSITIONS } from '../lib/tickets.mjs'
 
 function openTicket(store, overrides = {}) {
   return store.addTicket({
@@ -329,6 +329,33 @@ function openTicket(store, overrides = {}) {
   assert.equal(ticket.progress.lastPhase, 'ria_read')
   assert.equal(ticket.revision, 2)
   assert.equal('inFlight' in result.data, false)
+}
+
+// Loading v2 attempts must not turn an explicit nonlegacy record into legacy.
+{
+  const invalid = normalizeTicket({ ticketId: 'v2', status: 'working', attempt: { legacy: false, lastRequestId: null } })
+  assert.equal(invalid.attempt.legacy, false)
+  assert.throws(() => assertTicketInvariants(invalid), { code: 'attempt_required' })
+  const valid = normalizeTicket({ ticketId: 'v2-valid', status: 'working', attempt: { legacy: false, lastRequestId: 'req' } })
+  assert.equal(valid.attempt.legacy, false)
+  assertTicketInvariants(valid)
+  const legacy = migrateV1State({ tasks: [{ taskId: 'v1', status: 'working' }] }).data.tickets[0]
+  assert.equal(legacy.attempt.legacy, true)
+  assertTicketInvariants(legacy)
+  assertTicketInvariants(normalizeTicket(JSON.parse(JSON.stringify(legacy))))
+  const fixture = await createFixture()
+  try {
+    const store = fixture.service.store
+    const ticket = openTicket(store, { status: 'working' })
+    ticket.attempt = { legacy: false, lastRequestId: null }
+    store.save()
+    store.load()
+    const loaded = store.ticket(ticket.ticketId)
+    assert.equal(loaded.attempt.legacy, false)
+    assert.throws(() => assertTicketInvariants(loaded), { code: 'attempt_required' })
+  } finally {
+    fixture.cleanup()
+  }
 }
 
 console.log('task-state ok')

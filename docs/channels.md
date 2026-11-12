@@ -46,6 +46,29 @@ Ria 入口标题右侧有一个“连接”chip。点开后是一个通道面板
 - `inbound: false` 时图片消息仍回“目前只能接收文本消息。”，不下载、不落盘；`outbound: false` 时 Markdown 图片按原样当文本发送。
 - 协议来源：腾讯公开的 `Tencent/openclaw-weixin` 客户端实现（`docs/protocol.md`、`src/api/types.ts`、`src/messaging/send.ts`、`src/cdn/upload.ts`、`src/media/media-download.ts`）；CDN 下载不带 bot token，上传成功以响应头 `x-encrypted-param` 为准。
 
+### 正在输入
+
+微信 Claw 在收到真实用户消息并成功交给 Ria 后，会调用原生「正在输入」；默认开启：
+
+~~~yaml
+- id: ria
+  config:
+    channels:
+      wechat-claw:
+        typing:
+          enabled: true
+          refreshMs: 5000
+          maxMs: 600000
+~~~
+
+- `POST /ilink/bot/getconfig`，body 为 `{ ilink_user_id, context_token?, base_info: { channel_version: "1.0.3" } }`，取响应里的 `typing_ticket`，按 `ilink_user_id` 缓存复用。
+- `POST /ilink/bot/sendtyping`，body 为 `{ ilink_user_id, typing_ticket, status, base_info }`；`status=1` 开始，`status=2` 取消。
+- 处理期间每 `refreshMs`（默认 5 秒）续期一次，单次最长 `maxMs`（默认 10 分钟）。
+- 任何出站（文本、图片、Markdown 文件）发送前先发 `status=2`，并且取消与发送按用户串行，避免取消落到发送之后；处理失败、暂停推送、连接断开或退出登录也会取消。
+- `typing_ticket` 请求失败或返回 `ret != 0` 时作废并重取一次；typing 自身的异常只记 debug 日志，不重试风暴、不影响收发。
+- `enabled: false` 时不会发出任何 typing 请求。`GET /channels/wechat-claw/status` 额外返回 `wechatClawTyping: { enabled, refreshMs, maxMs, ticketCache, active }`。
+- 未在真实账号验证「正在输入」是否真的显示；协议来自 `Tencent/openclaw-weixin` 的 `getconfig`/`sendtyping` 调用。
+
 限制与行为：
 
 - 语音、文件、视频仍不处理：会回复一句“目前只能接收文本消息。”，不会交给 Ria。
@@ -67,9 +90,33 @@ QQ 通道使用 QQ 开放平台的“扫码绑定机器人”流程，再通过�
 6. 收到 `message` 事件后只处理 `c2c` 和 `group`。群消息需要 @ 机器人（`mentionGate({ requireMentionInGroup: true, alwaysAnswerC2C: true })`），SDK 会过滤机器人自己的回显并去重。
 7. 回复用 `bot.sendText({ scope, targetId }, text)`，目标来自最近一条入站消息的 `replyTarget`。
 
+### 正在输入（仅 C2C）
+
+QQ 只有单聊（C2C）支持输入状态，群聊和频道不做假实现。默认开启：
+
+~~~yaml
+- id: ria
+  config:
+    channels:
+      qq-bot:
+        typing:
+          enabled: true
+          durationSec: 30
+          refreshMs: 30000
+          maxMs: 600000
+~~~
+
+- 收到真实 C2C 用户消息并成功交给 Ria 后，发送一次 `POST /v2/users/{openid}/messages`，body 为 `{ msg_type: 6, input_notify: { input_type: 1, input_second: N }, msg_seq, msg_id? }`，鉴权沿用现有 QQ access token。
+- `input_second` 是 QQ 显示输入状态的秒数（默认 30），到期自动消失；QQ 没有显式取消接口，所以回复发出前按 `refreshMs` 再发一次续期，回复发出后停止续期。
+- `refreshMs` 不会短于 `durationSec * 1000`，避免比 QQ 的显示窗口更密；单次最长 `maxMs`（默认 10 分钟）。
+- 暂停推送、连接断开、退出登录或处理失败都会清掉续期定时器；typing 异常只记 debug 日志，不影响收发。
+- `enabled: false` 时不会发出任何 typing 请求。`GET /channels/qq-bot/status` 额外返回 `qqTyping: { enabled, durationSec, refreshMs, maxMs, active }`。
+- 未在真实 QQ 账号验证输入状态是否显示；C2C-only 的结论来自官方 SDK `@tencent-connect/qqbot-nodejs` 的 `sendTyping` 与 `sendInputNotify` 实现。
+
 限制与行为：
 
 - 只处理文本。非文本消息会回复“目前只能接收文本消息。”，不会交给 Ria。
+- 「正在输入」只在 C2C 发送；群聊/@ 场景没有输入状态。
 - 群聊必须 @ 机器人；私聊直接说话即可。
 - 机器人需要在 QQ 开放平台有可用的消息权限，并且已经发布或处于可用的沙箱环境；否则网关能连上也可能收不到消息。
 - 没有收到过消息时没有回复目标，主动推送会失败；这是平台限制，不是 Ria 的队列问题。

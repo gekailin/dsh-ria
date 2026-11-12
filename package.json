@@ -30,6 +30,7 @@
     "lib/approvals.mjs",
     "lib/grants.mjs",
     "lib/worker-idle.mjs",
+    "lib/turn-end.mjs",
     "lib/outbox.mjs",
     "lib/dispatch-guard.mjs",
     "lib/wechat",

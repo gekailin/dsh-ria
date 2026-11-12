@@ -5,6 +5,14 @@ import { join } from 'node:path'
 import assert from 'node:assert/strict'
 import { apply } from '../lib/index.js'
 
+// Every relative host import must be shipped, not only available in the checkout.
+const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+const hostSource = readFileSync(new URL('../lib/index.js', import.meta.url), 'utf8')
+for (const match of hostSource.matchAll(/from '\.\/([^']+)'/g)) {
+  const modulePath = 'lib/' + match[1]
+  assert.ok(manifest.files.some(entry => modulePath === entry || modulePath.startsWith(entry + '/')), 'missing runtime module in package files: ' + modulePath)
+}
+
 const stateDir = mkdtempSync(join(tmpdir(), 'dsh-ria-test-'))
 const installed = new Map()
 const prompts = []

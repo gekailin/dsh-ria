@@ -2,7 +2,7 @@
 
 把 A3e-1 的**浪体本身**（不含水滴、不含 R 的斜腿）做成 24×24 的手工优化矢量。三档共用同一个源图和同一套坐标映射，只改变“保留多少笔触”和“墨色有多厚”。
 
-- 源图：`docs/icon-concepts/v5/raw/A3e-1.png`（1024×1024，白底）
+- 源图：原 v5 的 A3e-1.png（1024×1024，白底）；v1–v6 候选已在 2026-11-12 清理，v7 的 SVG 自包含，不再依赖这些文件。
 - 画布：24×24，`viewBox="0 0 24 24"`，`width/height="24"`
 - 颜色：全部 `fill="currentColor"`，单一颜色，无 stroke / 渐变 / filter / mask
 - 坐标映射：`X = (x - 114) * 22 / 791 + 1`，`Y = (y - 115) * 22 / 791 + 1`；源图内容区 (154,254)–(866,770) 映射到约 (2.1,4.9)–(21.9,19.2)
@@ -22,15 +22,7 @@
 
 ### 1. faithful：simplify 描摹 + 人工清理
 
-先取 v6 的描摹稿 `docs/icon-concepts/v6/trace-fill.svg`（它的主体就是 A3e-1 的墨迹），跑：
-
-```bash
-inkscape docs/icon-concepts/v6/trace-fill.svg \
-  --actions='select-all;path-simplify' \
-  --export-plain-svg=docs/icon-concepts/v7/.gen/simp-out.svg
-```
-
-得到 13 个子路径 / 29 段三次曲线的简化稿。然后人工做三件事：
+先取当时 v6 的描摹稿（它的主体就是 A3e-1 的墨迹；该候选已随 v1–v6 在 2026-11-12 清理，原文件不再保留），用 Inkscape 做 `select-all;path-simplify`，得到 13 个子路径 / 29 段三次曲线的简化稿。然后人工做三件事：
 
 1. **删掉 v6 新增的水滴**：原文件有 `<circle cx="20.83" cy="6.40" r="0.7">`，这是 v6 实验加的水滴，不属于 A3e-1，必须去掉。
 2. 保留 A3e-1 自己的三处飞白：顶部卷口内的细白缝、回浪带内的细白缝、左竖底部的缺口；13 个子路径里除主形和大白月牙外，其余就是这些飞白和原小点。
@@ -82,4 +74,4 @@ Q   = skimage.measure.approximate_polygon(c, tolerance)
 
 - 2026-11-12：`lib/client.js` 的 `RiaIcon` 已改为 faithful，新增 `riaicon-sidebar-check.png`；没有重启 dsh web，没有同步安装副本，没有 push。
 - 本次只改 `RiaIcon` 的 path，侧栏折叠/展开仍共用同一个组件。
-- 没有新增水滴；v6 的水滴 circle 在 faithful 里已删，standard / minimal 只有 A3e-1 原有的小点。
+- 没有新增水滴；faithful 里不含水滴，standard / minimal 只有 A3e-1 原有的小点。

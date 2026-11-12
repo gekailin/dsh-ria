@@ -64,6 +64,18 @@ Ria 自己是一个普通的顶层 DSH Session，运行 PTC preset，带管理�
 - `ria_status` 的任意 ticket 响应带 `outbox` 汇总与未投递条目；带 `ticketId` 时只看该票。
 - 微信服务自己的 `Outbound` 队列负责文本/文件/图片的串行发送与去重；副作用 outbox 负责“这条派发确认有没有送达”。两者层次不同，不要混用。
 
+## 派发后 60 秒确认
+
+`sessionController.prompt()` 返回 `accepted` 只表示消息被接收入队，不代表 worker 真的开了 turn。为避免“派发成功、票变 working、worker 从未开跑”的静默丢失，Host 对每次对外派发做确认：
+
+- 派发前先登记 pending（requestId、目标 session、ticket、登记时间），再 `await prompt()`；因此 worker 的 `turn/start` 早于 prompt 返回也能命中。
+- `turn/start` 的 sessionId 等于该票 executor 时，把该票最后一次 attempt 的 `confirmedAt` 写为当前时间；该 attempt 视为已落地。
+- `mode=steer` 注入正在运行的 turn，不会产生新的 `turn/start`，登记时直接视为已确认（`attempt.immediate=true`），不参与超时判定。
+- 每 30 秒的 outbox tick 和 startup 都会检查 working 票：最后一次 attempt 有 `lastRequestId`、无 `confirmedAt`，且距 `startedAt` 已满 60 秒，就把票迁到 `blocked`、`waitingOn=environment`、`failure.code=dispatch_unconfirmed`，`blockedReason` 写明 requestId 与“60 秒内未开始执行”。
+- 同时经 outbox 发一条用户可见告警（kind=`dispatch_unconfirmed`），并镜像到微信；告警说明可能已归档、队列卡住或会话异常，附带 requestId 与 worker 会话 id。
+- 已经是 `done`/`failed`/`cancelled`/`blocked` 的票、以及 Ria 自己的 turn 不参与判定；同一 ticket + requestId 只告警一次。
+- 这个兜底只改变“派发被接受但未开跑”的票；worker 正常开始后不会因为 60 秒到期而被误判。
+
 ## 任务转交提示与设置页
 
 防误发提示不是消息前缀，而是插件为每个 agent 注册的 system prompt section（name 为 dsh-ria:dispatch-guard，order 4100）。

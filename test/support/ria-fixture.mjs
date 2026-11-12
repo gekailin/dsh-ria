@@ -26,7 +26,8 @@ const DEFAULT_IMAGE_LIMITS = {
  * real model or session.
  */
 export async function createFixture(options = {}) {
-  const stateDir = mkdtempSync(join(tmpdir(), 'dsh-ria-fixture-'))
+  const ownsStateDir = !options.stateDir
+  const stateDir = options.stateDir || mkdtempSync(join(tmpdir(), 'dsh-ria-fixture-'))
   const installed = new Map()
   const prompts = []
   const steered = []
@@ -228,6 +229,7 @@ export async function createFixture(options = {}) {
       async prompt(request) {
         prompts.push(request)
         if (promptFailure) throw promptFailure
+        if (options.onPrompt) await options.onPrompt(request)
         return { accepted: true }
       },
       async rename(request) {
@@ -317,12 +319,13 @@ export async function createFixture(options = {}) {
       concludeTurn() { concluded += 1 },
     })
   }
-  const cleanup = () => {
+  const cleanup = (cleanupOptions = {}) => {
     try { service.wechat.shutdown() } catch { /* already stopped */ }
+    try { service.shutdownOutbox() } catch { /* already stopped */ }
     for (const dispose of effects.splice(0).reverse()) {
       try { dispose() } catch { /* already disposed */ }
     }
-    rmSync(stateDir, { recursive: true, force: true })
+    if (ownsStateDir && cleanupOptions.keepState !== true) rmSync(stateDir, { recursive: true, force: true })
   }
   return {
     stateDir,

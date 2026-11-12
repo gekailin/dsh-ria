@@ -4,6 +4,13 @@ import { join } from 'node:path'
 import { apply } from '../../lib/index.js'
 
 const RIA_ID = 'session-ria'
+const MODEL_CATALOG = [
+  { provider: 'provider-ok', model: 'model-vision' },
+  { provider: 'provider-ok', model: 'model-fast' },
+  { provider: 'provider-text', model: 'model-text-only' },
+  { provider: 'provider-ok', model: 'model-shared' },
+  { provider: 'provider-text', model: 'model-shared' },
+]
 const DEFAULT_IMAGE_LIMITS = {
   maxImageBytes: 1024,
   maxImagesPerMessage: 20,
@@ -32,6 +39,7 @@ export async function createFixture(options = {}) {
   let concluded = 0
   let promptFailure = undefined
   const models = new Map()
+  models.set(riaId, { provider: 'provider-ok', model: 'model-vision' })
   models.set('session-worker', { provider: 'provider-ok', model: 'model-vision' })
   models.set('session-no-image', { provider: 'provider-text', model: 'model-text-only' })
 
@@ -46,7 +54,7 @@ export async function createFixture(options = {}) {
       },
       systemPrompt: { section() { return () => {} } },
     },
-    model: { current() { return { provider: 'provider-ok', model: 'model-vision' } } },
+    model: { current() { return models.get(String(riaAgent.id)) } },
     steer(message) { steered.push(message) },
     session: {
       snapshotEvents() { return [] },
@@ -110,6 +118,8 @@ export async function createFixture(options = {}) {
       }
       if (name === 'llm') {
         return {
+          listProviders() { return [{ id: 'provider-ok' }, { id: 'provider-text' }] },
+          async listModels(provider) { return MODEL_CATALOG.filter(item => item.provider === provider).map(item => ({ ...item, id: item.model })) },
           async resolveModelInfo(provider, model) {
             return { provider, model, inputModalities: provider === 'provider-text' ? ['text'] : ['text', 'image'] }
           },
@@ -145,6 +155,7 @@ export async function createFixture(options = {}) {
           const sessionId = String(request.sessionId || riaId)
           riaId = sessionId
           riaAgent.id = sessionId
+          if (!models.has(String(sessionId))) models.set(String(sessionId), { provider: 'provider-ok', model: 'model-vision' })
           return { sessionId, agentPreset: request.agentPreset }
         }
         if (options.failCreate) throw options.failCreate
@@ -167,12 +178,19 @@ export async function createFixture(options = {}) {
         return { agent }
       },
       async list() {
+        const withModel = item => {
+          const current = models.get(String(item.sessionId))
+          if (!current) return item
+          const values = { ...(item.projections && item.projections.values ? item.projections.values : {}), modelSelection: { next: current } }
+          return { ...item, projections: { ...(item.projections || {}), values } }
+        }
         return {
           items: [
-            { sessionId: riaId, running: false, blank: false, updatedAt: 1, cwd: stateDir },
-            { sessionId: 'session-worker', running: true, blank: false, updatedAt: 2, cwd: stateDir, projections: { values: { title: 'Worker One' } } },
-            { sessionId: 'session-no-image', running: false, blank: false, updatedAt: 3, cwd: stateDir, projections: { values: { title: 'Text Only' } } },
-            ...summaries,
+            withModel({ sessionId: riaId, running: false, blank: false, updatedAt: 1, cwd: stateDir }),
+            withModel({ sessionId: 'session-worker', running: true, blank: false, updatedAt: 2, cwd: stateDir, projections: { values: { title: 'Worker One' } } }),
+            withModel({ sessionId: 'session-no-image', running: false, blank: false, updatedAt: 3, cwd: stateDir, projections: { values: { title: 'Text Only' } } }),
+            { sessionId: 'session-subagent', running: false, blank: false, updatedAt: 4, cwd: stateDir, origin: 'subagent' },
+            ...summaries.map(withModel),
           ],
         }
       },
@@ -188,9 +206,26 @@ export async function createFixture(options = {}) {
         if (summary) summary.projections.values.title = request.title
         return { title: request.title, seq: 1 }
       },
+      async selectModel(request) {
+        if (options.failSelectModel) throw options.failSelectModel
+        const id = String(request.sessionId)
+        if (!models.has(id)) throw Object.assign(new Error('session not found'), { code: 'session/not-found' })
+        const available = MODEL_CATALOG.some(item => item.provider === request.provider && item.model === request.model)
+        if (!available) throw Object.assign(new Error('model is not available: ' + request.provider + '/' + request.model), { code: 'session/model-unavailable' })
+        const selected = { provider: request.provider, model: request.model }
+        if (request.reasoningEffort) selected.reasoningEffort = request.reasoningEffort
+        models.set(id, selected)
+        const summary = summaries.find(item => String(item.sessionId) === id)
+        if (summary) summary.projections.values.modelSelection = { next: selected }
+        return { selected }
+      },
       async state() { return { cursor: 1, active: false, running: false, queue: 0, pendingInput: [] } },
       async events() { return { records: [], hasMore: false, cursor: 0 } },
-      async projections() { return { kind: 'sequenced', values: { modelSelection: { next: { provider: 'provider-ok', model: 'model-vision' } } } } },
+      async projections(request) {
+        const id = request && request.sessionId ? String(request.sessionId) : ''
+        const current = models.get(id) || { provider: 'provider-ok', model: 'model-vision' }
+        return { kind: 'sequenced', values: { modelSelection: { next: current } } }
+      },
     },
   }
 

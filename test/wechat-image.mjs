@@ -195,6 +195,58 @@ try {
     assert.equal(makeService(join(dir, 'backlog-image')).state.data.outbox.length, 0)
   }
 
+  // 9. Real image transport failure requires a completed explicit fallback.
+  {
+    const stateDir = join(dir, 'failed-image')
+    const service = makeService(stateDir)
+    const source = '![shot](' + join(dir, 'shot.png') + ')'
+    let entered, release
+    const started = new Promise(resolve => { entered = resolve })
+    const gate = new Promise(resolve => { release = resolve })
+    const texts = []
+    service.outbound = new Outbound({
+      gapMs: 0, prefix: '',
+      async sendImage() { throw new Error('image upload unavailable') },
+      async send(text) { texts.push(text); entered(); await gate; return 'fallback-id' },
+    })
+    service.state.addOutbox(source)
+    const flushing = service.flushOutbox()
+    await started
+    assert.equal(service.state.data.outbox.length, 1)
+    assert.match(texts[0], /图片 shot\.png 发送失败.*Ria 会话/)
+    release()
+    await flushing
+    assert.equal(service.state.data.outbox.length, 0)
+    assert.equal(makeService(stateDir).state.data.outbox.length, 0)
+  }
+
+  // 10. If the fallback transport also fails, retain the original for restart/retry.
+  {
+    const stateDir = join(dir, 'failed-fallback')
+    const service = makeService(stateDir)
+    const source = '![shot](' + join(dir, 'shot.png') + ')'
+    service.outbound = new Outbound({
+      gapMs: 0, prefix: '',
+      async sendImage() { throw new Error('image upload unavailable') },
+      async send() { throw new Error('fallback unavailable') },
+    })
+    service.state.addOutbox(source)
+    await service.flushOutbox()
+    assert.equal(service.lastError, 'fallback unavailable')
+    const restarted = makeService(stateDir)
+    assert.equal(restarted.state.data.outbox[0].text, source)
+    const images = []
+    restarted.outbound = new Outbound({
+      gapMs: 0, prefix: '',
+      async send() { throw new Error('unexpected text') },
+      async sendImage(name) { images.push(name); return 'image-id' },
+    })
+    await restarted.flushOutbox()
+    assert.deepEqual(images, ['shot.png'])
+    assert.equal(restarted.state.data.outbox.length, 0)
+  }
+
+  console.log('wechat-image ok')
 } finally {
   await rm(dir, { recursive: true, force: true })
 }

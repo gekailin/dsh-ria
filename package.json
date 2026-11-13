@@ -1,7 +1,7 @@
 {
   "name": "dsh-ria",
   "version": "0.1.0",
-  "description": "Ria for DeepSeek Harness: one resident manager that relays requests, tracks tasks, watches workers, and keeps your memory.",
+  "description": "Ria for DeepSeek Harness: one resident manager that relays requests, tracks tickets, watches workers, and keeps your memory.",
   "keywords": [
     "dsh",
     "dsh-plugin",

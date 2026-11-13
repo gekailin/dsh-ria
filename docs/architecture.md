@@ -127,7 +127,7 @@ outbox 与 `ria.json` 不是同一个事务：派发已被接受、但 outbox �
 | `outbox.json` | 副作用待投递 / 失败 / 已送达记录；独立于 ria.json |
 | `tickets.log.jsonl` | 终态工单归档；按月文件保留 12 个月 |
 | `memory.md` | 稳定偏好，≤4 KB，0600 |
-| `reflections/` | 每日反省的 notes；P2 wiki 也规划在这里（尚未实现） |
+| `reflections/` | 定期反思的 notes 与运行账本；P2 wiki 也规划在这里（尚未实现） |
 | `wechat-inbound/` / `wechat-claw-inbound/` | 微信入站图片原图；30 天 / 500 个上限 |
 | `wechat/`、`wechat-claw/`、`qq-bot/` | 各通道凭据、游标与暂停状态 |
 | `audit.jsonl` | 临时权限（grant）审计 |
@@ -146,7 +146,7 @@ outbox 与 `ria.json` 不是同一个事务：派发已被接受、但 outbox �
 
 ## 7. 记忆与反省
 
-`memory.md` 只放稳定偏好与长期约定，由 `ria_memory` 显式读写，上限 4 KB；不抄工单状态、时间戳或逐轮流水。每日反省是另一层（设计中，尚未实现）：计划每天 23:40（Asia/Shanghai）做一次 Dreaming 式离线对账，读当天的工单、turn 与 outbox，把日报写到 `reflections/YYYY-MM-DD.md`，只提议隐性规则，不自动改写记忆；P2 再考虑 wiki。
+`memory.md` 只放稳定偏好与长期约定，由 `ria_memory` 显式读写，上限 4 KB；不抄工单状态、时间戳或逐轮流水。定期反思是另一层（设计中，尚未实现）：设置页可开启每天/每周的 schedule，到点后 Ria 启动一个独立的反思 worker，读当天/当周的工单、turn 与 outbox，把报告写到 `reflections/YYYY-MM-DD.md`；worker 目标态只读、只提议隐性规则，不自动改写记忆；P2 再考虑 wiki。
 
 ## 8. 扩展点
 

@@ -1,6 +1,6 @@
 # 运行与任务流程
 
-本文记录 Ria 的入口与运行方式、ticket 生命周期、派发确认、重启恢复等运行时行为。设计背景与取舍见 [DESIGN.md](../DESIGN.md)。
+本文记录 Ria 的入口与运行方式、工单生命周期、派发确认、重启恢复等运行时行为。设计背景与取舍见 [DESIGN.md](../DESIGN.md)。
 
 ## 入口与运行方式
 
@@ -30,11 +30,11 @@ Ria 自己是一个普通的顶层 DSH Session，运行 PTC preset，带管理�
 
 ## 任务与转述
 
-- ticket 是管理记录，不是 DSH 内置对象；保存在 ria.json。
-- 每条真实用户消息进入 Ria 的 turn 时，Host 在 `agent/pre-step` 自动登记一条 `intake` ticket，并在同一 turn 注入一条 `[Task intake]` 提示（source.kind=`ria-task-host`，不会被再次捕获）。Ria 必须用 `ria_resolve` 给出归宿；否则 `agent/turn-stopping` 会先 steer 提醒一次，第二次仍未给归宿就自动标成 `blocked`，并产生一张卡片。
+- 工单是管理记录，不是 DSH 内置对象；保存在 ria.json。
+- 每条真实用户消息进入 Ria 的 turn 时，Host 在 `agent/pre-step` 自动登记一条 `intake` 工单，并在同一 turn 注入一条 `[Task intake]` 提示（source.kind=`ria-task-host`，不会被再次捕获）。Ria 必须用 `ria_resolve` 给出归宿；否则 `agent/turn-stopping` 会先 steer 提醒一次，第二次仍未给归宿就自动标成 `blocked`，并产生一张卡片。
 - 8 个状态：`intake`、`open`、`working`、`blocked`、`forked`、`done`、`failed`、`cancelled`。`answered`、`merged`、`control` 是 `done.resolution.kind`。只有 `RiaStore.transitionTicket` 能改状态，非法转移返回错误而不是静默改写。
 - request 是真正的 Session 消息。发送前先写 pending delivery，prompt 被接受后删除；失败保留，重启或下次 ensure 时按原 requestId 重试。
-- `ria_request` 必须带 `ticketId` 和 `note`；ticket 的 executor 必须等于目标 sessionId。消息内容原样发送，不加任何前缀。防误发提示由 Host 注册在每个 agent 上的 system prompt section 提供：只有在做另一件明显不同的事或完全对不上时，才先向用户确认、不直接执行。
+- `ria_request` 必须带 `ticketId` 和 `note`；工单的 executor 必须等于目标 sessionId。消息内容原样发送，不加任何前缀。防误发提示由 Host 注册在每个 agent 上的 system prompt section 提供：只有在做另一件明显不同的事或完全对不上时，才先向用户确认、不直接执行。
 - note 最多 500 字。派发成功后，Host 把卡片和微信镜像都先写进副作用 outbox（`stateDir/outbox.json`）。有活跃 turn 时立即把 note 写入 `ria.json`（最多保留 100 条），插件 client 通过 `GET /plugins/dsh-ria/api/dispatch-notes?sessionId=...&turn=...` 读取，并在 `conversation.chat.turnTail` slot 渲染成当前轮次末尾的卡片；没有活跃 turn 时条目留在 outbox，下一次 turn/start、startup 或 30 秒 tick 补投；此保证仅适用于已成功持久化的条目。
 - 卡片不属于 turn process，不会被完成后的流程折叠隐藏；它不进入模型上下文，也不依赖 session log；已经写入的卡片在重启后仍能从 ria.json 读到。
 - note 缺失、纯空白或超过 500 字时，工具直接报错，消息不投递、不 concludeTurn。卡片写入失败会按 outbox 退避重试；6 次仍失败则标 failed 并保留原因，`ria_status` 可查，不阻断已经成功的派发。
@@ -61,27 +61,27 @@ Ria 自己是一个普通的顶层 DSH Session，运行 PTC preset，带管理�
 - 有活跃 turn 时立即投递卡片；没有活跃 turn 时不丢弃，留到下一次 turn/start、startup 或 30 秒 tick 补投。微信镜像不依赖 turn，入队后即可投递。
 - 失败按 10 秒、1 分钟、5 分钟、15 分钟、1 小时退避，最多 6 次；超过后标 `failed` 并保留 `lastError`，不会静默消失。
 - `delivered` 条目保留 24 小时用于去重，之后清理；队列上限 500 条，超限先清最旧的 `delivered`，再清最旧的 `failed`，`pending` 不清理。
-- `ria_status` 的任意 ticket 响应带 `outbox` 汇总与未投递条目；带 `ticketId` 时只看该票。
+- `ria_status` 的任意工单响应带 `outbox` 汇总与未投递条目；带 `ticketId` 时只看该工单。
 - 微信服务自己的 `Outbound` 队列负责文本/文件/图片的串行发送与去重；副作用 outbox 负责“这条派发确认有没有送达”。两者层次不同，不要混用。
 
 ## 派发后 60 秒确认
 
-`sessionController.prompt()` 返回 `accepted` 只表示消息被接收入队，不代表 worker 真的开了 turn。为避免“派发成功、票变 working、worker 从未开跑”的静默丢失，Host 对每次对外派发做确认：
+`sessionController.prompt()` 返回 `accepted` 只表示消息被接收入队，不代表 worker 真的开了 turn。为避免“派发成功、工单变 working、worker 从未开跑”的静默丢失，Host 对每次对外派发做确认：
 
-- 派发前先登记 pending（requestId、目标 session、ticket、登记时间），再 `await prompt()`；因此 worker 的 `turn/start` 早于 prompt 返回也能命中。
-- `turn/start` 的 sessionId 等于该票 executor 时，把该票最后一次 attempt 的 `confirmedAt` 写为当前时间；该 attempt 视为已落地。
+- 派发前先登记 pending（requestId、目标 session、工单、登记时间），再 `await prompt()`；因此 worker 的 `turn/start` 早于 prompt 返回也能命中。
+- `turn/start` 的 sessionId 等于该工单 executor 时，把该工单最后一次 attempt 的 `confirmedAt` 写为当前时间；该 attempt 视为已落地。
 - `mode=steer` 注入正在运行的 turn，不会产生新的 `turn/start`，登记时直接视为已确认（`attempt.immediate=true`），不参与超时判定。
-- 每 30 秒的 outbox tick 和 startup 都会检查 working 票：最后一次 attempt 有 `lastRequestId`、无 `confirmedAt`，且距 `startedAt` 已满 60 秒，就把票迁到 `blocked`、`waitingOn=environment`、`failure.code=dispatch_unconfirmed`，`blockedReason` 写明 requestId 与“60 秒内未开始执行”。
+- 每 30 秒的 outbox tick 和 startup 都会检查 working 工单：最后一次 attempt 有 `lastRequestId`、无 `confirmedAt`，且距 `startedAt` 已满 60 秒，就把工单迁到 `blocked`、`waitingOn=environment`、`failure.code=dispatch_unconfirmed`，`blockedReason` 写明 requestId 与“60 秒内未开始执行”。
 - 同时经 outbox 发一条用户可见告警（kind=`dispatch_unconfirmed`），并镜像到微信；告警说明可能已归档、队列卡住或会话异常，附带 requestId 与 worker 会话 id。
-- 已经是 `done`/`failed`/`cancelled`/`blocked` 的票、以及 Ria 自己的 turn 不参与判定；同一 ticket + requestId 只告警一次。
-- 这个兜底只改变“派发被接受但未开跑”的票；worker 正常开始后不会因为 60 秒到期而被误判。
+- 已经是 `done`/`failed`/`cancelled`/`blocked` 的工单、以及 Ria 自己的 turn 不参与判定；同一工单 + requestId 只告警一次。
+- 这个兜底只改变“派发被接受但未开跑”的工单；worker 正常开始后不会因为 60 秒到期而被误判。
 
 ## 任务转交提示与设置页
 
 防误发提示不是消息前缀，而是插件为每个 agent 注册的 system prompt section（name 为 dsh-ria:dispatch-guard，order 4100）。
 
 - 插件启动时给已有 agent 安装，并监听 agent/created 给新 agent 安装；agent/disposed 和插件卸载时 dispose，避免重载时同名 section 冲突。
-- section 文本是固定的通用提示，不按 ticket 或具体消息变化；关闭开关后 text 返回空字符串，DSH 的 renderPrompt 会丢弃空 section。
+- section 文本是固定的通用提示，不按工单或具体消息变化；关闭开关后 text 返回空字符串，DSH 的 renderPrompt 会丢弃空 section。
 - 开关在“设置 > Ria”，默认打开；状态保存在 ria.json 的 settings.dispatchGuard。
 - 开关只影响后续 system prompt 的组装，不改 worker 已经收到的历史消息、tools 或 preset；也不会替模型做硬拦截。
 
@@ -89,34 +89,34 @@ Ria 自己是一个普通的顶层 DSH Session，运行 PTC preset，带管理�
 
 ## 任务归档
 
-终态 ticket 不会无限留在 ria.json。热文件保留所有非终态，加上最近 24 小时内关闭的终态和按 closedAt 倒序最新 50 条终态；超出的写进 `~/.dsh/state/ria/tickets.log.jsonl`，并按 closedAt 的 UTC 月份同时追加到 `tickets-YYYY-MM.jsonl`（保留最新 12 个月）。新写入只用 `tickets.log.jsonl` / `tickets-YYYY-MM.jsonl`。启动时会一次性把遗留的 `tasks.log.jsonl` / `tasks-YYYY-MM.jsonl` 改名到新名（目标已存在则跳过，失败只记日志）；读取端同时兼容新旧名，并按 `ticketId + closedAt` 去重。先写成功再从内存删除；写失败时 ticket 留在 ria.json，下次启动重试。
+终态工单不会无限留在 ria.json。热文件保留所有非终态，加上最近 24 小时内关闭的终态和按 closedAt 倒序最新 50 条终态；超出的写进 `~/.dsh/state/ria/tickets.log.jsonl`，并按 closedAt 的 UTC 月份同时追加到 `tickets-YYYY-MM.jsonl`（保留最新 12 个月）。新写入只用 `tickets.log.jsonl` / `tickets-YYYY-MM.jsonl`。启动时会一次性把遗留的 `tasks.log.jsonl` / `tasks-YYYY-MM.jsonl` 改名到新名（目标已存在则跳过，失败只记日志）；读取端同时兼容新旧名，并按 `ticketId + closedAt` 去重。先写成功再从内存删除；写失败时工单留在 ria.json，下次启动重试。
 
-`ria_status scope=history` 和 `ria_status ticketId=<id>` 会按需扫日志；`ria_ticket status=open` 与 `ria_resolve kind=control action=reopen/retry` 可以先把归档 ticket 捞回热存储再走正常转移，history/reopenCount 都会保留。
+`ria_status scope=history` 和 `ria_status ticketId=<id>` 会按需扫日志；`ria_ticket status=open` 与 `ria_resolve kind=control action=reopen/retry` 可以先把归档工单捞回热存储再走正常转移，history/reopenCount 都会保留。
 
 ## 重启恢复
 
 Host 启动后延迟 1.5 秒：
 
 - 先补投副作用 outbox 里到期的条目（无需 Ria 在线也能发微信镜像）；补投不会创建 Ria。
-- 没有未收敛 ticket、也没有 pending delivery：不再做其他事。
-- 恢复单位是 ticket：`intake`（还没有归宿）、`open`（尚未派发）、`working`（worker 可能已中断）。`forked` 父容器只递归 `childTicketIds`，父本身不单独恢复；`blocked`、`failed`、`done`、`cancelled` 不自动恢复。
-- 有 pending delivery 先重试；重试成功会把对应 ticket 拉回 `working` 并重置恢复计数。
-- 所有候选 ticket 合并成一条恢复 prompt，逐条列出 ticketId、status、executor、goal、acceptance、原消息、开始时间、最近动作与 `recovery=n/3`。intake 要求先 `ria_read` 自己的会话再 `ria_resolve`；working 要求先读 worker 与工作区、检查已改文件和测试，再判断继续/done/failed/blocked；open 要求先检查 executor，再派发或标 blocked。
-- 每个 ticket 连续自动恢复最多 3 次。达到 3/3 时不再发 prompt，而是把 ticket 标成 `blocked`，写入 `blockedReason`（自动恢复已达上限）与 `failure.code=recovery_exhausted`，并产生一次 `recovery_exhausted` 卡片；下一个启动不会再处理它。
-- 恢复计数按 ticket 存在 `recovery.count`；`ria_ticket` 更新、成功派发或用户重新打开都会归零。因此它统计的是连续无人处理的重启次数。
+- 没有未收敛工单、也没有 pending delivery：不再做其他事。
+- 恢复单位是工单：`intake`（还没有归宿）、`open`（尚未派发）、`working`（worker 可能已中断）。`forked` 父容器只递归 `childTicketIds`，父本身不单独恢复；`blocked`、`failed`、`done`、`cancelled` 不自动恢复。
+- 有 pending delivery 先重试；重试成功会把对应工单拉回 `working` 并重置恢复计数。
+- 所有候选工单合并成一条恢复 prompt，逐条列出 ticketId、status、executor、goal、acceptance、原消息、开始时间、最近动作与 `recovery=n/3`。intake 要求先 `ria_read` 自己的会话再 `ria_resolve`；working 要求先读 worker 与工作区、检查已改文件和测试，再判断继续/done/failed/blocked；open 要求先检查 executor，再派发或标 blocked。
+- 每个工单连续自动恢复最多 3 次。达到 3/3 时不再发 prompt，而是把工单标成 `blocked`，写入 `blockedReason`（自动恢复已达上限）与 `failure.code=recovery_exhausted`，并产生一次 `recovery_exhausted` 卡片；下一个启动不会再处理它。
+- 恢复计数按工单存在 `recovery.count`；`ria_ticket` 更新、成功派发或用户重新打开都会归零。因此它统计的是连续无人处理的重启次数。
 - startup recovery 本身抛错时，也会向 Ria 发送失败通知（错误内容和“需要手动处理”），不只写日志。
-- 旧的顶层 `inFlight` 记录在 schema v2 迁移时转成一条 `open`（或到上限时 `blocked`）ticket，`origin.kind=legacy_inflight`；迁移后不再有顶层 `inFlight` 字段。
+- 旧的顶层 `inFlight` 记录在 schema v2 迁移时转成一条 `open`（或到上限时 `blocked`）工单，`origin.kind=legacy_inflight`；迁移后不再有顶层 `inFlight` 字段。
 
 ## Worker 完成自动唤醒
 
-默认开启。Host 监听 DSH 的 `agent/status` 事件；当某个正在执行的 worker 变回 `idle`，并且它是至少一个 `working` ticket 的 executor 时，给 Ria 发一条普通队列消息。Ria 不用轮询，也不会错过 worker 的结束点。
+默认开启。Host 监听 DSH 的 `agent/status` 事件；当某个正在执行的 worker 变回 `idle`，并且它是至少一个 `working` 工单的 executor 时，给 Ria 发一条普通队列消息。Ria 不用轮询，也不会错过 worker 的结束点。
 
-- 只读事件：从 worker 的事件日志读取最后一个 `turn/end` 的 reason，不改 worker 的 prompt/tools，不往 worker 会话写消息，也不 resume 冷 worker。唯一动作是唤醒 Ria；若最后一轮是 `aborted(user)`，同时把对应 `working` ticket 标为 `blocked`。
+- 只读事件：从 worker 的事件日志读取最后一个 `turn/end` 的 reason，不改 worker 的 prompt/tools，不往 worker 会话写消息，也不 resume 冷 worker。唯一动作是唤醒 Ria；若最后一轮是 `aborted(user)`，同时把对应 `working` 工单标为 `blocked`。
 - 排除 Ria 自己，避免自我唤醒循环。
-- 只匹配 `status=working` 且 `executor` 等于该 worker 的 ticket；`open`、`done`、`cancelled`、`blocked` 都不触发。
-- 同一 worker + 同一 ticket 在 30 秒内只通知一次；多个 ticket 分别计时。
+- 只匹配 `status=working` 且 `executor` 等于该 worker 的工单；`open`、`done`、`cancelled`、`blocked` 都不触发。
+- 同一 worker + 同一工单在 30 秒内只通知一次；多个工单分别计时。
 - 通知写明“worker X 的 turn 已结束”和最后一轮结束原因（`completed`、`blocked`、`error`、`aborted(user)` 等），并明确要求 Ria 用 `ria_read` 确认，不假设任务完成。`ria_read` 的返回值也带 `lastTurn`。
-- 当原因是 `aborted(user)`（用户手动取消/叫停）时，通知明确写“必须停下来等用户决定”，不再建议发 continuation；对应 ticket 由 Host 标为 `blocked`，Ria 只需向用户报告并询问下一步。worker 在消息里明确拒绝任务时，Ria 同样标 `blocked` 后停下来问用户。`completed`、`blocked` 等其他原因保持原有流程，不被拦截。
+- 当原因是 `aborted(user)`（用户手动取消/叫停）时，通知明确写“必须停下来等用户决定”，不再建议发 continuation；对应工单由 Host 标为 `blocked`，Ria 只需向用户报告并询问下一步。worker 在消息里明确拒绝任务时，Ria 同样标 `blocked` 后停下来问用户。`completed`、`blocked` 等其他原因保持原有流程，不被拦截。
 - `idle` 仍无法区分“完成”“等用户输入”和“明确拒绝”，这三者要看 worker 最近消息；如果 worker 在等审批，通常仍是 `running`，不会产生 idle 通知。
 - 通知投递失败只记 warn，不重试；worker 侧状态不受影响。
 
@@ -131,8 +131,8 @@ Host 启动后延迟 1.5 秒：
 
 环境变量优先级更高：`DSH_RIA_WORKER_IDLE=0` 一键关闭，`DSH_RIA_WORKER_IDLE_THROTTLE_MS` 调整节流窗口（1 秒–10 分钟）。
 
-日志前缀是 `dsh-ria: worker-idle:`。`info` 记录已通知、节流跳过和关闭状态，`debug` 记录“无 working ticket”等其他跳过原因。
+日志前缀是 `dsh-ria: worker-idle:`。`info` 记录已通知、节流跳过和关闭状态，`debug` 记录“无 working 工单”等其他跳过原因。
 
 ## 审批等待
 
-worker 触发 `approval/request` 时，Host 会把它的 active ticket 标成 `blocked`、`waitingOn=approval`，并把一句中文问题写进 `attention`（kind=approval，askedBy=worker，ref=approvalId）。同时排一张 `approval_note` 卡片和一条微信提醒；审批结束、abort 或 15 分钟超时后 ticket 回到 `working`，`waitingOn=worker`，attention 清空。审批队列只在内存中，重启后 startup 会把没有对应 pending 的 blocked+approval ticket 恢复为 working，不会永久卡住。Ria 仍然只能查看（`ria_approval`），不能代批。
+worker 触发 `approval/request` 时，Host 会把它的 active 工单标成 `blocked`、`waitingOn=approval`，并把一句中文问题写进 `attention`（kind=approval，askedBy=worker，ref=approvalId）。同时排一张 `approval_note` 卡片和一条微信提醒；审批结束、abort 或 15 分钟超时后工单回到 `working`，`waitingOn=worker`，attention 清空。审批队列只在内存中，重启后 startup 会把没有对应 pending 的 blocked+approval 工单恢复为 working，不会永久卡住。Ria 仍然只能查看（`ria_approval`），不能代批。

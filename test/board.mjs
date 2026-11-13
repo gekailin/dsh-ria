@@ -242,6 +242,14 @@ try {
   assert.match(labelBlock, /position:\s*"sticky"/)
   assert.match(labelBlock, /left:\s*"10px"/)
 
+  // User-facing copy calls a ticket a 工单, while ids and API fields stay unchanged.
+  assert.match(layoutApi.source, /正在加载更早的工单…/)
+  assert.match(layoutApi.source, /counts\.total \+ " 张工单 · 活跃 "/)
+  assert.match(layoutApi.source, /向左滚动加载更早的工单/)
+  assert.match(layoutApi.source, /搜索目标或工单 ID/)
+  assert.match(layoutApi.source, /\["工单", ticket\.ticketId\]/)
+  assert.doesNotMatch(layoutApi.source, /加载更早的票|搜索目标或 ticket id/)
+
   console.log('board ok')
 } finally {
   fixture.cleanup()

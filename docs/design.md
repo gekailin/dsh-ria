@@ -1,6 +1,6 @@
 # dsh-ria 设计方案
 
-> 本文是历史设计记录与实现细节；顶层地图见 [docs/architecture.md](architecture.md)，核心设计见根 [DESIGN.md](../DESIGN.md)。
+> 本文是历史设计记录与实现细节；顶层地图见 [docs/architecture.md](architecture.md)，核心设定见根 [DESIGN.md](../DESIGN.md)。
 > 状态：v0.30（2026-11-12）
 > 目标目录：/home/gkl/Desktop/vibe_proj/dsh-ria
 > Ria 固定用 PTC preset（agentPreset=ptc）启动，模型只直接看到 run_code + SDK。本文是设计说明；实现状态见第 20 节。

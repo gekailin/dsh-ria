@@ -1,6 +1,6 @@
 # dsh-ria 核心设计
 
-> 本文只回答「为什么这样设计、哪些约束不能破」。用户怎么用见 [README.md](README.md)，当前系统长什么样见 [docs/architecture.md](docs/architecture.md)，历史取舍、版本记录与实现细节见 [docs/DESIGN.md](docs/DESIGN.md)。代码与测试是最终事实。
+> 本文只回答「为什么这样设计、哪些约束不能破」。用户怎么用见 [README.md](README.md)，当前系统长什么样见 [docs/architecture.md](docs/architecture.md)，历史取舍、版本记录与实现细节见 [docs/design.md](docs/design.md)。代码与测试是最终事实。
 
 ## 1. 问题与定位
 
@@ -99,8 +99,8 @@ Ria 不自动批准、不拒绝、不绕过审批，也不因为工单卡住就�
 
 - [README.md](README.md)：用户视角的定位、典型用法与安装。只讲“怎么用”，不讲内部状态机。
 - [docs/architecture.md](docs/architecture.md)：当前系统的顶层地图。对象、状态表、主流程、可靠性、持久化、通道与扩展点以它为准。
-- [docs/DESIGN.md](docs/DESIGN.md)：历史设计记录与实现细节。保留版本演进、旧取舍、代码文件和测试覆盖，不作为当前契约的简明入口。
+- [docs/design.md](docs/design.md)：历史设计记录与实现细节。保留版本演进、旧取舍、代码文件和测试覆盖，不作为当前契约的简明入口。
 - `docs/` 下的专题文件：微信、工具、运维、状态与 API、测试、限制等单主题展开。
-- 代码与测试：行为的最终事实。改行为时先改测试，再同步 architecture；用户可见变化更新 README，原因与取舍补进 docs/DESIGN.md。
+- 代码与测试：行为的最终事实。改行为时先改测试，再同步 architecture；用户可见变化更新 README，原因与取舍补进 docs/design.md。
 
 本文只维护稳定的“为什么”和“不能破的约束”。具体字段、接口、状态表和流程图不在这里重复，避免三份文档各说一套。

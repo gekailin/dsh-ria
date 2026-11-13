@@ -23,6 +23,16 @@ function loadBoardTooltip() {
   return { source, ...api }
 }
 
+function loadBoardInteraction() {
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const start = source.indexOf('/* board-interaction:start */')
+  const end = source.indexOf('/* board-interaction:end */')
+  assert.ok(start >= 0 && end > start, 'client board interaction markers')
+  const block = source.slice(start, end)
+  const api = new Function(block + '\nreturn { BOARD_TOOLTIP_CLOSE_DELAY, BOARD_COPY_TOAST_MS, boardCopyTarget, boardCopyMessage, boardManualCopyMessage, boardTipContains, boardLegacyCopy, boardWriteClipboard };')()
+  return { source, ...api }
+}
+
 const fixture = await createFixture()
 
 function get(path) {
@@ -363,6 +373,43 @@ try {
   assert.match(tooltipApi.source, /checklist\.items\.length \? checklistRow\(\) : null/)
   assert.match(tooltipApi.source, /maxHeight: "calc\(100vh - 40px\)"/)
   assert.match(tooltipApi.source, /window\.innerHeight - rect\.height - margin/)
+  assert.match(tooltipApi.source, /单击卡片复制单号；浮层文字可选中复制/)
+
+  // Clicking a card copies its ticket id; the tooltip stays alive while the
+  // pointer crosses the gap and can be dismissed by an outside click or Esc.
+  const interaction = loadBoardInteraction()
+  assert.ok(interaction.BOARD_TOOLTIP_CLOSE_DELAY >= 200)
+  assert.ok(interaction.BOARD_TOOLTIP_CLOSE_DELAY <= 300)
+  assert.equal(interaction.BOARD_COPY_TOAST_MS, 2000)
+  assert.equal(interaction.boardCopyTarget({ ticketId: 'ticket_abc' }), 'ticket_abc')
+  assert.equal(interaction.boardCopyTarget({ ticketId: 7 }), '')
+  assert.equal(interaction.boardCopyTarget({}), '')
+  assert.equal(interaction.boardCopyTarget(null), '')
+  assert.equal(interaction.boardCopyMessage('ticket_abc'), '已复制 ticket_abc')
+  assert.equal(interaction.boardManualCopyMessage('ticket_abc'), '复制失败，请手动选中复制：ticket_abc')
+
+  const child = {}
+  const tipNode = { contains: node => node === child }
+  assert.equal(interaction.boardTipContains(tipNode, tipNode), true)
+  assert.equal(interaction.boardTipContains(tipNode, child), true)
+  assert.equal(interaction.boardTipContains(tipNode, {}), false)
+  assert.equal(interaction.boardTipContains(null, child), false)
+  assert.equal(interaction.boardTipContains(tipNode, null), false)
+
+  assert.match(interaction.source, /if \(props\.onCopy\) props\.onCopy\(ticket\)/)
+  assert.match(interaction.source, /onCopy: copyTicket/)
+  assert.match(interaction.source, /onLeave: scheduleHideTip/)
+  assert.match(interaction.source, /onEnter: cancelHideTip/)
+  assert.match(interaction.source, /pointerEvents: "auto"/)
+  assert.match(interaction.source, /userSelect: "text"/)
+  assert.match(interaction.source, /document\.addEventListener\("pointerdown", onPointerDown, true\)/)
+  assert.match(interaction.source, /event\.key !== "Escape"/)
+  assert.match(interaction.source, /\}, BOARD_TOOLTIP_CLOSE_DELAY\)/)
+  assert.match(interaction.source, /setCopy\(null\); \}, BOARD_COPY_TOAST_MS\)/)
+  assert.match(interaction.source, /role: "status"/)
+  assert.match(interaction.source, /role: "alert"/)
+  assert.match(interaction.source, /"data-ria-board-copy": "ok"/)
+  assert.match(interaction.source, /"data-ria-board-copy": "error"/)
 
   console.log('board ok')
 } finally {

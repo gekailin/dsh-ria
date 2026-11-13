@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { createFixture } from './support/ria-fixture.mjs'
 
-const fixture = await createFixture({ queues: { 'session-worker': [{ id: 'queued-1' }] }, running: false })
+const fixture = await createFixture({ queues: { 'session-worker': [{ id: 'queued-1' }] }, running: true })
 const { service } = fixture
 
 try {
@@ -95,9 +95,27 @@ try {
   assert.equal(fixture.prompts.at(-1).mode, 'steer')
   assert.equal(store.ticket(downstreamId).status, 'working')
 
-  // An idle worker accepts a normal queue dispatch.
-  fixture.queues.set('session-worker', [])
+  // Steer needs a turn that is actually running: DSH's controller would accept
+  // the call for an idle session and silently drop the input.
   const idleTicket = await fixture.call('ria_ticket', { goal: 'idle dispatch', executor: 'session-worker' })
+  fixture.queues.set('session-worker', [])
+  fixture.setRunning('session-worker', false)
+  const idleSteerPrompts = fixture.prompts.length
+  const idleSteer = await fixture.call('ria_request', {
+    targetSessionIds: ['session-worker'],
+    message: 'too early',
+    ticketId: idleTicket.ticket.ticketId,
+    note: '试图 steer 空闲 worker。',
+    mode: 'steer',
+  })
+  assert.equal(idleSteer.results[0].ok, false)
+  assert.equal(idleSteer.results[0].code, 'steer_requires_running')
+  assert.match(idleSteer.results[0].message, /running=false/)
+  assert.match(idleSteer.results[0].message, /mode=queue/)
+  assert.equal(fixture.prompts.length, idleSteerPrompts)
+  assert.equal(store.ticket(idleTicket.ticket.ticketId).status, 'open')
+
+  // An idle worker accepts a normal queue dispatch.
   const idle = await fixture.call('ria_request', {
     targetSessionIds: ['session-worker'],
     message: 'go',

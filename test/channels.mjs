@@ -64,6 +64,72 @@ async function waitForStatus(service, predicate, label) {
   assert.fail(label + ' timed out: ' + JSON.stringify(view.login))
 }
 
+// Client channel catalog: the file-transfer helper is listed last. The dialog
+// opens on the last channel the user picked, falling back to WeChat; the
+// default must not be tied to catalog order.
+{
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const catalog = source.match(/var CHANNELS = \[([\s\S]*?)\n    \];/)
+  assert.ok(catalog, 'client should declare a CHANNELS catalog')
+  const ids = [...catalog[1].matchAll(/\{ id: "([^"]+)"/g)].map(match => match[1])
+  assert.deepEqual(ids, ['wechat-claw', 'qq-bot', 'wechat'], 'WeChat file transfer should be the last tab')
+  assert.match(source, /var DEFAULT_CHANNEL = "wechat"/)
+  assert.match(source, /var LAST_CHANNEL_KEY = "dsh\.ria\.channels\.last\.v1"/)
+  assert.match(source, /React\.useState\(lastChannel\)/, 'the dialog should open on the remembered channel')
+  assert.doesNotMatch(source, /React\.useState\(DEFAULT_CHANNEL\)/, 'the default must not ignore the remembered channel')
+  assert.doesNotMatch(source, /React\.useState\("wechat"\)/, 'default must not be an inline tab literal')
+  assert.match(source, /rememberChannel\(channel\.id\)/, 'switching tabs should remember the channel')
+  assert.doesNotMatch(source, /微信 Claw 图片/, 'Claw image transfer has no settings UI')
+  assert.doesNotMatch(source, /clawImageIn|clawImageOut/, 'Claw image toggles should be gone')
+
+  // The dialog is portalled under the Ria entry row in the React tree. Without
+  // local event isolation, a click inside it also activates the host row and
+  // remounts the conversation behind the dialog (visible as a flicker).
+  assert.match(source, /if \(event\.target === event\.currentTarget\) onClose\(\)/)
+  assert.match(source, /onMouseDown: function \(event\) \{ event\.stopPropagation\(\); \}/)
+  assert.match(source, /onPointerDown: function \(event\) \{ event\.stopPropagation\(\); \}/)
+}
+
+// Channel status mapping: paused only applies to a connected channel, and the
+// same phase-to-color/text rules hold for all three channels.
+{
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const start = source.indexOf('/* status-view:start */')
+  const end = source.indexOf('/* status-view:end */')
+  assert.ok(start >= 0 && end > start, 'client should keep the status-view helpers in a marker block')
+  const block = source.slice(start, end)
+  const helpers = new Function(block + '\nreturn { channelColor, channelSummary };')()
+  const color = channel => helpers.channelColor(channel)
+  const summary = channel => helpers.channelSummary(channel, 'fallback')
+
+  assert.equal(color(null), '#9ca3af')
+  assert.equal(summary(null), 'fallback')
+
+  const cases = [
+    ['idle', { loggedIn: false, login: { phase: 'idle' } }, '#9ca3af', '未连接'],
+    ['waiting', { loggedIn: false, login: { phase: 'waiting' } }, '#9ca3af', '未扫码'],
+    ['scanned', { loggedIn: false, login: { phase: 'scanned' } }, '#f59e0b', '已扫码，待确认'],
+    ['connecting', { loggedIn: false, login: { phase: 'connecting' } }, '#f59e0b', '连接中'],
+    ['starting', { loggedIn: false, login: { phase: 'starting' } }, '#f59e0b', '连接中'],
+    ['error', { loggedIn: false, login: { phase: 'error' } }, '#ef4444', '连接失败'],
+    ['connected', { loggedIn: true }, '#22c55e', '已连接'],
+    ['connected+paused', { loggedIn: true, paused: true }, '#f59e0b', '推送已暂停'],
+    ['offline+paused', { loggedIn: false, paused: true, login: { phase: 'idle' } }, '#9ca3af', '未连接'],
+    ['offline+error+paused', { loggedIn: false, paused: true, login: { phase: 'error' } }, '#ef4444', '连接失败'],
+  ]
+  for (const [label, channel, expectedColor, expectedSummary] of cases) {
+    assert.equal(color(channel), expectedColor, label + ' color')
+    assert.equal(summary(channel), expectedSummary, label + ' summary')
+  }
+
+  for (const id of ['wechat-claw', 'qq-bot', 'wechat']) {
+    assert.equal(color({ id, loggedIn: false, login: { phase: 'waiting' } }), '#9ca3af', id + ' waiting color')
+    assert.equal(summary({ id, loggedIn: false, login: { phase: 'waiting' } }), '未扫码', id + ' waiting summary')
+    assert.equal(color({ id, loggedIn: true, paused: true }), '#f59e0b', id + ' paused color')
+    assert.equal(summary({ id, loggedIn: true, paused: true }), '推送已暂停', id + ' paused summary')
+  }
+}
+
 // Pure helpers: account-id normalization, QR rendering, request-id prefixes and
 // the AES-256-GCM payload returned by the QQ bind endpoint.
 {
@@ -235,6 +301,7 @@ async function waitForStatus(service, predicate, label) {
     assert.equal(creds.appSecret, 'qq-secret')
 
     service.setPaused(true, { by: 'manual', reason: 'test' })
+    assert.equal(service.statusView().paused, true, 'a connected channel can be paused')
     const restored = new QqBotService({
       ctx: fakeContext(),
       stateDir: dir,
@@ -242,7 +309,7 @@ async function waitForStatus(service, predicate, label) {
       getRiaId: () => 'ria-session',
       log: () => {},
     })
-    assert.equal(restored.statusView().paused, true)
+    assert.equal(restored.statusView().paused, false, 'a disconnected channel is not paused')
     assert.equal(restored.statusView().pauseReason, 'test')
     await service.shutdown()
     await restored.shutdown()
@@ -298,6 +365,7 @@ async function waitForStatus(service, predicate, label) {
       item_list: [{ type: 1, text_item: { text: 'hello from Claw' } }],
     })
     assert.deepEqual(prompts[1].content, [{ type: 'text', text: 'hello from Claw' }])
+    assert.ok(claw.lastInboundAt > 0, 'inbound Claw messages should mark the channel as active')
     await qq.shutdown()
     await claw.shutdown()
   } finally {
@@ -364,6 +432,52 @@ async function waitForStatus(service, predicate, label) {
     await qq.shutdown()
     await claw.shutdown()
   } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+// WeChat Claw can carry the same text notes as the legacy channel: dispatch,
+// approval and the auto-pause notice. It defers while paused or without a
+// reply target instead of dropping the outbox entry.
+{
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-ria-claw-notes-'))
+  const claw = new WechatClawService({
+    ctx: fakeContext(),
+    stateDir: dir,
+    ensureRia: async () => 'ria-session',
+    getRiaId: () => 'ria-session',
+    log: () => {},
+  })
+  const sent = []
+  claw.session = { token: 'token-1', baseUrl: 'http://127.0.0.1:1', abort: new AbortController() }
+  claw.outbound = {
+    enqueue(text) { sent.push({ system: false, text }); return Promise.resolve('msg-1') },
+    enqueueSystem(text, { prefix } = {}) { sent.push({ system: true, text, prefix }); return Promise.resolve('msg-2') },
+    setPaused() {},
+  }
+  try {
+    assert.deepEqual(await claw.sendDispatchNote('hello', { durable: true }), { deferred: true }, 'no peer should defer')
+    claw.peer = { userId: 'user-1', contextToken: 'context-1' }
+    assert.equal(await claw.sendDispatchNote('hello', { isTask: true, durable: true }), true)
+    assert.equal(sent[0].text, '📌 任务已派发：hello')
+    assert.equal(await claw.sendDispatchNote('note', { isTask: false, durable: true }), true)
+    assert.equal(sent[1].text, '📌 消息已转交：note')
+    assert.equal(await claw.sendApprovalNote('allow?', { durable: true }), true)
+    assert.equal(sent[2].text, '🔐 等待权限审批：allow?')
+
+    claw.paused = true
+    assert.deepEqual(await claw.sendDispatchNote('later', { durable: true }), { deferred: true }, 'paused channel should defer')
+    assert.equal(await claw.sendPauseNotice('🌊 paused', { durable: true }), true)
+    assert.deepEqual(sent[3], { system: true, text: '🌊 paused', prefix: false })
+
+    claw.paused = false
+    claw.observeUserMessage({ source: { kind: 'user', rpcId: 'wx_123' } })
+    assert.equal(claw.pauseReason, '微信「文件传输助手」通道消息')
+    claw.setPaused(false)
+    claw.observeUserMessage({ source: { kind: 'user', rpcId: 'qq_123' } })
+    assert.equal(claw.pauseReason, 'QQ 通道消息')
+  } finally {
+    await claw.shutdown()
     rmSync(dir, { recursive: true, force: true })
   }
 }

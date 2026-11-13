@@ -1051,7 +1051,7 @@ function migrateV1(data, file) {
 
 1. `progress` 卡片开关（默认关）、stale 检测、每 task 限流。
 2. 客户端树形任务面板 + feedback 流；微信摘要合并。
-3. task/feedback 保留策略：终态 task 按 §13 的窗口归档到 `tasks.log.jsonl`，feedback 保留 500 条；不再用单一 500 条上限硬截断。
+3. task/feedback 保留策略：终态 task 按 §13 的窗口归档到 `tickets.log.jsonl`，feedback 保留 500 条；不再用单一 500 条上限硬截断。
 4. 指标：每条用户消息的 intake→终态时长、blocked 率、recovery 次数、无人认领 task 数。
 
 验收：
@@ -1254,15 +1254,15 @@ type Task = {
 ```text
 <stateDir>/
   ria.json                  # 热状态：非终态 + 最近 24h/50 条终态
-  tasks.log.jsonl           # 当月热日志，一行一个 task 归档记录
-  tasks-YYYY-MM.jsonl       # 已封存的月日志（UTC 月份），保留 12 个月
+  tickets.log.jsonl           # 当月热日志，一行一个 task 归档记录
+  tickets-YYYY-MM.jsonl       # 已封存的月日志（UTC 月份），保留 12 个月
 ```
 
-- 生产环境 `stateDir` 就是 `~/.dsh/state/ria`（测试可注入临时目录），所以热日志是 `~/.dsh/state/ria/tasks.log.jsonl`，月日志是 `~/.dsh/state/ria/tasks-YYYY-MM.jsonl`。
-- 当月新归档一律 append 到 `tasks.log.jsonl`。
-- 启动时、以及每次写日志前，如果 `tasks.log.jsonl` 的 mtime 月份早于当前 UTC 月份，执行 `rotateTaskLog()`：逐行解析、按记录 `closedAt` 的月份追加到对应 `tasks-YYYY-MM.jsonl`，成功后把热日志截断为空。跨月混合行也能正确分流。
-- `tasks-YYYY-MM.jsonl` 只追加，不重写；重复行由读取端去重。
-- 保留 12 个月：删除文件名月份早于 `currentMonth - 11` 的月日志；`tasks.log.jsonl` 不参与删除。
+- 生产环境 `stateDir` 就是 `~/.dsh/state/ria`（测试可注入临时目录），所以热日志是 `~/.dsh/state/ria/tickets.log.jsonl`，月日志是 `~/.dsh/state/ria/tickets-YYYY-MM.jsonl`。
+- 当月新归档一律 append 到 `tickets.log.jsonl`。
+- 启动时、以及每次写日志前，如果 `tickets.log.jsonl` 的 mtime 月份早于当前 UTC 月份，执行 `rotateTaskLog()`：逐行解析、按记录 `closedAt` 的月份追加到对应 `tickets-YYYY-MM.jsonl`，成功后把热日志截断为空。跨月混合行也能正确分流。
+- `tickets-YYYY-MM.jsonl` 只追加，不重写；重复行由读取端去重。
+- 保留 12 个月：删除文件名月份早于 `currentMonth - 11` 的月日志；`tickets.log.jsonl` 不参与删除。
 
 ### 13.3 归档记录格式
 
@@ -1312,7 +1312,7 @@ type Task = {
 
 - `ria_status { scope:'tasks' }`（默认）：活跃 + 13.4 窗口内终态；排序为活跃在前（按 updatedAt 倒序），终态在后（按 closedAt 倒序）。不读日志。
 - `ria_status { scope:'history', limit?, month? }`：返回归档摘要列表（不含完整 `task`），默认 `limit=50`，按 `closedAt` 倒序；`month='YYYY-MM'` 只读该月文件，不传则从当月向前合并最近 12 个月。
-- `ria_status { taskId }`：先查内存（活跃 + 窗口），未命中再查 `tasks.log.jsonl`，再查当月、上月月日志；仍未命中时从新到旧扫其余月日志（最多 12 个文件），命中即返回完整 task + `archived:true`。
+- `ria_status { taskId }`：先查内存（活跃 + 窗口），未命中再查 `tickets.log.jsonl`，再查当月、上月月日志；仍未命中时从新到旧扫其余月日志（最多 12 个文件），命中即返回完整 task + `archived:true`。
 - `ria_task action=reopen` 使用同一 lookup；`reopen` 成功后把 task 插回 `ria.json`，状态置 `open`，清 `closedAt/resolution`（原 resolution 进 history），`reopenCount++`，`updatedAt=now`；旧日志行不删除，下次关闭时追加新行，读取端以 `closedAt` 最新者为准。
 - 默认列表永不返回归档 task，避免 `ria_status` 越用越长；需要历史必须显式 `scope=history` 或 `taskId`。
 
@@ -1324,7 +1324,7 @@ type Task = {
 
 ### 13.7 兼容与迁移
 
-- 旧 `ria.json` 没有 `tasks.log.jsonl`：首次启动不创建空日志；第一次有 task 超窗时才创建。
+- 旧 `ria.json` 没有 `tickets.log.jsonl`：首次启动不创建空日志；第一次有 task 超窗时才创建。
 - 归档记录 `schema:1`；未来字段变更只追加，读取端对未知字段忽略。
 - `closedAt` 统一用毫秒时间戳（与现有 `createdAt/updatedAt` 一致），月份按 UTC 计算，避免本地时区跨月歧义。
 - 月日志读取按行 `JSON.parse`，单行损坏只跳过该行并 warn，不阻塞整个列表。
@@ -1334,7 +1334,7 @@ type Task = {
 1. 终态超过 24h 且不在前 50：写日志后从 `ria.json` 删除；日志行含 13.3 全部字段，`task` 快照可 reopen。
 2. 24h 内但第 51 条：仍保留在 `ria.json`（并集规则）。
 3. append 失败（mock 抛错）：`ria.json` 不删、task 仍在内存、warn 被记录。
-4. 月滚动：热日志含两个月记录，rotate 后分别落到两个 `tasks-YYYY-MM.jsonl`，热日志为空；重复行读取去重。
+4. 月滚动：热日志含两个月记录，rotate 后分别落到两个 `tickets-YYYY-MM.jsonl`，热日志为空；重复行读取去重。
 5. 保留 12 个月：第 13 个月文件被删除，最近 12 个保留。
 6. 默认 `ria_status tasks` 不含归档；`scope=history` 含摘要且可按 month 过滤；`taskId` 能查当月/上月/更早。
 7. reopen 归档 task：插回活跃列表、`closedAt` 清除、`reopenCount=1`、history 有 reopen 条目；再次关闭追加新日志行。

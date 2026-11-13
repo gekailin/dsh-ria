@@ -1,9 +1,9 @@
 import { EventEmitter } from 'node:events'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import assert from 'node:assert/strict'
-import { apply } from '../lib/index.js'
+import { RiaStore, apply } from '../lib/index.js'
 
 // Every relative host import must be shipped, not only available in the checkout.
 const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
@@ -11,6 +11,25 @@ const hostSource = readFileSync(new URL('../lib/index.js', import.meta.url), 'ut
 for (const match of hostSource.matchAll(/from '\.\/([^']+)'/g)) {
   const modulePath = 'lib/' + match[1]
   assert.ok(manifest.files.some(entry => modulePath === entry || modulePath.startsWith(entry + '/')), 'missing runtime module in package files: ' + modulePath)
+}
+
+// Older state files may contain wechatClawImage=false. Loading must normalize
+// it to true, and writes through setSettings must not turn it off again.
+{
+  const legacyDir = mkdtempSync(join(tmpdir(), 'dsh-ria-legacy-image-'))
+  try {
+    writeFileSync(join(legacyDir, 'ria.json'), JSON.stringify({
+      schemaVersion: 3,
+      version: 3,
+      settings: { wechatClawImage: { inbound: false, outbound: false } },
+    }))
+    const legacyStore = new RiaStore(legacyDir)
+    assert.deepEqual(legacyStore.settings().wechatClawImage, { inbound: true, outbound: true })
+    legacyStore.setSettings({ wechatClawImage: { inbound: false, outbound: false } })
+    assert.deepEqual(legacyStore.settings().wechatClawImage, { inbound: true, outbound: true })
+  } finally {
+    rmSync(legacyDir, { recursive: true, force: true })
+  }
 }
 
 const stateDir = mkdtempSync(join(tmpdir(), 'dsh-ria-test-'))
@@ -240,7 +259,7 @@ assert.deepEqual(workspaceAttachments, [riaId])
 assert.deepEqual(riaEvents, [])
 const initialSettings = await request('GET', '/plugins/dsh-ria/api/settings')
 assert.equal(initialSettings.status, 200)
-assert.deepEqual(initialSettings.body, { dispatchGuard: true, progressCards: false, wechatAutoPause: true })
+assert.deepEqual(initialSettings.body, { dispatchGuard: true, progressCards: false, wechatAutoPause: true, wechatClawImage: { inbound: true, outbound: true } })
 assertLossless(initialSettings.body)
 const workerGuard = guardSections.find(item => item.agentId === 'worker')
 const riaGuard = guardSections.find(item => item.agentId === 'ria')
@@ -251,20 +270,39 @@ assert.match(workerGuard.section.text(), /clearly unrelated/)
 assert.equal(riaGuard.section.text(), workerGuard.section.text())
 const guardOff = await request('POST', '/plugins/dsh-ria/api/settings', { dispatchGuard: false })
 assert.equal(guardOff.status, 200)
-assert.deepEqual(guardOff.body, { dispatchGuard: false, progressCards: false, wechatAutoPause: true })
+assert.deepEqual(guardOff.body, { dispatchGuard: false, progressCards: false, wechatAutoPause: true, wechatClawImage: { inbound: true, outbound: true } })
 assert.equal(workerGuard.section.text(), '')
 assert.equal(riaGuard.section.text(), '')
 const guardOn = await request('POST', '/plugins/dsh-ria/api/settings', { dispatchGuard: true })
 assert.equal(guardOn.status, 200)
-assert.deepEqual(guardOn.body, { dispatchGuard: true, progressCards: false, wechatAutoPause: true })
+assert.deepEqual(guardOn.body, { dispatchGuard: true, progressCards: false, wechatAutoPause: true, wechatClawImage: { inbound: true, outbound: true } })
 assert.match(workerGuard.section.text(), /ask the user to confirm/)
 assert.doesNotMatch(workerGuard.section.text(), /\bRia\b/i)
 const autoPauseOff = await request('POST', '/plugins/dsh-ria/api/settings', { wechatAutoPause: false })
 assert.equal(autoPauseOff.status, 200)
-assert.deepEqual(autoPauseOff.body, { dispatchGuard: true, progressCards: false, wechatAutoPause: false })
+assert.deepEqual(autoPauseOff.body, { dispatchGuard: true, progressCards: false, wechatAutoPause: false, wechatClawImage: { inbound: true, outbound: true } })
 const autoPauseOn = await request('POST', '/plugins/dsh-ria/api/settings', { wechatAutoPause: true })
 assert.equal(autoPauseOn.status, 200)
-assert.deepEqual(autoPauseOn.body, { dispatchGuard: true, progressCards: false, wechatAutoPause: true })
+assert.deepEqual(autoPauseOn.body, { dispatchGuard: true, progressCards: false, wechatAutoPause: true, wechatClawImage: { inbound: true, outbound: true } })
+// Claw image transfer is fixed on. Older clients may still try to turn it off;
+// the field is accepted and ignored so their save does not fail.
+const clawImageOff = await request('POST', '/plugins/dsh-ria/api/settings', { wechatClawImage: { inbound: false, outbound: false } })
+assert.equal(clawImageOff.status, 200)
+assert.deepEqual(clawImageOff.body, { dispatchGuard: true, progressCards: false, wechatAutoPause: true, wechatClawImage: { inbound: true, outbound: true } })
+const clawImageInbound = await request('POST', '/plugins/dsh-ria/api/settings', { wechatClawImage: { inbound: true } })
+assert.equal(clawImageInbound.status, 200)
+assert.deepEqual(clawImageInbound.body, { dispatchGuard: true, progressCards: false, wechatAutoPause: true, wechatClawImage: { inbound: true, outbound: true } })
+const clawImageOn = await request('POST', '/plugins/dsh-ria/api/settings', { wechatClawImage: { inbound: true, outbound: true } })
+assert.equal(clawImageOn.status, 200)
+assert.deepEqual(clawImageOn.body, { dispatchGuard: true, progressCards: false, wechatAutoPause: true, wechatClawImage: { inbound: true, outbound: true } })
+const badClawImage = await request('POST', '/plugins/dsh-ria/api/settings', { wechatClawImage: { inbound: 'yes' } })
+assert.equal(badClawImage.status, 200)
+assert.deepEqual(badClawImage.body.wechatClawImage, { inbound: true, outbound: true })
+const emptyClawImage = await request('POST', '/plugins/dsh-ria/api/settings', { wechatClawImage: {} })
+assert.equal(emptyClawImage.status, 200)
+assert.deepEqual(emptyClawImage.body.wechatClawImage, { inbound: true, outbound: true })
+const stillOn = await request('GET', '/plugins/dsh-ria/api/settings')
+assert.deepEqual(stillOn.body.wechatClawImage, { inbound: true, outbound: true })
 const badGuard = await request('POST', '/plugins/dsh-ria/api/settings', { dispatchGuard: 'yes' })
 assert.equal(badGuard.status, 400)
 const badAutoPause = await request('POST', '/plugins/dsh-ria/api/settings', { wechatAutoPause: 'yes' })
@@ -513,6 +551,56 @@ assert.equal(missingDispatch.results[0].code, 'session_missing')
 assert.match(missingDispatch.results[0].message, /session-nope/)
 assert.equal(prompts.length, preflightPromptsBefore)
 
+// A blocked ticket is parked. Dispatching it must not deliver, touch the
+// recent-worker table, or change the ticket; the state machine has no
+// blocked -> working edge, so a blind dispatch would send and then fail.
+const blockedPromptsBefore = prompts.length
+const blockedReasons = { user: '等待用户选择方向', approval: '等待审批', environment: '等待 GPU 空闲' }
+let blockedDispatch
+for (const waitingOn of ['user', 'approval', 'environment']) {
+  const blockedTicket = await call('ria_ticket', {
+    goal: 'blocked ' + waitingOn,
+    executor: 'session-worker-2',
+    status: 'blocked',
+    blockedReason: blockedReasons[waitingOn],
+    waitingOn,
+  })
+  assert.equal(blockedTicket.ticket.status, 'blocked')
+  blockedDispatch = await call('ria_request', {
+    targetSessionIds: ['session-worker-2'],
+    message: 'should not arrive',
+    ticketId: blockedTicket.ticket.ticketId,
+    note: 'blocked 票不会派发。',
+  })
+  assert.equal(blockedDispatch.code, 'ticket_blocked')
+  assert.equal(blockedDispatch.results[0].ok, false)
+  assert.equal(blockedDispatch.results[0].code, 'ticket_blocked')
+  assert.equal(blockedDispatch.results[0].ticketId, blockedTicket.ticket.ticketId)
+  assert.equal(blockedDispatch.results[0].waitingOn, waitingOn)
+  assert.match(blockedDispatch.results[0].message, new RegExp('waitingOn=' + waitingOn))
+  assert.match(blockedDispatch.results[0].message, new RegExp(blockedReasons[waitingOn]))
+  assert.match(blockedDispatch.results[0].message, /ria_ticket/)
+  assert.equal(prompts.length, blockedPromptsBefore)
+  const blockedStatus = await call('ria_status', { scope: 'tickets' })
+  const blockedRow = blockedStatus.tickets.find(item => item.ticketId === blockedTicket.ticket.ticketId)
+  assert.equal(blockedRow.status, 'blocked')
+  assert.equal(blockedRow.waitingOn, waitingOn)
+  assertLossless(blockedDispatch)
+}
+// Every target is reported as blocked when the ticket itself is parked.
+const blockedMulti = await call('ria_request', {
+  targetSessionIds: ['session-worker-2', 'session-child'],
+  message: 'still should not arrive',
+  ticketId: blockedDispatch.ticketId,
+  note: 'blocked 票多目标也不会派发。',
+})
+assert.deepEqual(blockedMulti.results.map(item => item.code), ['ticket_blocked', 'ticket_blocked'])
+assert.equal(prompts.length, blockedPromptsBefore)
+assert.equal(concluded, 0)
+const recentAfterBlocked = await call('ria_status', { scope: 'recent' })
+assert.equal(recentAfterBlocked.workers.some(item => item.sessionId === 'session-worker-2'), false)
+assertLossless(blockedMulti)
+
 const mixedPromptsBefore = prompts.length
 const mixedTicket = await call('ria_ticket', { goal: 'mixed targets', executor: 'session-worker' })
 const mixed = await call('ria_request', {
@@ -563,14 +651,16 @@ assert.equal(activeGrants.grants[0].grantId, grant.grant.grantId)
 assertLossless(activeGrants)
 const paused = await request('POST', '/plugins/dsh-ria/api/wechat/pause', { paused: true, reason: 'smoke' })
 assert.equal(paused.status, 200)
-assert.equal(paused.body.paused, true)
+// The legacy channel has no session in this fixture, so the persisted pause
+// flag is stored but status reports false until it is connected again.
+assert.equal(paused.body.paused, false)
 assert.equal(paused.body.pausedBy, 'manual')
 assert.equal(paused.body.pauseReason, 'smoke')
 assert.equal(typeof paused.body.pausedAt, 'string')
 assert.ok(!Number.isNaN(Date.parse(paused.body.pausedAt)))
 assert.equal(paused.body.resumedAt, null)
 const pausedStatus = await request('GET', '/plugins/dsh-ria/api/wechat/status')
-assert.equal(pausedStatus.body.paused, true)
+assert.equal(pausedStatus.body.paused, false)
 assert.equal(pausedStatus.body.pausedBy, 'manual')
 assert.equal(pausedStatus.body.pausedAt, paused.body.pausedAt)
 assert.equal(pausedStatus.body.pauseReason, 'smoke')
@@ -593,16 +683,28 @@ assert.deepEqual(Object.keys(channelStatus.body.channels).sort(), ['qq-bot', 'we
 assert.equal(channelStatus.body.channels.wechat.paused, false)
 assert.equal(channelStatus.body.channels['wechat-claw'].loggedIn, false)
 assert.equal(channelStatus.body.channels['qq-bot'].loggedIn, false)
+// A persisted pause flag must not read as "push paused" while the channel is
+// disconnected; paused only applies to a connected channel.
+for (const channelId of ['wechat-claw', 'qq-bot', 'wechat']) {
+  const pausedOffline = await request('POST', '/plugins/dsh-ria/api/channels/' + channelId + '/pause', { paused: true, reason: 'offline-smoke' })
+  assert.equal(pausedOffline.status, 200)
+  assert.equal(pausedOffline.body.paused, false, channelId + ' should not report paused while offline')
+  const offlineStatus = await request('GET', '/plugins/dsh-ria/api/channels/' + channelId + '/status')
+  assert.equal(offlineStatus.body.paused, false, channelId + ' status should not report paused while offline')
+  const resumedOffline = await request('POST', '/plugins/dsh-ria/api/channels/' + channelId + '/pause', { paused: false })
+  assert.equal(resumedOffline.status, 200)
+}
 const clawStatus = await request('GET', '/plugins/dsh-ria/api/channels/wechat-claw/status')
 assert.equal(clawStatus.status, 200)
 assert.equal(clawStatus.body.id, 'wechat-claw')
+assert.deepEqual(clawStatus.body.wechatClawImage, { inbound: true, outbound: true })
 const unknownChannel = await request('GET', '/plugins/dsh-ria/api/channels/nope/status')
 assert.equal(unknownChannel.status, 404)
 const httpState = await request('GET', '/plugins/dsh-ria/api/state')
 assert.equal(httpState.status, 200)
 assert.equal(httpState.body.grants.length, 1)
 assert.equal(httpState.body.grants[0].grantId, grant.grant.grantId)
-assert.deepEqual(httpState.body.settings, { dispatchGuard: true, progressCards: false, wechatAutoPause: true })
+assert.deepEqual(httpState.body.settings, { dispatchGuard: true, progressCards: false, wechatAutoPause: true, wechatClawImage: { inbound: true, outbound: true } })
 const closedTask = await call('ria_ticket', { ticketId: ticket.ticket.ticketId, status: 'done' })
 assert.equal(closedTask.ticket.status, 'done')
 assert.equal(permissions.sandboxOverride, 'workspace-write')
@@ -638,6 +740,9 @@ const promptText = installed.get('prompt:ria-manager').text()
 assert.match(promptText, /Chinese/)
 assert.match(promptText, /Ria session id/)
 assert.match(promptText, /End the current turn immediately/)
+assert.match(promptText, /Never restart dsh web or dsh-daemon/)
+assert.match(promptText, /Send information-only updates to a running worker with mode="steer"/)
+assert.match(promptText, /When the user asks you to watch a worker, read it first/)
 assert.match(promptText, /Every request the user hands you must be carried to an end/)
 assert.match(promptText, /call ria_resolve once per listed ticket/)
 assert.match(promptText, /Never use ria_ticket to edit an intake/)
@@ -651,6 +756,8 @@ assert.match(promptText, /ticketId is required/)
 assert.match(promptText, /do not rely on assistant text/)
 assert.match(installed.get('ria_status').description, /never waits/)
 assert.match(installed.get('ria_status').description, /scope=recent/)
+assert.match(installed.get('ria_request').description, /ticket_blocked/)
+assert.match(installed.get('ria_request').description, /steer_requires_running/)
 assert.match(installed.get('ria_status').description, /lastUsedAt/)
 assert.match(installed.get('ria_status').description, /lastTicketGoal/)
 assert.match(installed.get('ria_read').description, /lastTurn/)
@@ -672,8 +779,12 @@ assert.match(promptText, /ria_grant/)
 assert.match(installed.get('ria_grant').description, /explicitly asks/)
 assert.doesNotMatch(promptText, /welcome/i)
 assert.match(promptText, /scope="recent"/)
-assert.match(promptText, /up to 5 workers/)
+assert.match(promptText, /up to 10 workers/)
+assert.match(promptText, /standing routing preference/)
+assert.match(promptText, /even if it has not been used recently/)
+assert.doesNotMatch(promptText, /never pick a worker that has not been used recently/)
 assert.match(promptText, /last 7 days/)
+assert.match(installed.get('ria_status').description, /up to 10 workers/)
 assert.match(promptText, /ask the user which session/)
 assert.match(promptText, /Creating or updating a ticket does not count/)
 assert.match(promptText, /ria_spawn/)

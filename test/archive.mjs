@@ -44,8 +44,9 @@ function close(store, ticket, at, goal) {
     assert.equal(store.tickets().length, 51)
     const archived = old.filter(ticket => !store.ticket(ticket.ticketId))
     assert.equal(archived.length, 7)
-    assert.equal(existsSync(join(fixture.stateDir, 'tasks.log.jsonl')), true)
-    const lines = readFileSync(join(fixture.stateDir, 'tasks.log.jsonl'), 'utf8').trim().split('\n')
+    assert.equal(existsSync(join(fixture.stateDir, 'tickets.log.jsonl')), true)
+    assert.equal(existsSync(join(fixture.stateDir, 'tasks.log.jsonl')), false)
+    const lines = readFileSync(join(fixture.stateDir, 'tickets.log.jsonl'), 'utf8').trim().split('\n')
     assert.equal(lines.length, 7)
     const first = JSON.parse(lines[0])
     assert.equal(first.schema, 1)
@@ -53,7 +54,7 @@ function close(store, ticket, at, goal) {
     assert.equal(typeof first.attempts.count, 'number')
     assert.equal(typeof first.feedback.count, 'number')
     const month = new Date(archived[0].closedAt)
-    const monthFile = 'tasks-' + month.getUTCFullYear() + '-' + String(month.getUTCMonth() + 1).padStart(2, '0') + '.jsonl'
+    const monthFile = 'tickets-' + month.getUTCFullYear() + '-' + String(month.getUTCMonth() + 1).padStart(2, '0') + '.jsonl'
     assert.equal(existsSync(join(fixture.stateDir, monthFile)), true)
 
     const target = archived[0]
@@ -89,7 +90,7 @@ function close(store, ticket, at, goal) {
     const store = fixture.service.store
     const names = []
     for (let month = 1; month <= 13; month += 1) {
-      const name = 'tasks-2024-' + String(month).padStart(2, '0') + '.jsonl'
+      const name = 'tickets-2024-' + String(month).padStart(2, '0') + '.jsonl'
       names.push(name)
       writeFileSync(join(fixture.stateDir, name), '')
     }
@@ -120,6 +121,53 @@ function close(store, ticket, at, goal) {
     assert.equal(reloaded.ticket(archivedId), undefined)
     assert.equal(reloaded.findArchivedTicket(archivedId).ticketId, archivedId)
     assert.equal(reloaded.historyTickets(10).length, 2)
+  } finally {
+    fixture.cleanup()
+  }
+}
+
+
+// Old names stay readable, two names for the same archive event collapse to
+// one history record, and a later closure of the same ticket is kept.
+{
+  const fixture = await createFixture()
+  try {
+    const store = fixture.service.store
+    const ticket = close(store, open(store, 'legacy readable'), Date.now() - 48 * HOUR, 'legacy readable')
+    const record = store.archiveRecord(ticket)
+    const line = JSON.stringify(record) + '\n'
+    writeFileSync(join(fixture.stateDir, 'tasks.log.jsonl'), line)
+    writeFileSync(join(fixture.stateDir, 'tasks-2023-12.jsonl'), line)
+    assert.equal(store.historyRecords().filter(item => item.ticketId === ticket.ticketId).length, 1)
+    assert.equal(store.findArchivedTicket(ticket.ticketId).ticketId, ticket.ticketId)
+
+    const later = { ...record, closedAt: record.closedAt + 1000, ticket: { ...record.ticket, closedAt: record.closedAt + 1000 } }
+    writeFileSync(join(fixture.stateDir, 'tickets-2024-01.jsonl'), JSON.stringify(later) + '\n')
+    const records = store.historyRecords().filter(item => item.ticketId === ticket.ticketId)
+    assert.equal(records.length, 2)
+    assert.equal(store.findArchivedTicket(ticket.ticketId).closedAt, later.ticket.closedAt)
+  } finally {
+    fixture.cleanup()
+  }
+}
+
+// The rename is idempotent and never overwrites an existing new-name file.
+{
+  const fixture = await createFixture()
+  try {
+    const store = fixture.service.store
+    writeFileSync(join(fixture.stateDir, 'tasks.log.jsonl'), 'hot\n')
+    writeFileSync(join(fixture.stateDir, 'tasks-2024-01.jsonl'), 'monthly\n')
+    const first = store.migrateTicketLogNames()
+    assert.equal(first.renamed, 2)
+    assert.deepEqual(first.errors, [])
+    assert.equal(existsSync(join(fixture.stateDir, 'tickets.log.jsonl')), true)
+    assert.equal(existsSync(join(fixture.stateDir, 'tickets-2024-01.jsonl')), true)
+    assert.equal(existsSync(join(fixture.stateDir, 'tasks.log.jsonl')), false)
+    assert.equal(readFileSync(join(fixture.stateDir, 'tickets.log.jsonl'), 'utf8'), 'hot\n')
+    const second = store.migrateTicketLogNames()
+    assert.equal(second.renamed, 0)
+    assert.deepEqual(second.errors, [])
   } finally {
     fixture.cleanup()
   }

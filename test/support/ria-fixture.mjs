@@ -26,7 +26,8 @@ const DEFAULT_IMAGE_LIMITS = {
  * real model or session.
  */
 export async function createFixture(options = {}) {
-  const stateDir = mkdtempSync(join(tmpdir(), 'dsh-ria-fixture-'))
+  const ownsStateDir = !options.stateDir
+  const stateDir = options.stateDir || mkdtempSync(join(tmpdir(), 'dsh-ria-fixture-'))
   const installed = new Map()
   const prompts = []
   const steered = []
@@ -35,11 +36,16 @@ export async function createFixture(options = {}) {
   const effects = []
   const listeners = new Map()
   const summaries = []
+  const titles = new Map([
+    ['session-worker', 'Worker One'],
+    ['session-no-image', 'Text Only'],
+  ])
   const routes = []
   let riaId = RIA_ID
   let concluded = 0
   let promptFailure = undefined
   const queues = new Map(Object.entries(options.queues || {}).map(([id, queue]) => [String(id), Array.isArray(queue) ? queue.map(item => ({ ...item })) : null]))
+  const runningOverrides = new Map()
   const updateQueueCalls = []
   const models = new Map()
   models.set(riaId, { provider: 'provider-ok', model: 'model-vision' })
@@ -204,8 +210,10 @@ export async function createFixture(options = {}) {
       async list() {
         const withModel = item => {
           const current = models.get(String(item.sessionId))
-          if (!current) return item
-          const values = { ...(item.projections && item.projections.values ? item.projections.values : {}), modelSelection: { next: current } }
+          const values = { ...(item.projections && item.projections.values ? item.projections.values : {}) }
+          const title = titles.get(String(item.sessionId))
+          if (title) values.title = title
+          if (current) values.modelSelection = { next: current }
           return { ...item, projections: { ...(item.projections || {}), values } }
         }
         return {
@@ -221,14 +229,21 @@ export async function createFixture(options = {}) {
       async prompt(request) {
         prompts.push(request)
         if (promptFailure) throw promptFailure
+        if (options.onPrompt) await options.onPrompt(request)
         return { accepted: true }
       },
       async rename(request) {
         renames.push(request)
         if (options.failRename) throw options.failRename
+        const title = String(request.title)
+          .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u200B\u200E\u200F\u202A-\u202E\u2060-\u2064\u2066-\u206F\uFEFF]/gu, '')
+          .replace(/\s+/gu, ' ')
+          .trim()
+        if (!title) throw Object.assign(new Error('session title must contain visible characters'), { code: 'session/title-invalid' })
+        titles.set(String(request.sessionId), title)
         const summary = summaries.find(item => item.sessionId === request.sessionId)
-        if (summary) summary.projections.values.title = request.title
-        return { title: request.title, seq: 1 }
+        if (summary) summary.projections.values.title = title
+        return { title, seq: 1 }
       },
       async selectModel(request) {
         if (options.failSelectModel) throw options.failSelectModel
@@ -243,13 +258,24 @@ export async function createFixture(options = {}) {
         if (summary) summary.projections.values.modelSelection = { next: selected }
         return { selected }
       },
-      async state(request) {
+      async state(request, signal) {
+        // The host calls signal.throwIfAborted() unconditionally, so a missing
+        // signal is a programming error rather than "not cancellable".
+        if (!signal || typeof signal.throwIfAborted !== 'function') {
+          throw new TypeError("Cannot read properties of undefined (reading 'throwIfAborted')")
+        }
+        signal.throwIfAborted()
+        const failure = typeof options.stateFailure === 'function' ? options.stateFailure(request) : options.stateFailure
+        if (failure) throw failure
         const id = String(request && request.sessionId)
-        if (!queues.has(id)) return { cursor: 1, active: false, running: false, queue: null, pendingInput: [] }
+        const running = runningOverrides.has(id)
+          ? Boolean(runningOverrides.get(id))
+          : queues.has(id) ? (options.running === undefined ? true : Boolean(options.running)) : false
+        if (!queues.has(id)) return { cursor: 1, active: running, running, queue: null, pendingInput: [] }
         return {
           cursor: 1,
-          active: true,
-          running: options.running === undefined ? true : Boolean(options.running),
+          active: running || queues.get(id).length > 0,
+          running,
           queue: queues.get(id),
           pendingInput: [],
         }
@@ -301,12 +327,13 @@ export async function createFixture(options = {}) {
       concludeTurn() { concluded += 1 },
     })
   }
-  const cleanup = () => {
+  const cleanup = (cleanupOptions = {}) => {
     try { service.wechat.shutdown() } catch { /* already stopped */ }
+    try { service.shutdownOutbox() } catch { /* already stopped */ }
     for (const dispose of effects.splice(0).reverse()) {
       try { dispose() } catch { /* already disposed */ }
     }
-    rmSync(stateDir, { recursive: true, force: true })
+    if (ownsStateDir && cleanupOptions.keepState !== true) rmSync(stateDir, { recursive: true, force: true })
   }
   return {
     stateDir,
@@ -327,6 +354,7 @@ export async function createFixture(options = {}) {
     call,
     cleanup,
     queues,
+    setRunning(sessionId, value) { runningOverrides.set(String(sessionId), Boolean(value)) },
     updateQueueCalls,
     setPromptFailure(error) { promptFailure = error },
     get concluded() { return concluded },

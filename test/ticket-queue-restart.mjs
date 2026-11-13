@@ -88,10 +88,10 @@ try {
   const service = new RiaService(waiting.ctx, waitingDir)
   await service.startup()
 
-  assert.equal(service.store.data.schemaVersion, 3)
+  assert.equal(service.store.data.schemaVersion, 4)
   assert.ok(existsSync(join(waitingDir, 'ria.json.v2.bak')))
   const migrated = JSON.parse(readFileSync(join(waitingDir, 'ria.json'), 'utf8'))
-  assert.equal(migrated.schemaVersion, 3)
+  assert.equal(migrated.schemaVersion, 4)
   const downstream = service.store.ticket('ticket_downstream')
   assert.equal(downstream.waitingOn, 'dependency')
   assert.equal(downstream.readyAt, null)

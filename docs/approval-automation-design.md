@@ -12,7 +12,7 @@
 2. **P0 默认 `observe`，不改变现有行为。** 只有用户显式把模式切到 `hybrid` 或 `relay`，插件才开始接管 worker 审批；切回 `observe` 立即恢复宿主原生审批弹窗。
 3. **规则只做「减少重复确认」，不做「永久提权」。** 每条规则只影响一次 `allowed-once`，不调用 `setPolicy`，不修改 sandbox，不产生 grant。
 4. **不做 Ria 自主 allow（P0/P1）。** Ria 可以转述、可以建议拒绝，但不能在没有用户明确指令时把 `allowed-once` 返回给 worker。原因是审批原因和工具参数都可能被 worker 内容污染，LLM 不适合做权限边界。
-5. **拒绝或超时后票不自动回到 working。** 允许才回到 working；拒绝、取消、超时都把票留在 `blocked/waitingOn=user`，让 Ria 和用户决定重试、改需求还是取消。
+5. **拒绝或超时后工单不自动回到 working。** 允许才回到 working；拒绝、取消、超时都把工单留在 `blocked/waitingOn=user`，让 Ria 和用户决定重试、改需求还是取消。
 6. **审批请求必须在 worker 当前 turn 内闭环。** 宿主 `dsh-user-approval/lib/index.js:155` 要求 turnOpen；插件不能把请求「存起来等重启」，只能 fail closed。
 
 一句话版本：**规则负责把「git status 这类重复低风险动作」快速放行；其余请求由 Ria 变成一张带允许/拒绝按钮的卡片，用户点头才放行；两条路都只发一次 `allowed-once`，都写审计，都可随时退回原生审批。**
@@ -56,7 +56,7 @@
 | 不能回答 | 监听器捕获后总是 `return await next()` | 用户必须打开 worker 会话点原生弹窗；微信侧完全无法处理 |
 | 没有规则 | 每条审批都要人 | 重复的 `git status`、`npm test` 也会打断人 |
 | 没有决策审计 | 宿主持久化只有 asked/decided，没有「为什么」 | 事后不知道是规则放行、用户点击还是 Ria 决定 |
-| 没有失败语义 | 超时/重启只把票恢复 working | 拒绝或超时后票看起来像「还在跑」，与事实不符 |
+| 没有失败语义 | 超时/重启只把工单恢复 working | 拒绝或超时后工单看起来像「还在跑」，与事实不符 |
 | 没有并发控制 | 一个 ticket 可能同时挂多条审批 | 需要明确「最后一条决定后才释放」 |
 | 没有权限边界 | Ria 没有审批工具 | 加工具容易变成「Ria 可以给自己和 worker 放权」 |
 
@@ -342,7 +342,7 @@ POST /approvals/:id/decision  body {decision:"allow"|"deny"}
 
 **安全说明：** `userConfirmed` 是流程约束而非密码学证明；P1 以本地按钮/微信短码为权威路径，`decide` 只作聊天中明确指示的便捷路径。高风险规则应设 `effect=ask`，强制走按钮。
 
-### 4.6 票与 attention 状态
+### 4.6 工单与 attention 状态
 
 | 决策 | worker 结果 | ticket 后续 | attention |
 |---|---|---|---|
@@ -352,7 +352,7 @@ POST /approvals/:id/decision  body {decision:"allow"|"deny"}
 | timeout | 请求取消 | 保持 blocked，waitingOn=user | `审批超时` |
 | unavailable（无应答者） | 宿主 fail closed | 保持 blocked，waitingOn=user | `没有可用的审批通道` |
 
-这与当前 `ApprovalObserver.releaseTicket` 的「无论结果都回 working」不同，是本次设计要改的行为。理由：拒绝/超时后 worker 已经拿不到权限，票不能假装还在正常执行；让 Ria 明确处理，避免「票 working 但 worker 已死」的假象。
+这与当前 `ApprovalObserver.releaseTicket` 的「无论结果都回 working」不同，是本次设计要改的行为。理由：拒绝/超时后 worker 已经拿不到权限，工单不能假装还在正常执行；让 Ria 明确处理，避免「工单 working 但 worker 已死」的假象。
 
 多个审批挂同一 ticket：
 
@@ -385,11 +385,11 @@ POST /approvals/:id/decision  body {decision:"allow"|"deny"}
   - 有 pending（理论上是同进程重载）→ 保留；
   - 无 pending → 恢复 `open`，再按 worker 是否还活着决定是否 working；
   - 写 attention `审批因重启丢失，请确认 worker 状态`；
-  - 不要静默把票当 working。
+  - 不要静默把工单当 working。
 - **插件卸载/热重载**：`dispose` 时对所有 pending 返回 `cancelled`，清理 timer/listener，写审计 `approval/aborted`。未决请求不能悬空。
 - **dsh web 关闭**：与卸载相同；宿主进程退出会中断 turn，不尝试持久化 pending。
 - **worker turn 取消**：监听 `req.signal`，立即返回 `cancelled`，清理待决项；晚到的用户点击返回 `approval_expired`。
-- **重启后的票**：如果 worker 已不在，ticket 留在 blocked/waitingOn=user，并通知 Ria；不要自动重派。
+- **重启后的工单**：如果 worker 已不在，ticket 留在 blocked/waitingOn=user，并通知 Ria；不要自动重派。
 
 ### 4.9 通知与唤醒
 
@@ -559,14 +559,14 @@ Ria 自主 allow 的默认模式；把 pending 持久化到 `ria.json` 跨重启
 1. **默认模式**：保持 `observe`，还是新装默认 `hybrid/unmatched=ui`？推荐 `observe`，升级后不改变现有体验。
 2. **转人工是否替换原生弹窗**：推荐是；开启 `relay` 后原生弹窗不再出现，避免双答。是否接受这个取舍？
 3. **Ria 是否允许自主 allow**：推荐 P0/P1 不允许；只允许用户明确指令下代按。是否接受？
-4. **拒绝/超时后的票状态**：推荐 `blocked/waitingOn=user`；是否同意改掉现有「回 working」行为？
+4. **拒绝/超时后的工单状态**：推荐 `blocked/waitingOn=user`；是否同意改掉现有「回 working」行为？
 5. **规则语言**：推荐 P0 只做 argv 前缀/精确匹配，不支持正则；是否够用？
 6. **内置硬拒绝清单**：推荐短清单（sudo、rm -rf /、写 ~/.ssh、写 ~/.dsh、停 dsh-daemon）；是否要加 `git push --force`、`npm publish`？
 7. **`npm test` 是否可自动 allow**：取决于是否信任仓库的 package.json；推荐只在显式 pin 的仓库根目录允许，且 `maxUsesPerTicket` 有限。
 8. **规则文件位置**：推荐 `~/.dsh/state/ria/approval-rules.json`；是否要放进 `ria.json` 以便一起备份？
 9. **微信短码长度/格式**：推荐 4–6 位、只在 pending 内唯一；是否接受 `允许 A1B2` 这种格式？
 10. **多审批同一 ticket**：推荐「全部结束才释放；任一失败则 blocked/user」；是否同意？
-11. **同一 executor 多 active ticket**：推荐不自动 allow、转人工并提示歧义；是否要自动选最近的 working 票？
+11. **同一 executor 多 active ticket**：推荐不自动 allow、转人工并提示歧义；是否要自动选最近的 working 工单？
 12. **审计保留与脱敏**：推荐只存摘要 + 400 字预览；是否需要保留完整命令供事后取证（会增加泄露风险）？
 13. **Ria 转人工的唤醒频率**：推荐每条审批只唤醒一次；是否接受 Ria 可能因此多一个 turn？
 14. **P1 的 `ria_approval decide` 是否保留**：推荐保留但仅作聊天便捷路径，权威路径是按钮/短码；是否要直接去掉，减少模型权力？

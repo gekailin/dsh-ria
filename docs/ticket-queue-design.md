@@ -30,7 +30,7 @@
 | open 状态强制 waitingOn='ria' | lib/tickets.mjs:314-317 | 要支持「排队中」，必须放宽这条不变量，新增 dependency 等待值 |
 | waitingOn 枚举没有 dependency | lib/tickets.mjs:27 | 需要新增，且只允许出现在 open |
 | worker idle 只通知「有 working ticket 的 executor」 | lib/worker-idle.mjs:130-135 | A 完成后，若 B 还没 working，B 不会自己触发 idle 通知；必须有 host 侧解锁/唤醒 |
-| 启动恢复把 open 当作待处理单元 | lib/index.js:3225-3243 | 重启后 B 会被当成普通 open 票提示 Ria，可能被提前派发；P0 必须把「排队中」从恢复单元里排除 |
+| 启动恢复把 open 当作待处理单元 | lib/index.js:3225-3243 | 重启后 B 会被当成普通 open 工单，提示 Ria，可能被提前派发；P0 必须把「排队中」从恢复单元里排除 |
 | ria_request 成功一次后立即 concludeTurn() | lib/index.js:2668-2675 | 同一 turn 内连续派发 A、B 并不可靠；fan-out/批量派发需要 P1 单独设计 |
 | source 被 merge 后以 done + resolution.kind='merged' 收敛 | lib/index.js:702-712 | 不能把「merged done」当成「工作完成」去解锁下游；merge 必须先把依赖边转移到 target |
 | outbox 已有持久化、去重、6 次重试和 30 秒 tick | lib/outbox.mjs:11-17、lib/outbox.mjs:124-149 | 唤醒信号可以复用它，不需要新造一个持久队列 |
@@ -43,7 +43,7 @@
 | 类型 | 例子 | 现在的真实表现 | 跨 turn / 重启 |
 |---|---|---|---|
 | 顺序链 | 「先改完后端，再跑前端构建」 | Ria 可以自己记住，但没有字段约束；A 未结束时也可能先派 B | 上下文一滑走或重启，顺序就断 |
-| 跨 executor 链 | 「A 交给 worker1，B 交给 worker2，A 完再做 B」 | Ria 只能在 A 的 idle 通知后凭记忆派 B；B 可能被提前派发 | 重启后 B 是普通 open 票，恢复提示可能让它先跑 |
+| 跨 executor 链 | 「A 交给 worker1，B 交给 worker2，A 完再做 B」 | Ria 只能在 A 的 idle 通知后凭记忆派 B；B 可能被提前派发 | 重启后 B 是普通 open 工单，恢复提示可能让它先跑 |
 | fan-out 后汇聚 | 「A、B 并行，两个都完成再做 C」 | 可以建三个 ticket，但没有「都完成」这个条件；C 无法自动等 two-of-two | 无持久汇聚点 |
 | 条件分支 | 「A 成功才做 B，失败就跳过」 | 只能靠 Ria 在 A 结束后自行判断 | 失败结果和分支决策都不在 ticket 状态里 |
 
@@ -56,11 +56,11 @@
 ### 1.4 哪些现在做不到
 
 - **跨 executor 的可靠顺序**：A 在 worker1，B 在 worker2；A 结束后只有 worker1 的 idle 通知，B 不会自动被唤醒。
-- **重启后的顺序**：B 是普通 open 票，启动恢复会把它列为「未收敛，请处理」，Ria 可能在不知道 A 还没完成的情况下派 B。
+- **重启后的顺序**：B 是普通 open 工单，启动恢复会把它列为「未收敛，请处理」，Ria 可能在不知道 A 还没完成的情况下派 B。
 - **fan-out 汇聚**：没有「所有依赖都 done」这个可计算条件；父 ticket 的 children 聚合只适用于 forked 容器，而且当前 split 未开放。
 - **失败/取消传播**：A 失败后 B 仍是 open；用户取消 A 后 B 仍可能被派发。
-- **可见性**：ria_status 只能看到一堆 open 票，看不出「B 在等 A」，也看不出「A 失败导致 B 不能开始」。
-- **幂等**：重启、重复 idle 通知、重复唤醒都可能让 Ria 对同一张票再次派发；当前没有 ready token。
+- **可见性**：ria_status 只能看到一堆 open 工单，看不出「B 在等 A」，也看不出「A 失败导致 B 不能开始」。
+- **幂等**：重启、重复 idle 通知、重复唤醒都可能让 Ria 对同一张工单再次派发；当前没有 ready token。
 
 ### 1.5 为什么不能只靠 prompt（方案 D）
 
@@ -82,8 +82,8 @@
 做法：
 
 - 在 ticket 上加 dependsOn: string[]，边表示「B 必须等 A 进入 done 才能开始」。
-- open 票有两种等待：waitingOn='ria'（就绪，等 Ria 派发）和 waitingOn='dependency'（还没轮到）。
-- Host 在 A 变为终态时重算所有依赖 A 的票；全部依赖 done 时，把 B 从 dependency 改为 ria，并写入 ready 信号。
+- open 工单有两种等待：waitingOn='ria'（就绪，等 Ria 派发）和 waitingOn='dependency'（还没轮到）。
+- Host 在 A 变为终态时重算所有依赖 A 的工单；全部依赖 done 时，把 B 从 dependency 改为 ria，并写入 ready 信号。
 - Ria 被唤醒后，仍然调用 ria_request；预检、note、卡片、微信、recentWorkers 全部复用。
 - Host 不直接向 worker 发消息，不替 Ria 选 executor。
 
@@ -98,16 +98,16 @@
 - 如果 runner 只解锁、仍让 Ria 派发，那它本质上还是 A 的依赖图，只是多了一层容易失配的索引。
 - 适合「用户明确要一个多步骤计划」的展示层，不适合作为 P0 的唯一事实来源。
 
-### 2.3 方案 C：复用 forked 父容器 + children，按顺序解锁子票
+### 2.3 方案 C：复用 forked 父容器 + children，按顺序解锁子工单
 
-做法：父 ticket forked/executor=null，子 ticket 各自 executor；父按 dependsOn 串行解锁子票。
+做法：父 ticket forked/executor=null，子 ticket 各自 executor；父按 dependsOn 串行解锁子工单。
 
 问题：
 
 - 当前 split 未开放，父/子工具面也不完整；P0 就要先补 fork，成本高于 A。
-- 父的聚合语义是「所有子票收敛后父收敛」，不是「按顺序启动」；串行还要再实现一遍依赖。
+- 父的聚合语义是「所有子工单收敛后父收敛」，不是「按顺序启动」；串行还要再实现一遍依赖。
 - 父最多 2–8 个子、深度最多 2；跨 root 的临时顺序链不适用。
-- 父容器是「一个目标拆成几件事」的心智，不是「队列」的心智；用户说「A 完再做 B」时不一定想把它们塞进一个父票。
+- 父容器是「一个目标拆成几件事」的心智，不是「队列」的心智；用户说「A 完再做 B」时不一定想把它们塞进一个父工单。
 - 结论：C 可以作为 P1 的「计划视图/容器」，但不建议作为底层机制；底层仍然需要 A 的依赖边。
 
 ### 2.4 方案 D：纯 prompt 自律，零代码
@@ -118,24 +118,24 @@
 
 | 维度 | A：ticket DAG | B：plan/queue 实体 | C：forked 父容器 | D：纯 prompt |
 |---|---|---|---|---|
-| 与「一票一 executor」 | 不冲突；边在票之间，票仍只有一个 executor | 不冲突，但 plan/step 需要额外 executor 校验 | 不冲突；父无 executor，子各自一个 | 不冲突，但没有约束 |
-| 与 ria_request 预检 | 完全复用 | runner 若直接派发会绕过；若让 Ria 派发则仍复用 | 子票派发可复用；父解锁逻辑另写 | 复用，但无门禁 |
-| 与归档 | 依赖求值要能查 hot + tickets.log.jsonl | plan step 引用归档票要额外处理 | 父子归档都要处理 | 不处理 |
-| 与 merge | 需要把 source 的入边转移到 target，source 的 merged done 不能解锁下游 | step 指向 source 会失效，需要重写 plan | 子票 merge 后父聚合要重算 | 不处理 |
+| 与「一个工单一个 executor」 | 不冲突；边在工单之间，工单仍只有一个 executor | 不冲突，但 plan/step 需要额外 executor 校验 | 不冲突；父无 executor，子各自一个 | 不冲突，但没有约束 |
+| 与 ria_request 预检 | 完全复用 | runner 若直接派发会绕过；若让 Ria 派发则仍复用 | 子工单派发可复用；父解锁逻辑另写 | 复用，但无门禁 |
+| 与归档 | 依赖求值要能查 hot + tickets.log.jsonl | plan step 引用归档工单要额外处理 | 父子归档都要处理 | 不处理 |
+| 与 merge | 需要把 source 的入边转移到 target，source 的 merged done 不能解锁下游 | step 指向 source 会失效，需要重写 plan | 子工单 merge 后父聚合要重算 | 不处理 |
 | 重启后恢复 | 从 ria.json + 归档重算即可 | 需要恢复 plan 状态 + ticket 状态，双阶段 | 父聚合可恢复，但没有顺序状态 | 丢上下文就断 |
-| 用户可见性 | 每张票可显示「等 A」；状态自然 | plan 视图最直观，但票视图仍要重复 | 树形直观，但只适用于父子 | 基本不可见 |
-| 失败/取消传播 | 可逐票处理，可级联取消下游 | runner 可统一处理，但规则容易和 ticket 状态不一致 | 父聚合有 blocked>failed>cancelled>done，但不是顺序语义 | 靠 Ria 记忆 |
+| 用户可见性 | 每张工单可显示「等 A」；状态自然 | plan 视图最直观，但工单视图仍要重复 | 树形直观，但只适用于父子 | 基本不可见 |
+| 失败/取消传播 | 可逐个工单处理，可级联取消下游 | runner 可统一处理，但规则容易和 ticket 状态不一致 | 父聚合有 blocked>failed>cancelled>done，但不是顺序语义 | 靠 Ria 记忆 |
 | 实现成本 | 中（P0 约 3 个模块 + 2 个 suite） | 高（新实体、新 runner、新迁移、新 UI） | 中高（先补 fork，再做串行） | 零 |
 | 是否引入第二调度器 | 否，host 只解锁和唤醒 | 很容易；即使只解锁也多一层状态机 | 父解锁可能变成第二个调度器 | 否 |
 | 适用阶段 | **P0 推荐** | P1/P2 的计划视图，可选 | P1 的容器视图，可选 | 回退 |
 
 **推荐 A 的核心理由：**
 
-1. 它把「顺序」放在 ticket 上，和现有「一票一 executor、预检、note、审批、归档、恢复」同构，不需要第二套生命周期。
+1. 它把「顺序」放在 ticket 上，和现有「一个工单一个 executor、预检、note、审批、归档、恢复」同构，不需要第二套生命周期。
 2. 它不引入第二个调度器：host 只根据依赖算 ready，真正的派发动作仍然只有一个入口——Ria 的 ria_request。
 3. 它支持跨 executor 链，而且不要求先实现 split/fork。
 4. 它可以用最小状态变化表达：不新增状态，只新增一个 waitingOn 值和几个可重算字段。
-5. 它的失败/取消语义可以逐票解释，不会出现「plan 说跳过、ticket 还在 working」的双重真相。
+5. 它的失败/取消语义可以逐个工单解释，不会出现「plan 说跳过、ticket 还在 working」的双重真相。
 
 ---
 
@@ -145,7 +145,7 @@
 
 | 角色 | 负责 | 不负责 |
 |---|---|---|
-| Ria | 建票、加依赖、读 A 的结果、决定 B 是否仍要做、调用 ria_request、向用户解释 | 不轮询、不直接改依赖状态、不在失败时自动改派 |
+| Ria | 建工单、加依赖、读 A 的结果、决定 B 是否仍要做、调用 ria_request、向用户解释 | 不轮询、不直接改依赖状态、不在失败时自动改派 |
 | Host（RiaService） | 校验依赖图、在 A 终态时重算 B、把 B 改为 ready、写持久唤醒、启动对账、在 ria_status 中展示 | 不选 executor、不直接给 worker 发消息、不替 Ria 决定 skip/continue |
 | Worker | 执行被派发的消息 | 不知道 ticket 依赖，不参与调度 |
 
@@ -200,7 +200,7 @@ P1 再增加显式策略：onDependencyFailure: 'hold' | 'skip' | 'continue' | '
 
 1. **outbox 的 queue_wake 是主路径**：A 终态触发时入队；Ria 没有 turn 时由 pump 启动一个 turn。
 2. **startup reconcile 是兜底**：重启后重新计算所有依赖，补发未送达的 wake。
-3. **turn/end 后再泵一次**：Ria 当前 turn 结束时，如果还有 ready 票，保证下一次唤醒不被漏掉。
+3. **turn/end 后再泵一次**：Ria 当前 turn 结束时，如果还有 ready 工单，保证下一次唤醒不被漏掉。
 4. **idle 通知不承担 B 的唤醒**：它仍然负责「A 的 worker 结束了，Ria 去读结果」。
 
 ### 3.6 ready 但没有 Ria 在跑时怎么保证派出去
@@ -209,18 +209,18 @@ P1 再增加显式策略：onDependencyFailure: 'hold' | 'skip' | 'continue' | '
 
 1. **持久化**：queue_wake 写入 outbox 文件（原子写、重试、6 次退避），不是内存事件。
 2. **可启动**：pump 发现 Ria 没有活跃 turn 时，调用 ensureRia() 后 sessionController.prompt({mode:'queue'})；这和 worker-idle 当前唤醒 Ria 的方式一致。
-3. **可对账**：每次启动扫描所有非终态票，重新计算 ready；对「ready 但仍未 working」的票补一条新的 wake。即使上一次 wake 已投递但 Ria 在派发前崩溃，重启也会再次提醒。
+3. **可对账**：每次启动扫描所有非终态工单，重新计算 ready；对「ready 但仍未 working」的工单补一条新的 wake。即使上一次 wake 已投递但 Ria 在派发前崩溃，重启也会再次提醒。
 
 ### 3.7 唤醒消息长什么样
 
-一条唤醒可以合并多张 ready 票：
+一条唤醒可以合并多张 ready 工单：
 
 ~~~text
 [Queue ready]
 以下 ticket 的依赖已完成，可以派发：
 - ticket_b | goal=... | executor=session-w2 | queueToken=ticket_b:176...:7 | 依赖: ticket_a(done)
 - ticket_c | goal=... | executor=session-w3 | queueToken=ticket_c:176...:3 | 依赖: ticket_a(done), ticket_b(done)
-请先读依赖票的结果，确认目标仍然成立，再用 ria_request 派发；每张票只能派发一次。
+请先读依赖工单的结果，确认目标仍然成立，再用 ria_request 派发；每张工单只能派发一次。
 ~~~
 
 失败提醒：
@@ -268,10 +268,10 @@ ticket_b 仍在等 ticket_a，但 ticket_a 已 failed。
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| dependsOn | string[] | 已有的字段；依赖票 id，去重、最多 8 个、不能自指、不能成环 |
+| dependsOn | string[] | 已有的字段；依赖工单 id，去重、最多 8 个、不能自指、不能成环 |
 | readyAt | number 或 null | 最近一次变为「所有依赖都 done」的时间；用于展示和 wake 去重 |
 | readyNotifiedAt | number 或 null | 最近一次成功把 ready 通知交给 Ria 的时间；只用于观测/诊断 |
-| dependencyAlerts | array | 依赖票已 failed/cancelled 时的结构化提示；不等于 ticket 自身 failed |
+| dependencyAlerts | array | 依赖工单已 failed/cancelled 时的结构化提示；不等于 ticket 自身 failed |
 | queueToken | string（计算值） | ticketId + ':' + readyAt + ':' + revision；不入库，用于 ria_request 防重复派发 |
 | onDependencyFailure | P1，枚举 | hold（默认）/ skip / continue / block；P0 不实现，不写字段 |
 
@@ -290,7 +290,7 @@ ticket_b 仍在等 ticket_a，但 ticket_a 已 failed。
 | open | dependency | 已定性，但仍有一个以上依赖未 done | 否 |
 | working | worker（或短暂 ria） | 已投递，等 worker 或等 Ria 验收 | 否（continuation 另论） |
 | blocked | user / approval / environment | 等外部输入 | 否 |
-| forked | children | 父容器，等子票 | 否 |
+| forked | children | 父容器，等子工单 | 否 |
 | done / failed / cancelled | none | 终态 | 否 |
 
 open + waitingOn='dependency' 必须同时满足：dependsOn.length > 0 且至少一个依赖不是 done。否则应归一化为 open + waitingOn='ria'，或者拒绝这次更新。
@@ -301,46 +301,46 @@ open + waitingOn='dependency' 必须同时满足：dependsOn.length > 0 且至�
 
 | ID | From → To | 触发 | Actor | 守卫 / 副作用 |
 |---|---|---|---|---|
-| T29 | open/dependency → open/ria | 依赖票变为 done，重算后全部满足 | system | 设 readyAt=now；dependencyAlerts=[]；生成 queueToken；入队 queue_wake |
+| T29 | open/dependency → open/ria | 依赖工单变为 done，重算后全部满足 | system | 设 readyAt=now；dependencyAlerts=[]；生成 queueToken；入队 queue_wake |
 | T30 | open/ria → open/dependency | 上游被 reopen，重算后不再全部 done | system | 清 readyAt；作废未投递的 wake；不派发 |
-| T31 | open/ria → open/dependency | Ria 新增/修改 dependsOn，且未全部满足 | Ria | 先校验无环；清 readyAt；已入队的 wake 在投递时检查票状态并跳过 |
+| T31 | open/ria → open/dependency | Ria 新增/修改 dependsOn，且未全部满足 | Ria | 先校验无环；清 readyAt；已入队的 wake 在投递时检查工单状态并跳过 |
 | T32 | open/dependency → open/ria | Ria 移除依赖，或依赖被补齐 | Ria | 设 readyAt；可入队 wake；Ria 在同一 turn 内通常直接派发 |
-| T33 | open/dependency → open/dependency | 依赖票变为 failed / cancelled | system | 不改 status；写 dependencyAlerts；入队 queue_blocked（P0 只提醒，不自动 skip） |
-| T34 | open/ria → open/dependency | 依赖票从 done 被 reopen | system | 同 T30；如果 B 已经 working，不回溯，只记录历史 |
+| T33 | open/dependency → open/dependency | 依赖工单变为 failed / cancelled | system | 不改 status；写 dependencyAlerts；入队 queue_blocked（P0 只提醒，不自动 skip） |
+| T34 | open/ria → open/dependency | 依赖工单从 done 被 reopen | system | 同 T30；如果 B 已经 working，不回溯，只记录历史 |
 | T35 | 排队/阻塞中的下游 → cancelled | 用户/Ria 显式级联取消 | user/ria | 只取消 open、blocked、intake 的下游；working 下游不改状态，返回 deferred |
 | T36 | open/dependency → cancelled | P1 onDependencyFailure='skip' | system | resolution.kind='dependency_skipped'；记录被跳过的上游 |
 | T37 | open/dependency → blocked/user | P1 onDependencyFailure='block' | system | 写 blockedReason + attention；等用户决定 |
 
 说明：
 
-- T29 是系统自动转移，但 **不自动派发**；它只把票变成「等 Ria」。
+- T29 是系统自动转移，但 **不自动派发**；它只把工单变成「等 Ria」。
 - T30/T34 处理「上游回滚」：A 从 done 被 reopen 后，B 不能再保持 ready；如果 B 还没 working，必须退回 dependency。
 - T33 不改变状态，避免「A 失败」自动把 B 判死；P0 的可见性靠 dependencyAlerts 和 queue_blocked 唤醒。
-- T35 的 deferred 是诚实的：Ria 没有停止 worker turn 的能力，不能把一张 running 的票写成 cancelled。
+- T35 的 deferred 是诚实的：Ria 没有停止 worker turn 的能力，不能把一张 running 的工单写成 cancelled。
 
 ### 4.5 不变量增补
 
 在现有 10 条之外增加：
 
 11. dependsOn 必须去重；不能包含自身；最多 8 个。
-12. 依赖图必须无环。新增/修改依赖时，从被依赖票出发做 DFS；发现回到当前票即拒绝 dependency_cycle，不做部分写入。
-13. 依赖票必须存在：优先查热存储，其次查 tickets.log.jsonl / 月日志；不存在返回 dependency_missing。不允许依赖 intake（它还没有稳定归宿）。
+12. 依赖图必须无环。新增/修改依赖时，从被依赖工单出发做 DFS；发现回到当前工单即拒绝 dependency_cycle，不做部分写入。
+13. 依赖工单必须存在：优先查热存储，其次查 tickets.log.jsonl / 月日志；不存在返回 dependency_missing。不允许依赖 intake（它还没有稳定归宿）。
 14. open + waitingOn='ria' 要求所有 dependsOn 都是 done；否则必须处于 open + waitingOn='dependency'。这条是「不能提前派发」的硬门禁。
 15. open + waitingOn='dependency' 要求 dependsOn.length > 0 且至少一个依赖不是 done；否则归一化为 ready。
 16. waitingOn='dependency' 只允许出现在 open；intake/forked/working/terminal 不允许。
-17. readyAt 只在「所有依赖 done 且票尚未 working」时有意义；变为 dependency 时清空。
-18. dependencyAlerts 只记录终态非 done 的依赖；依赖恢复为 done 或票进入终态时清空。
+17. readyAt 只在「所有依赖 done 且工单尚未 working」时有意义；变为 dependency 时清空。
+18. dependencyAlerts 只记录终态非 done 的依赖；依赖恢复为 done 或工单进入终态时清空。
 19. mergeTicket 必须先转移依赖边，再把 source 收敛为 done(merged)；任何「source 已 merged done」都不能被当作依赖满足。
-20. 父票聚合规则不变：dependsOn 只作用于子票自身；父仍按 blocked > failed > cancelled > done 聚合。依赖失败导致的子票 alert 不会让父提前收敛。
-21. 级联取消必须只沿 dependsOn 边和 childTicketIds 向下走，不允许向上取消依赖票；否则用户取消 B 会误杀 A。
+20. 父工单聚合规则不变：dependsOn 只作用于子工单自身；父仍按 blocked > failed > cancelled > done 聚合。依赖失败导致的子工单 alert 不会让父提前收敛。
+21. 级联取消必须只沿 dependsOn 边和 childTicketIds 向下走，不允许向上取消依赖工单；否则用户取消 B 会误杀 A。
 22. expectedRevision 仍然有效；ria_request 的 queueToken 校验失败返回 ticket_not_ready，不得投递。
 
 ### 4.6 依赖边的增删规则
 
-- **创建**：ria_ticket 创建时允许传 dependsOn；ria_resolve kind=work 也允许传，用于「这条 intake 本身就要等某张票」。
-- **更新**：只允许在 open 状态改 dependsOn；working 之后不允许新增未满足依赖（否则会制造「已经跑了但还在等」的假状态）。blocked 票可以保留旧依赖，reopen 后重新计算。
+- **创建**：ria_ticket 创建时允许传 dependsOn；ria_resolve kind=work 也允许传，用于「这条 intake 本身就要等某张工单」。
+- **更新**：只允许在 open 状态改 dependsOn；working 之后不允许新增未满足依赖（否则会制造「已经跑了但还在等」的假状态）。blocked 工单可以保留旧依赖，reopen 后重新计算。
 - **删除**：Ria 可以删除依赖；删除后如果全部满足，转 ready。
-- **上限**：单票 8 个依赖；超过时让 Ria 先拆成两段或问用户，不自动截断。
+- **上限**：单个工单最多 8 个依赖；超过时让 Ria 先拆成两段或问用户，不自动截断。
 - **跨 root**：P0 建议默认允许。原因见 8.1 的第 1 条；rootTicketId 继续只表示 fork 血统，不作为依赖边界。
 
 ### 4.7 与 merge 的交互
@@ -348,7 +348,7 @@ open + waitingOn='dependency' 必须同时满足：dependsOn.length > 0 且至�
 merge 是依赖机制最容易出错的地方，必须按下面顺序：
 
 1. 校验 source/target，保持现有 merge 的所有检查。
-2. 找到所有 t.dependsOn.includes(sourceId) 的票，把 sourceId 替换为 targetId；去重；如果 target 已在数组里，只保留一个。
+2. 找到所有 t.dependsOn.includes(sourceId) 的工单，把 sourceId 替换为 targetId；去重；如果 target 已在数组里，只保留一个。
 3. 如果 source 自己有 dependsOn，把它们并入 target：target 尚未 started 时作为新的门禁；target 已经 working 时只记录，不再回溯阻塞。
 4. 重新校验整张图无环；任何一步失败都不写入，保持 merge 的「先校验后提交」。
 5. 最后才把 source 转为 done + resolution.kind='merged'。
@@ -357,14 +357,14 @@ merge 是依赖机制最容易出错的地方，必须按下面顺序：
 
 - B 原来等 A，A 被并入 A2 后，B 改为等 A2，不会因为 A 的 done(merged) 被提前解锁。
 - 如果 B 自己并入 B2，B2 继承 B 的依赖；B 的旧边消失。
-- 已 working 的 target 不会因为 merge 突然被依赖卡住；依赖只对「还没开始」的票有意义。
+- 已 working 的 target 不会因为 merge 突然被依赖卡住；依赖只对「还没开始」的工单有意义。
 
 ### 4.8 与归档的交互
 
 - 依赖求值必须能读归档：A 已 done 且归档，B 仍应视为满足；A 已 failed/cancelled 且归档，B 应产生 alert。
-- 依赖目标允许是归档终态；不允许是归档中的活跃票（归档只有终态，不存在这种情况）。
+- 依赖目标允许是归档终态；不允许是归档中的活跃工单（归档只有终态，不存在这种情况）。
 - reopen 归档 A 时先从日志捞回热存储，再触发依赖重算；B 如果还是 ready 未派发，退回 dependency。
-- ria_status 的依赖摘要要标 archived:true，避免 Ria 以为还能直接 ria_request 一张已归档的依赖票。
+- ria_status 的依赖摘要要标 archived:true，避免 Ria 以为还能直接 ria_request 一张已归档的依赖工单。
 
 ---
 
@@ -399,7 +399,7 @@ P1 增加 onDependencyFailure，默认 hold：
 | continue | 无视失败，转 ready | 「A 失败也要做 B（例如清理/回滚）」 |
 | block | 下游转 blocked/waitingOn=user，带 attention | 必须用户拍板 |
 
-策略是「边的策略」还是「票的策略」？建议放在 **下游票** 上（onDependencyFailure），因为同一张 B 可能被多条边指向，票级策略更容易解释；P1 如需更细，再增加 per-edge 配置。P0 不暴露该字段。
+策略是「边的策略」还是「工单的策略」？建议放在 **下游工单** 上（onDependencyFailure），因为同一张 B 可能被多条边指向，工单级策略更容易解释；P1 如需更细，再增加 per-edge 配置。P0 不暴露该字段。
 
 ### 5.3 取消整条链
 
@@ -417,7 +417,7 @@ ria_ticket({ ticketId: A, status: "cancelled", cascade: "downstream", reason: "�
    - open / blocked / intake：转 cancelled，resolution.kind='cascade_cancel'，记录 upstreamTicketId。
    - working：**不直接改状态**，加入返回的 deferred，说明「worker 还在跑，需要用户在 worker 会话里停止，或等它结束后由 Ria 取消」。
    - 已经终态：跳过。
-4. 作废所有相关 ready 票的未投递 wake；已在 Ria 队列里的唤醒消息在投递时检查票状态，发现 cancelled 就跳过。
+4. 作废所有相关 ready 工单的未投递 wake；已在 Ria 队列里的唤醒消息在投递时检查工单状态，发现 cancelled 就跳过。
 5. 返回 { ok, cancelled: [...], deferred: [...] }，让 Ria 能准确告诉用户哪些已经停、哪些还需要手动停。
 
 为什么不把 running 下游直接标 cancelled：
@@ -434,17 +434,17 @@ ria_ticket({ ticketId: A, status: "cancelled", cascade: "downstream", reason: "�
 
 1. 加载 ria.json，归一化为 v3；已有 dependsOn 逐条校验。
 2. 归档裁剪、审批对账、workspace 对账（现有流程不变）。
-3. reconcileDependencies()：遍历所有非终态票，解析依赖状态（热存储 + 归档）。
+3. reconcileDependencies()：遍历所有非终态工单，解析依赖状态（热存储 + 归档）。
    - 全部 done 且 waitingOn=dependency → 转 open/ria，写 readyAt。
    - 未全部 done 且 waitingOn=ria → 转 open/dependency，清 readyAt。
    - 有终态非 done 依赖 → 写 dependencyAlerts。
-   - 依赖缺失/非法 → 票标 blocked/waitingOn=user，blockedReason='依赖数据无效'，不静默丢边。
-4. recoveryUnits() 调整：**不把 open/dependency 作为恢复单元**；它们只进入队列摘要，不进入「请逐条处理」的恢复 prompt。open/ria 仍是恢复单元（但 ready 的票可能已经由 queue wake 处理）。
+   - 依赖缺失/非法 → 工单标 blocked/waitingOn=user，blockedReason='依赖数据无效'，不静默丢边。
+4. recoveryUnits() 调整：**不把 open/dependency 作为恢复单元**；它们只进入队列摘要，不进入「请逐条处理」的恢复 prompt。open/ria 仍是恢复单元（但 ready 的工单可能已经由 queue wake 处理）。
 5. 生成一条合并的启动消息：
    - 有 working/intake/open(ria) 时，沿用现有恢复 prompt；
    - 在其中追加「排队中（等依赖）」摘要，明确不要派发；
-   - 如果没有恢复单元但有 ready 票，发一条 [Queue ready]；
-   - 同一张票不要在恢复 prompt 和 queue wake 中出现两次。
+   - 如果没有恢复单元但有 ready 工单，发一条 [Queue ready]；
+   - 同一张工单不要在恢复 prompt 和 queue wake 中出现两次。
 6. 启动后 pump outbox，补发所有未送达的 queue_wake。
 
 ### 6.2 幂等键
@@ -453,9 +453,9 @@ ria_ticket({ ticketId: A, status: "cancelled", cascade: "downstream", reason: "�
 |---|---|---|
 | ready 唤醒 | queue_wake:ticketId:readyAt | 同一 readiness 只产生一条 wake；outbox 重试不重复 |
 | 启动补发 | queue_wake:ticketId:readyAt:boot:bootId | 上一次已投递但 Ria 崩溃未派发时，重启可以再提醒一次；每个 boot 最多一条 |
-| 派发 | queueToken = ticketId:readyAt:revision | Ria 带 token 调 ria_request；票已 working/cancelled/revision 变了就返回 ticket_not_ready，不投递 |
+| 派发 | queueToken = ticketId:readyAt:revision | Ria 带 token 调 ria_request；工单已 working/cancelled/revision 变了就返回 ticket_not_ready，不投递 |
 | 实际投递 | 现有 requestId + deliveries | 断线重试仍复用同一 requestId，不产生第二条用户消息 |
-| 依赖重算 | 当前票的 revision + 依赖状态 | 重算只做「状态到状态」的合法转移；重复 done 不会重复触发 |
+| 依赖重算 | 当前工单的 revision + 依赖状态 | 重算只做「状态到状态」的合法转移；重复 done 不会重复触发 |
 
 ### 6.3 崩溃窗口
 
@@ -470,7 +470,7 @@ ria_ticket({ ticketId: A, status: "cancelled", cascade: "downstream", reason: "�
 ### 6.4 与 recovery 上限的关系
 
 - recovery.count 只统计「启动时仍未收敛、需要 Ria 处理」的次数，不统计 queue wake。
-- 一张票如果一直 ready 但 Ria 一直不派发，不应在 3 次后自动 blocked；这是「Ria 没执行」，不是「恢复失败」。ria_status 会显示 ready 和 readyNotifiedAt，由用户/Ria 处理。
+- 一张工单如果一直 ready 但 Ria 一直不派发，不应在 3 次后自动 blocked；这是「Ria 没执行」，不是「恢复失败」。ria_status 会显示 ready 和 readyNotifiedAt，由用户/Ria 处理。
 - 如果 B 的依赖永远不满足，它也不会被 recovery 计数；它是排队，不是恢复候选。
 
 ---
@@ -539,7 +539,7 @@ scope=tickets 增加：
 }
 ~~~
 
-排序：ready 在前，其次 dependency_alert，其次 waiting；同组按 readyAt/updatedAt 倒序。queue 只包含非终态、且 dependsOn.length > 0 的票，避免把普通 open 票混进队列。
+排序：ready 在前，其次 dependency_alert，其次 waiting；同组按 readyAt/updatedAt 倒序。queue 只包含非终态、且 dependsOn.length > 0 的工单，避免把普通 open 工单混进队列。
 
 ### 7.3 用户可见的 GUI
 
@@ -571,8 +571,8 @@ P1 再做客户端队列视图：
 建议按下面 6 条拍板；每条都给了默认建议。
 
 1. **跨 root 依赖是否默认允许？**
-   - 建议：**允许**。一条用户消息只产生一个 root intake，ria_resolve 目前也只能定一张 work 票；如果强制「同树」，P0 的顺序链就必须先实现 fork/split，成本明显变大。
-   - 若选「必须同树」：P0 需要额外的 plan 容器票，顺序链会被推迟到 P1。
+   - 建议：**允许**。一条用户消息只产生一个 root intake，ria_resolve 目前也只能定一张 work 工单；如果强制「同树」，P0 的顺序链就必须先实现 fork/split，成本明显变大。
+   - 若选「必须同树」：P0 需要额外的 plan 容器工单，顺序链会被推迟到 P1。
 
 2. **用 open + waitingOn='dependency'，还是新增 queued 状态？**
    - 建议：**复用 open**。状态表示生命周期，waitingOn 表示在等谁；新增状态会扩散到恢复、归档、客户端和所有状态过滤。
@@ -580,7 +580,7 @@ P1 再做客户端队列视图：
 
 3. **上游失败时，P0 默认是 hold、自动 block，还是自动 skip？**
    - 建议：**hold + 叫醒 Ria**。不替用户做「跳过/继续」的决定；P1 再加 onDependencyFailure 策略。
-   - 若选自动 block：用户会在链中间看到大量 blocked 票；若选自动 skip：可能丢掉用户想修 A 后继续 B 的意图。
+   - 若选自动 block：用户会在链中间看到大量 blocked 工单；若选自动 skip：可能丢掉用户想修 A 后继续 B 的意图。
 
 4. **派发是否仍只由 Ria 触发？**
    - 建议：**是**。Host 只解锁和唤醒；否则会绕过预检、note、审批和 recentWorkers。
@@ -607,7 +607,7 @@ P1 再做客户端队列视图：
 1. schema v3、归一化、v2 兼容；dependsOn 校验（自指/重复/缺失/环/上限）。
 2. ria_ticket 创建/更新支持 dependsOn；ria_resolve kind=work 支持 dependsOn。
 3. open/dependency 的不变量和 T29–T34；ready 计算。
-4. queue_wake / queue_blocked outbox entry；pump 时合并 ready 票；queueToken 校验。
+4. queue_wake / queue_blocked outbox entry；pump 时合并 ready 工单；queueToken 校验。
 5. 启动 reconcileDependencies；恢复单元排除 open/dependency；启动消息合并。
 6. ria_status 的 queueState/blockedBy/queue 字段。
 7. 级联取消（只取消队列中的下游，working 返回 deferred）。
@@ -616,7 +616,7 @@ P1 再做客户端队列视图：
 
 P0 明确不做：
 
-- fan-out 后汇聚的「批量派发」体验（数据模型支持多依赖，但 Ria 一次 turn 只能可靠派一张票；见 9.3）。
+- fan-out 后汇聚的「批量派发」体验（数据模型支持多依赖，但 Ria 一次 turn 只能可靠派一张工单；见 9.3）。
 - onDependencyFailure 的 skip/continue/block。
 - 客户端队列 chip。
 - forked 串行容器（C）。
@@ -629,7 +629,7 @@ P0 验收：
 - 重启：B 不会出现在「请逐条处理」的恢复列表里，也不会被提前派发。
 - 同一 ready 事件重复唤醒不会产生第二次 B 的派发。
 - A 被 reopen 时，B 若尚未 working 会退回排队。
-- 取消 A 并选择 cascade 时，B 被取消；A 的依赖票不受影响。
+- 取消 A 并选择 cascade 时，B 被取消；A 的依赖工单不受影响。
 
 ### 9.2 P1：fan-out 汇聚、条件分支、批量派发、GUI
 
@@ -639,8 +639,8 @@ P0 验收：
 2. onDependencyFailure 的 hold/skip/continue/block。
 3. 批量派发：解决 ria_request 一次成功即 concludeTurn 的限制。可选方案：
    - 新增 ria_request_batch，一次接收多个 {ticketId, targetSessionId, message, note}，全部预检通过后统一投递、只结束一次 turn；
-   - 或给 ria_request 增加 tickets[]，但保持「每票一 executor」的校验。
-   推荐前者，语义更清楚，且不改变现有单票调用。
+   - 或给 ria_request 增加 tickets[]，但保持「每个工单一个 executor」的校验。
+   推荐前者，语义更清楚，且不改变现有单个工单调用。
 4. 客户端 conversation.input.dock 队列 chip 和只读列表。
 5. P1 的测试矩阵。
 
@@ -648,7 +648,7 @@ P1 不一定要做 plan 实体；如果用户需要「一个计划」的视图�
 
 ### 9.3 为什么 fan-out 要等到 P1
 
-当前 toolRequest 在任意目标投递成功后立即 exec.concludeTurn()（lib/index.js:2668-2675）。这意味着 Ria 很难在同一个 turn 里可靠地派发 A 和 B；第二张票通常要等下一次唤醒。P0 的顺序链只需要「一次派一张」，正好避开这个限制；fan-out 需要批量派发或调整 turn 结束策略，放到 P1 更稳。
+当前 toolRequest 在任意目标投递成功后立即 exec.concludeTurn()（lib/index.js:2668-2675）。这意味着 Ria 很难在同一个 turn 里可靠地派发 A 和 B；第二张工单通常要等下一次唤醒。P0 的顺序链只需要「一次派一张」，正好避开这个限制；fan-out 需要批量派发或调整 turn 结束策略，放到 P1 更稳。
 
 ### 9.4 测试计划
 
@@ -670,9 +670,9 @@ P0 用例：
 | Q-06 | A blocked | B 保持排队；不产生 failed alert |
 | Q-07 | 自指/重复/缺失/环/超过 8 个 | 拒绝且整次写入不生效；错误码稳定 |
 | Q-08 | B 就绪时 Ria 没有 turn | outbox 启动 Ria；wake 带 queueToken |
-| Q-09 | wake 重复投递 | Ria 侧只派发一次；第二次 token 校验失败或票已 working |
+| Q-09 | wake 重复投递 | Ria 侧只派发一次；第二次 token 校验失败或工单已 working |
 | Q-10 | 重启时 A working、B dependency | B 不进恢复 prompt；A 完成后 B ready |
-| Q-11 | 重启时 B ready 且未派发 | 补发一次 boot wake；不重复建票 |
+| Q-11 | 重启时 B ready 且未派发 | 补发一次 boot wake；不重复建工单 |
 | Q-12 | A 已归档 done | B 可 ready；blockedBy 标 archived |
 | Q-13 | A 从 done reopen | B 若未 working 退回 dependency；wake 作废 |
 | Q-14 | merge source 有下游 | 下游边转移到 target；source 的 merged done 不解锁 |
@@ -708,9 +708,9 @@ P1 用例：
 
 - docs/task-model-design.md 的 T1–T28 仍然有效；本文新增 T29–T37，不重写旧转移。
 - 旧设计的 §2.5 已经写了 dependsOn「只表达开始顺序，不表达数据依赖」，本文把它从「约定」变成「可校验、可恢复、可展示的事实」。
-- 旧设计的 §3.4 写了 fork.mode='serial'，那是 P1 的容器视图；本文的 A 方案不依赖 fork，先解决跨 executor 的普通票链。
+- 旧设计的 §3.4 写了 fork.mode='serial'，那是 P1 的容器视图；本文的 A 方案不依赖 fork，先解决跨 executor 的普通工单链。
 - 旧设计的 10 条不变量继续有效；本文增加第 11–22 条，编号接在后面。
-- 本文不改变「一票一 executor」「ria_request 必填 ticketId/note」「预检失败不投递」「worker idle 只读观察」等现有约束。
+- 本文不改变「一个工单一个 executor」「ria_request 必填 ticketId/note」「预检失败不投递」「worker idle 只读观察」等现有约束。
 
 ---
 

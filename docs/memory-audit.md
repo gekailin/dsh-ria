@@ -30,7 +30,7 @@
 - 11 条 bullet 里有 2 组重复：restart-report 两条、restart-method 两条。重复条不是“更保险”，而是让模型在两条措辞之间做选择，容易只执行其中一条。
 - 多条内容已经在 prompt 或代码里存在，属于“记忆里的冗余副本”：
   - `lib/index.js:1642`：`You may do concrete work yourself only when the user explicitly asks you to; otherwise delegate.`
-  - `lib/index.js:1646`：intake 票、`ria_resolve`、turn-stopping 兜底。
+  - `lib/index.js:1646`：intake 工单、`ria_resolve`、turn-stopping 兜底。
   - `lib/index.js:1647`：worker 拒绝/用户取消时停下问用户，不静默改派。
   - `lib/index.js:1661`：`[Worker idle]` 的处理，包括 `aborted(user)` 时不要续派。
   - `docs/operations.md:105` 的“管理者 prompt 的行为约束”又把上述规则汇总了一遍。
@@ -42,7 +42,7 @@
 - `lib/dispatch-guard.mjs` 是全局静态 section：`name: 'dsh-ria:dispatch-guard'`、`order: 4100`，会被安装到所有 agent（包括 worker），文本只有一句防误发。它不适合放 Ria 专属规则。
 - `subscribeIntake()` 注册了 `agent/pre-step` 与 `agent/turn-stopping`：前者自动 captureIntake 并注入 `[Task intake]`，后者第一次 steer 提醒、第二次自动 blocked。也就是说，“用户交代的事不能丢”已经有硬机制。
 - `lib/worker-idle.mjs` 已经检测 `isUserCancelled(lastTurn)`，把对应 working ticket 转 blocked，blockedReason 是“用户取消了 worker turn（aborted(user)）；等待用户决定下一步”，idleText 明确写不自动续派。
-- `toolRequest()`（`lib/index.js:3311-3424`）在状态上只检查 `isTerminal(ticket.status)`，另有 sessionProblem、executor mismatch 等预检，但没有“blocked + waitingOn=user 必须先 reopen”的硬拦截。被标记 blocked 的票仍然可以被再次 `ria_request`。
+- `toolRequest()`（`lib/index.js:3311-3424`）在状态上只检查 `isTerminal(ticket.status)`，另有 sessionProblem、executor mismatch 等预检，但没有“blocked + waitingOn=user 必须先 reopen”的硬拦截。被标记 blocked 的工单仍然可以被再次 `ria_request`。
 - `ria_request` 的 busy 预检只对 `mode === 'queue'`。steer 没有“目标必须正在运行”的预检；DSH controller 在 `dsh-api-session-controller/lib/index.js:857` 对 `request.mode === 'steer'` 直接调 `agent.steer(message)`，`:932` 的 updateQueue 才检查 steer 目标必须 running。
 - 插件没有 `ria_restart` 或任何 dsh-daemon 工具。Ria 是 PTC，`run_code` 里可以调 `bash`，所以 `dsh-daemon restart` 仍然可达；不存在结构性禁止。
 - `startup()`（`lib/index.js:4224`）在没有未收敛 ticket / pending delivery 时会在 `:4253` 直接 return。干净重启不会产生任何回执，restart-report 目前没有代码强制点。
@@ -101,7 +101,7 @@
 
 ### 2.3 关注某个 worker → manager prompt
 
-**插入位置**：`lib/index.js:1661` 之后，紧跟 `[Worker idle]` 那条。这样“读它 → 挂票 → 等 idle”在 prompt 里是连续的一段。
+**插入位置**：`lib/index.js:1661` 之后，紧跟 `[Worker idle]` 那条。这样“读它 → 挂工单 → 等 idle”在 prompt 里是连续的一段。
 
 ```text
 - When the user asks you to watch a worker, read it first and report what it is doing. If it is still running, create or reuse a ticket with that worker as executor and status=working so the host's [Worker idle] note wakes you; do not end with only a status sentence and do not add a schedule timer for it. If it is already idle, report the result now.
@@ -212,12 +212,12 @@ memory 里只留命令 + 一句原因，详细背景放文档。
 
 ### 4.3 dispatch-guard 不是放这些规则的地方
 
-`lib/dispatch-guard.mjs` 是全局 section，装在所有 agent 上，包括 worker。把 Ria 的“重启要先问”“代码归 Ria开发”“关注 worker 要挂票”放进去，会让 worker 也看到管理者规则，属于串味。它只适合保留现在那一句防误发。Ria 专属规则一律进 `managerPrompt()`。
+`lib/dispatch-guard.mjs` 是全局 section，装在所有 agent 上，包括 worker。把 Ria 的“重启要先问”“代码归 Ria开发”“关注 worker 要挂工单”放进去，会让 worker 也看到管理者规则，属于串味。它只适合保留现在那一句防误发。Ria 专属规则一律进 `managerPrompt()`。
 
-### 4.4 多票并行时的串味
+### 4.4 多个工单并行时的串味
 
-- 路由规则必须是“默认归属”，不是“所有代码票都强制塞给同一个 worker”。如果 Ria开发 正在跑，第二张代码票不能 queue 进去；按现有 `:1657`/`:1658` 用 `dependsOn` 或问用户。
-- 已经有 executor 的票不能因为路由规则被改派。上面的英文明确写了 `never reassign a ticket that already has an executor`。
+- 路由规则必须是“默认归属”，不是“所有代码工单都强制塞给同一个 worker”。如果 Ria开发 正在跑，第二张代码工单不能 queue 进去；按现有 `:1657`/`:1658` 用 `dependsOn` 或问用户。
+- 已经有 executor 的工单不能因为路由规则被改派。上面的英文明确写了 `never reassign a ticket that already has an executor`。
 - 如果固定 owner 归档、cwd 失效或不是 top-level，必须回落到 recent 或问用户；不能因为 memory 写了 ID 就硬发。现有 `ria_request` 预检会返回 `session_archived`/`workspace_missing`/`session_missing`，但最好在 prompt 层就先判断。
 
 ### 4.5 过度约束

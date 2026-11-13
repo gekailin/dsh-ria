@@ -19,7 +19,7 @@ prototype 值得借的**不是**它的多源获客体系（GitHub/Feishu 触发 
 | 3 | `[Worker idle]` 合并投递 | N 个 worker 同时 idle 唤醒 Ria N 次，每次重读快照 | 小 | `lib/worker-idle.mjs:130-179` |
 
 - **只做一件：第 1 件。** 理由是 Ria 的价值主张就是「用户永远知道发生了什么」，而现在有三条静默丢失路径（见 4.1）。
-- **最不该学：Thread / Subscription / Eval / Mandate 那一整套多源准入模型**（6.1）。它会把 Ria 从「ticket 是唯一管理单元、一张票一个 executor」改成「消息先过准入、再 fan-out 到多张票」，与 intake 的「每条消息恰好定性一次」直接冲突。
+- **最不该学：Thread / Subscription / Eval / Mandate 那一整套多源准入模型**（6.1）。它会把 Ria 从「ticket 是唯一管理单元、一张工单一个 executor」改成「消息先过准入、再 fan-out 到多张工单」，与 intake 的「每条消息恰好定性一次」直接冲突。
 
 ---
 
@@ -43,7 +43,7 @@ prototype 值得借的**不是**它的多源获客体系（GitHub/Feishu 触发 
 ### 2.2 一个写者 + 一张 stage 表
 
 - 唯一写者是 `Engine`（`src/core/engine.ts:24`），同步、一条命令一个事务；调用方拿到的是按角色裁剪的接口（Sources / MainSession / People / Settings / Executor），不是 store 本身。
-- 「这张票现在在等谁」不是存储字段，而是**纯函数派生**：`ticketStage()`（`src/core/stage.ts:9-21`）按 docs/003 的表**首行匹配**——投递失败 → 等回答 → 待 review → blocked/failed 无人回复 → 排队 → idle → working。卡片状态直接由它渲染（`src/app/cards.ts:20-25`），面板按「在等人的」分组（`src/app/views/overview.ts:73`）。
+- 「这张工单现在在等谁」不是存储字段，而是**纯函数派生**：`ticketStage()`（`src/core/stage.ts:9-21`）按 docs/003 的表**首行匹配**——投递失败 → 等回答 → 待 review → blocked/failed 无人回复 → 排队 → idle → working。卡片状态直接由它渲染（`src/app/cards.ts:20-25`），面板按「在等人的」分组（`src/app/views/overview.ts:73`）。
 
 Ria 的 `waitingOn` 是**半派生**：`normalizeTicket` 有按状态的默认值（`lib/tickets.mjs:96`），但每个状态允许的取值范围靠不变量约束（`lib/tickets.mjs:255-280`，如 working 只能 `worker|ria`，blocked 只能 `user|approval|environment`）。好处是能表达「working 但在等 Ria 补信息」，坏处是它成了与 `status` 并列的事实源，调用方必须传对。
 
@@ -51,13 +51,13 @@ Ria 的 `waitingOn` 是**半派生**：`normalizeTicket` 有按状态的默认�
 
 `Effects`（`src/app/effects.ts`）是持久化副作用队列：在业务事务内 `enqueue`，提交后再执行；每个 `kind+key` 只有一行（同 key 覆盖 payload），顺序 kind 按 `seq` 串行（`:109-113`），失败指数退避（`:141-143`），`Later` 表示「现在没资源，别记失败」（`:5`、`:138-139`），连续 3 次失败报健康。关停时不动运行中的行，重启继续（`:136-137`）。
 
-配套的是「资源不够就排队，而不是拒绝」：worker 槽位 = `maxWorkers` + **给人留 1 个**——`if (this.used() >= this.max() + (by === 'person' ? 1 : 0)) throw new Later(...)`（`src/executor/dsh.ts:194`）。所以「新工作」永远挤不掉「人想继续跟的票」。
+配套的是「资源不够就排队，而不是拒绝」：worker 槽位 = `maxWorkers` + **给人留 1 个**——`if (this.used() >= this.max() + (by === 'person' ? 1 : 0)) throw new Later(...)`（`src/executor/dsh.ts:194`）。所以「新工作」永远挤不掉「人想继续跟的工单」。
 
 ### 2.4 报告与「在等人」是结构化的
 
 - `Attention { id, question, triggerId }`（`src/core/model.ts:275`）挂在 ticket 上；卡片直接带 `attention.question`（`src/app/cards.ts:31`）。
 - 报告状态是枚举：`progress | waiting | ready | blocked | failed | dropped`；`reportRelay()` 只在「有结构化 question」或「非 progress」时向主会话转发（`src/app/notices.ts:121-129`）——**routine progress 不进人的视野**。
-- 回复目的被 host 校验：`result` 需要票已 ready，`attention` 需要票上当前存在 structured request（`prompts/replies.md`、`src/app/tools/main.ts:225`）。系统不靠「模型自觉」。
+- 回复目的被 host 校验：`result` 需要工单已 ready，`attention` 需要工单上当前存在 structured request（`prompts/replies.md`、`src/app/tools/main.ts:225`）。系统不靠「模型自觉」。
 
 ### 2.5 prompt 是版本化配置，不是代码
 
@@ -65,7 +65,7 @@ Ria 的 `waitingOn` 是**半派生**：`normalizeTicket` 有按状态的默认�
 
 ### 2.6 它主动放弃的东西，比它做了什么更值得读
 
-`docs/001-domain.md` 的 rejected concepts 是设计取舍的精华：不做 Principal/Membership 实体与跨源身份映射（用 prompt 文字解决）；不做「追加到 ticket」这种 Decision（订阅 fan-out 已覆盖）；不让 ticket 状态跟着 DSH Session 走；不做「一个 thread 只能有一张活票」；**订阅上不做准入检查**（authorization 交给 ticket 的 Mandate，context 交给订阅）；策略变更**不取消**运行中的票（只通知 + 重排）；失败/阻塞时**不锁死** worker 的所有工具（停掉自动输入就够）；**不从报告自由文本推断「在等人」**（必须是结构化字段）。
+`docs/001-domain.md` 的 rejected concepts 是设计取舍的精华：不做 Principal/Membership 实体与跨源身份映射（用 prompt 文字解决）；不做「追加到 ticket」这种 Decision（订阅 fan-out 已覆盖）；不让 ticket 状态跟着 DSH Session 走；不做「一个 thread 只能有一张活工单」；**订阅上不做准入检查**（authorization 交给 ticket 的 Mandate，context 交给订阅）；策略变更**不取消**运行中的工单（只通知 + 重排）；失败/阻塞时**不锁死** worker 的所有工具（停掉自动输入就够）；**不从报告自由文本推断「在等人」**（必须是结构化字段）。
 
 最后一条正是 Ria 缺的那块（见 4.2）。
 
@@ -85,8 +85,8 @@ Ria 的 `waitingOn` 是**半派生**：`normalizeTicket` 有按状态的默认�
 | 并发 | `maxWorkers` + 1 个人工槽（`dsh.ts:194`） | 不设全局并发上限（只有宿主按会话排队） | 不适用（Ria 侧无 slot 概念） |
 | 存储 | 单 SQLite + 事务 | JSON + 归档 jsonl + `writeAtomic`（`index.js:87-98`） | 不借 |
 | 多源准入 | Thread/Subscription/Eval/Mandate | 入口只有人；intake 强制定性 | 不借 |
-| 执行器模型 | 一票多 assignment，可重启换会话 | 一票一个 executor，`ticket_executor_mismatch` 预检（`index.js:2269`） | 不借 |
-| 工作目录 | 一票一目录 + prepare 命令 | worker 在自己 cwd 里干（`ria_spawn` cwd） | 不借 |
+| 执行器模型 | 一个工单多个 assignment，可重启换会话 | 一个工单一个 executor，`ticket_executor_mismatch` 预检（`index.js:2269`） | 不借 |
+| 工作目录 | 一个工单一个目录 + prepare 命令 | worker 在自己 cwd 里干（`ria_spawn` cwd） | 不借 |
 
 ---
 
@@ -96,9 +96,9 @@ Ria 的 `waitingOn` 是**半派生**：`normalizeTicket` 有按状态的默认�
 
 **解决的痛点（有代码证据，三条静默丢失路径）：**
 
-1. **没有当前 turn 就没有派发说明。** `appendDispatchNote` 在拿不到 turn 号时直接返回 false，注释写着「the dispatch still succeeds but the note is lost」（`lib/index.js:2334-2339`）。用户看到的是「Ria 没说话」，而票已经进了 working。
+1. **没有当前 turn 就没有派发说明。** `appendDispatchNote` 在拿不到 turn 号时直接返回 false，注释写着「the dispatch still succeeds but the note is lost」（`lib/index.js:2334-2339`）。用户看到的是「Ria 没说话」，而工单已经进了 working。
 2. **微信镜像失败只写日志。** `notifyDispatchNote` 对 `sendDispatchNote` 的 promise 只挂 `.catch(log)`（`lib/index.js:2353-2363`），断线、未登录、发送超时都会永久丢，没有任何补偿。
-3. **恢复路径是三次独立写。** recovery 达上限时：`transitionTicket`（内部 `save`，`index.js:2570`）→ `addFeedback`（又一次 `save`，`index.js:897-923`，外面还包了 try/catch 吞异常，`:2583-2593`）→ `appendDispatchNote` + `notifyDispatchNote`（`:2594-2595`）。进程在这三拍之间死掉，票是 blocked，但人和微信都不知道。反馈记录本身也**没有投递状态**：`addFeedback` 只推一条记录（`:905-922`），卡片靠客户端按 `since` 轮询（`:925`），微信靠即时推送——两条通道都不重试。
+3. **恢复路径是三次独立写。** recovery 达上限时：`transitionTicket`（内部 `save`，`index.js:2570`）→ `addFeedback`（又一次 `save`，`index.js:897-923`，外面还包了 try/catch 吞异常，`:2583-2593`）→ `appendDispatchNote` + `notifyDispatchNote`（`:2594-2595`）。进程在这三拍之间死掉，工单是 blocked，但人和微信都不知道。反馈记录本身也**没有投递状态**：`addFeedback` 只推一条记录（`:905-922`），卡片靠客户端按 `since` 轮询（`:925`），微信靠即时推送——两条通道都不重试。
 
 **对方怎么做：** 事务内 `enqueue`、提交后执行、`kind+key` 去重、失败退避、关停保留（`src/app/effects.ts:130-146`）；回复类 effect 还受 pause 与顺序约束（`src/app/outbox.ts:24`）。
 
@@ -117,16 +117,16 @@ Ria 的 `waitingOn` 是**半派生**：`normalizeTicket` 有按状态的默认�
 **解决的痛点：** Ria 用 `waitingOn='user'` + `blockedReason` 自由文本来表达「需要人」。但这只能告诉人「有事」，告诉不了「要你做什么」：
 
 - 微信里只有一句自然语言，用户离开半天回来，得往上翻才能拼出他要决定什么；
-- Ria 下一个 turn 要判断「这张票在等什么」，只能 `ria_read` 读 transcript（`DESIGN.md` 的 ria_read 语义），既慢又容易读错；
+- Ria 下一个 turn 要判断「这张工单在等什么」，只能 `ria_read` 读 transcript（`DESIGN.md` 的 ria_read 语义），既慢又容易读错；
 - `lib/` 里没有任何 `question` 字段（全仓 grep 只有 prompt 文本里的 "question" 一词，`index.js:1205`、`:1206`、`:1552`），所以面板、微信、状态查询都没有结构可渲染。
 
-**对方怎么做：** `Attention { question, triggerId }`（`src/core/model.ts:275`）挂在票上，卡片直接带 `attention.question`（`cards.ts:31`）；报告里没有结构化 question 就不算「在请求人」（`prompts/handoff.md`），回复目的也按它校验（`replies.md`）。
+**对方怎么做：** `Attention { question, triggerId }`（`src/core/model.ts:275`）挂在工单上，卡片直接带 `attention.question`（`cards.ts:31`）；报告里没有结构化 question 就不算「在请求人」（`prompts/handoff.md`），回复目的也按它校验（`replies.md`）。
 
 **差异：** prototype 把「等人」拆成**状态 + 问题 + 来源消息**三元组；Ria 只有状态 + 文本。
 
 **改造代价：中。** `lib/tickets.mjs`（新字段 + `normalizeTicket` 迁移默认空 + 不变量：只有 blocked/user 才允许非空）、`lib/index.js`（`ria_ticket` 在 `status=blocked` 时接受 `question`；`ria_status` 输出；微信/卡片渲染）、`lib/client.js`（卡片显示一行问题）、`test/task-state.mjs`。
 
-**破坏性风险：低。** 不动状态机，不改 executor 绑定；旧票缺字段按空处理。唯一要守住的纪律：**question 不能变成 blocked 的必填项**，否则 T8/T9 的失败率会上升（模型漏传就报错，票卡在半路）。建议「有 question 就展示，没有就退回 blockedReason」。
+**破坏性风险：低。** 不动状态机，不改 executor 绑定；旧工单缺字段按空处理。唯一要守住的纪律：**question 不能变成 blocked 的必填项**，否则 T8/T9 的失败率会上升（模型漏传就报错，工单卡在半路）。建议「有 question 就展示，没有就退回 blockedReason」。
 
 **最小落地：** `ticket.pendingQuestion = { text, askedAt }`，由 `blocked`/`failed` 转移的 `options` 带入，任何离开 blocked 的转移清空；`ria_status` 与卡片各显示一行。
 
@@ -134,7 +134,7 @@ Ria 的 `waitingOn` 是**半派生**：`normalizeTicket` 有按状态的默认�
 
 ### 4.3 `[Worker idle]` 合并投递
 
-**解决的痛点：** 现在每个 idle 事件都直接排一条 queue prompt（`lib/worker-idle.mjs:174-179`），节流键是 `sessionId|ticketId`（`:139-148`），**跨 session 不去重**。三个 worker 在两分钟内先后结束，就是三次唤醒、三次 `ria_status`、三次 `ria_read`；而 Ria 在第一个 turn 里可能已经把票收尾了，后面两个 turn 读到的是过期快照，容易做出「重复续派」。
+**解决的痛点：** 现在每个 idle 事件都直接排一条 queue prompt（`lib/worker-idle.mjs:174-179`），节流键是 `sessionId|ticketId`（`:139-148`），**跨 session 不去重**。三个 worker 在两分钟内先后结束，就是三次唤醒、三次 `ria_status`、三次 `ria_read`；而 Ria 在第一个 turn 里可能已经把工单收尾了，后面两个 turn 读到的是过期快照，容易做出「重复续派」。
 
 **对方怎么做：** relay 在 turn 进行中到达时**合并到下一个 step 一次投递**（`src/app/notices.ts:121-129` 产出 relay，`src/app/sessions.ts:171` `enqueue('relay', requestId, ...)` 交给宿主 inbox）；候选卡也支持一次调用批量 route（`prompts/dispatch.md`："batch settled candidates in one call"）。
 
@@ -142,7 +142,7 @@ Ria 的 `waitingOn` 是**半派生**：`normalizeTicket` 有按状态的默认�
 
 **改造代价：小。** 只动 `lib/worker-idle.mjs`：维护 `pending: Map<sessionId, {tickets, lastTurn}>`，2–5 秒窗口后合并成一条文本（每个 session 一段，带各自的 turn id/outcome），一次 `prompt`。`test/worker-idle.mjs` 加两个用例（同时 idle、窗口内单条）。
 
-**破坏性风险：低。** 代价是延迟 2–5 秒；要防「合并后票状态已变」，文本里保留每票的 `lastWorkerTurn` 与时间戳，让 Ria 自己能看出快照旧了（它本来就被要求 `ria_read` 复核，`index.js:1217`）。
+**破坏性风险：低。** 代价是延迟 2–5 秒；要防「合并后工单状态已变」，文本里保留每个工单的 `lastWorkerTurn` 与时间戳，让 Ria 自己能看出快照旧了（它本来就被要求 `ria_read` 复核，`index.js:1217`）。
 
 ---
 
@@ -163,30 +163,30 @@ Ria 的 `waitingOn` 是**半派生**：`normalizeTicket` 有按状态的默认�
 
 ### 6.1 Thread / Subscription / Eval / Mandate 一整套多源准入
 
-**它解决的是**：GitHub/Feishu 上别人说话，系统怎么判断「要不要开工、开哪张票、后续消息归谁」。prototype 为此刻意引入 5 个实体和一条订阅链（`Address` 之外还有 Source/Trigger/Thread/Decision/Mandate，见 `docs/001-domain.md`），并接受「一条消息可能 fan-out 到多张票」。
+**它解决的是**：GitHub/Feishu 上别人说话，系统怎么判断「要不要开工、开哪张工单、后续消息归谁」。prototype 为此刻意引入 5 个实体和一条订阅链（`Address` 之外还有 Source/Trigger/Thread/Decision/Mandate，见 `docs/001-domain.md`），并接受「一条消息可能 fan-out 到多张工单」。
 
 **为什么不适合 Ria：**
 - Ria 的入口只有人（微信、Web、DSH 会话），**没有「判断要不要开工」这一步**——用户说要做就是要做，不确定就问。Eval 是为「外部噪声」存在的，Ria 没有噪声源。
-- 与 Ria 的硬约束直接冲突：intake 要求「每条真实用户消息恰好被定性一次」（`lib/index.js:430-448`；`DESIGN.md` 的四个强制点），而 fan-out 的语义是「一条消息进多张票、每张票的 worker 自己决定」，两者不能共存。
-- 概念税过高：Ria 现在 `ticket` 一个实体就能解释「用户消息 → 一张票 → 一个 executor」。引入订阅后，「这条消息为什么进了这张票」变成要查 Thread 绑定，调试成本翻倍。
+- 与 Ria 的硬约束直接冲突：intake 要求「每条真实用户消息恰好被定性一次」（`lib/index.js:430-448`；`DESIGN.md` 的四个强制点），而 fan-out 的语义是「一条消息进多张工单、每张工单的 worker 自己决定」，两者不能共存。
+- 概念税过高：Ria 现在 `ticket` 一个实体就能解释「用户消息 → 一张工单 → 一个 executor」。引入订阅后，「这条消息为什么进了这张工单」变成要查 Thread 绑定，调试成本翻倍。
 
 **结论：无对应痛点，且破坏模型。** 唯一值得带走的是它的**结论**：authorization（能不能干）与 context（消息给谁看）要分开——Ria 用 `ticket_executor_mismatch` 预检 + `grants` 的 worker 绑定已经在做同一件事。
 
-### 6.2 一票多 Assignment（换会话重试）
+### 6.2 一个工单多个 Assignment（换会话重试）
 
-prototype 允许同一张票有多段 assignment（重启后新 assignment 接着同一个目录/分支/PR 干，`docs/003-execution.md`）。Ria 的前提是「ticket 有且只有一个 executor」，预检里 `ticket_executor_mismatch` 就是在守这条（`lib/index.js:2269`），grant 也绑定到单个 worker。
+prototype 允许同一张工单有多段 assignment（重启后新 assignment 接着同一个目录/分支/PR 干，`docs/003-execution.md`）。Ria 的前提是「ticket 有且只有一个 executor」，预检里 `ticket_executor_mismatch` 就是在守这条（`lib/index.js:2269`），grant 也绑定到单个 worker。
 
-**不建议**：这会同时打破票-执行者绑定、grant 的恢复语义、以及「用户点名 worker」的选择逻辑。Ria 需要「换人重做」时，正确做法是关票重开（新票、新 executor），而不是在一张票里换执行者。
+**不建议**：这会同时打破工单-执行者绑定、grant 的恢复语义、以及「用户点名 worker」的选择逻辑。Ria 需要「换人重做」时，正确做法是关工单重开（新工单、新 executor），而不是在一张工单里换执行者。
 
 ### 6.3 SQLite 单库
 
 prototype 用 SQLite 做事务与查询（`src/app/store.ts`）。Ria 是 JSON + 归档 `jsonl` + `writeAtomic`（fsync + rename，`lib/index.js:87-98`），单进程单写者。
 
-**不建议**：迁移成本大（所有读写路径、归档、恢复），收益在当前票量级（几十到几百张）下不成立；而且 Ria 的归档已经解决了「热文件变大」的问题。等真需要跨票查询/统计时再考虑，届时也未必选 SQLite（DSH 宿主可能已有存储能力）。
+**不建议**：迁移成本大（所有读写路径、归档、恢复），收益在当前工单量级（几十到几百张）下不成立；而且 Ria 的归档已经解决了「热文件变大」的问题。等真需要跨工单查询/统计时再考虑，届时也未必选 SQLite（DSH 宿主可能已有存储能力）。
 
-### 6.4 一票一目录 + prepare 命令 + worktree
+### 6.4 一个工单一个目录 + prepare 命令 + worktree
 
-prototype 给每张票建目录、跑一次 prepare（典型是 git worktree，10 分钟超时，`docs/003-execution.md`）。Ria 是让 worker 在**自己的 cwd** 里干活（`ria_spawn` 的 `cwd`），目录由用户决定。
+prototype 给每张工单建目录、跑一次 prepare（典型是 git worktree，10 分钟超时，`docs/003-execution.md`）。Ria 是让 worker 在**自己的 cwd** 里干活（`ria_spawn` 的 `cwd`），目录由用户决定。
 
 **不建议**：会与 `ria_spawn` 语义、workspace 预检（`workspace_missing`）、以及用户「在我的项目里干」的直觉冲突；worktree 本身在 DSH 侧已有能力，重复造会分裂事实源。
 
@@ -198,9 +198,9 @@ DSH 宿主已提供 UI 槽位与插件机制（Ria 的 `lib/client.js` 就是）
 
 ### 6.6 订阅 fan-out 且不校验发送者
 
-prototype 的订阅刻意**不查 sender**（`prompts/subscriptions.md`："no mention/sender check"），因为 thread 上任何人说话都可能与票相关，由 worker 自己判断相关性并 hand back。
+prototype 的订阅刻意**不查 sender**（`prompts/subscriptions.md`："no mention/sender check"），因为 thread 上任何人说话都可能与工单相关，由 worker 自己判断相关性并 hand back。
 
-**不建议**：Ria 没有 thread 概念，「这条消息属于哪张票」是硬约束（`ria_request` 必须带 `ticketId`，`index.js:1214`）。照搬会让同一条消息出现在多张票里，直接破坏「恰好一次定性」。
+**不建议**：Ria 没有 thread 概念，「这条消息属于哪张工单」是硬约束（`ria_request` 必须带 `ticketId`，`index.js:1214`）。照搬会让同一条消息出现在多张工单里，直接破坏「恰好一次定性」。
 
 ---
 
@@ -230,7 +230,7 @@ prototype 的订阅刻意**不查 sender**（`prompts/subscriptions.md`："no me
 
 | 排序 | 事项 | 一句话理由 |
 |---|---|---|
-| 1 | 出站副作用落地投递（4.1） | 消灭「票在跑、用户不知道」的三条静默丢失路径；不动机器，只补出口。 |
+| 1 | 出站副作用落地投递（4.1） | 消灭「工单在跑、用户不知道」的三条静默丢失路径；不动机器，只补出口。 |
 | 2 | 结构化 attention（4.2） | 让「等你」变成「等你回答这个」，微信/面板/下一轮 turn 都能直接用；不动状态机。 |
 | 3 | `[Worker idle]` 合并投递（4.3） | 成本最低（一个文件），直接减少无效唤醒与过期快照误判。 |
 

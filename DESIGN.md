@@ -562,7 +562,7 @@ ria.json 和 memory.md 都不存 transcript。
 - sidebar.panellist 注册 Ria，order 100，label "Ria"。
 - 点击后瞬时 launcher -> ensure -> openSession。
 - DSH 的正常会话界面要求 Session 属于一个 Workspace。ensure 在 stateDir 创建/复用标题为 Ria 的专用 Workspace，并用 workspaceId 创建 Session；旧 Ria 通过 attachSession 补挂。工作区列表会多这一项，这是输入框可用的必要条件。
-- 不做常驻看板；任务看板是侧栏入口打开的全屏只读 overlay，单画布按创建顺序每 3 票一列、依赖右移、按 workspace 分道，默认最新 60 票，向左滚动分页加载更早的票。
+- 不做常驻看板；任务看板是侧栏入口打开的全屏只读 overlay，单画布按创建顺序每 3 票一列、依赖右移；纵轴按 workspace 分成水平项目带，带高随行数自适应，带内独立换行与行对齐，卡片不跨带，项目标签在带顶左侧 sticky，跨带只画箭头。默认最新 60 票，向左滚动分页加载更早的票。
 - 新建 Ria 第一次打开（会话还没有任何 turn）时，输入框上方显示一张欢迎卡片：提示选模型、设置权限（建议 danger-full-access + 审批策略）、直接说目标。
 - 欢迎卡片是 client 侧渲染：注册在 `conversation.input.dock`（id=ria-welcome，order 5），只在当前会话等于 Ria 且 `blank` 时显示，发出第一条消息后自动消失；不写 session 日志、不占 turn、不调用模型、不进入模型上下文。
 - 早期实现是 Host 侧由 Session.append 写一个合成的完整 turn（turn 1/step 1）。该 turn 的 assistant/message 会成为 surface 的首个节点，排在真实 turn 的 system/message 之前，DSH session-format v4 校验要求 system/message 是 protected first surface head，因此重启 resume 报 corrupt（`system/message requires a protected first surface head`），已移除。
@@ -637,7 +637,7 @@ Phase 27：ticket 排队与依赖 P0。schema v3（dependsOn/readyAt/readyNotifi
 
 Phase 29：ticket checklist。schema v3→v4，旧文件原样读入、无 checklist 视为空，首次写前备份 `ria.json.v3.bak`；`ria_ticket` 支持 checklist 追加/保留勾选、`replaceAll` 整表重建、`drop` 删旧索引与 `check:{index,done}` 单项切换（错误码 checklist_invalid / checklist_index，终态拒绝 check）。`ticketSummary`、`ria_status` 与看板卡片带 progress（已完成/总数），归档摘要记录 total/done 与最多 5 条未勾项；manager prompt 要求多步任务先建清单、完成一步勾一项、`[Worker idle]` 先读清单再决定续派。
 
-Phase 30：任务看板重做与归档日志改名。看板改为单画布：按 createdAt 排序、每 3 票一列、依赖列右移、列内按泳道与上游行中位数排布；卡片 160×58 只显示 goal 摘要、状态·执行者与清单进度，悬停高亮整条上下游链并显示完整信息浮层（含依赖数、清单、排队原因、时间）。`GET /board` 增加 limit（默认 60，1–200）/before 分页与 page 元数据、dependentCount、archived，合并热存与归档日志；客户端默认加载最新一页并停在最右，向左滚动按 before 加载更早。归档日志新写入 `tickets.log.jsonl` / `tickets-YYYY-MM.jsonl`，启动时幂等迁移旧 `tasks.*`，读取端兼容并去重。
+Phase 30：任务看板重做与归档日志改名。看板改为单画布：按 createdAt 排序、每 3 票一列、依赖列右移；纵轴按 workspace 分成水平项目带，带顶留标签条并在横向滚动时 sticky，带高按实际行数自适应，带内独立换行、上游行中位数只在同带内生效，卡片不跨带，跨带依赖只画箭头；卡片 160×58 只显示 goal 摘要、状态·执行者与清单进度，悬停高亮整条上下游链并显示完整信息浮层（含依赖数、清单、排队原因、时间）。`GET /board` 增加 limit（默认 60，1–200）/before 分页与 page 元数据、dependentCount、archived，合并热存与归档日志；客户端默认加载最新一页并停在最右，向左滚动按 before 加载更早。归档日志新写入 `tickets.log.jsonl` / `tickets-YYYY-MM.jsonl`，启动时幂等迁移旧 `tasks.*`，读取端兼容并去重。
 
 Phase 28：会话改名工具。新增 `ria_title({ sessionId, title })`，走宿主 `sessionController.rename`，只改会话名，不发消息、不建 ticket、不唤醒 worker；预检复用 `sessionProblem`（存在、顶层、未归档、cwd 可用），允许改 Ria 自己，subagent 一律拒绝；空标题或宿主 `session/title-invalid` 映射为 `title_invalid` 并保留宿主原始 message；成功返回 accepted title 与已知 previous。`ria_spawn` 的 title 设置复用同一 helper，返回值语义不变（失败仍只写 `titleError`）。
 

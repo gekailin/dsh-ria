@@ -1,6 +1,17 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { EventEmitter } from 'node:events'
 import { createFixture } from './support/ria-fixture.mjs'
+
+function loadBoardLayout() {
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const start = source.indexOf('/* board-layout:start */')
+  const end = source.indexOf('/* board-layout:end */')
+  assert.ok(start >= 0 && end > start, 'client board layout markers')
+  const block = source.slice(start, end)
+  const api = new Function(block + '\nreturn { boardLayout, BOARD_CARD_WIDTH, BOARD_CARD_HEIGHT, BOARD_LANE_WIDTH, BOARD_PAD_X };')()
+  return { source, ...api }
+}
 
 const fixture = await createFixture()
 
@@ -156,6 +167,80 @@ try {
   } finally {
     archiveFixture.cleanup()
   }
+
+  // Board layout: every project owns a horizontal band, and rows are packed
+  // inside the band so a card can never drift into another project.
+  const layoutApi = loadBoardLayout()
+  const layoutTickets = [
+    { ticketId: 'a0', laneId: 'workspace:ria', createdAt: 1, dependsOn: ['u6'], goal: 'a0' },
+    { ticketId: 'a1', laneId: 'workspace:ria', createdAt: 2, dependsOn: [], goal: 'a1' },
+    { ticketId: 'a2', laneId: 'workspace:ria', createdAt: 3, dependsOn: [], goal: 'a2' },
+    { ticketId: 'b0', laneId: 'workspace:vggt', createdAt: 4, dependsOn: [], goal: 'b0' },
+    { ticketId: 'b1', laneId: 'workspace:vggt', createdAt: 5, dependsOn: [], goal: 'b1' },
+    { ticketId: 'b2', laneId: 'workspace:vggt', createdAt: 6, dependsOn: [], goal: 'b2' },
+    { ticketId: 'u6', laneId: 'unassigned', createdAt: 7, dependsOn: [], goal: 'u6' },
+  ]
+  const layoutLanes = [
+    { id: 'workspace:ria', label: 'dsh-ria' },
+    { id: 'workspace:vggt', label: 'vggt' },
+    { id: 'unassigned', label: '未分配' },
+  ]
+  const layout = layoutApi.boardLayout(layoutTickets, layoutLanes)
+  const bandById = new Map(layout.bands.map(band => [band.id, band]))
+  const position = id => layout.positions.get(id)
+
+  assert.deepEqual(layout.bands.map(band => band.id), ['workspace:ria', 'workspace:vggt', 'unassigned'])
+  assert.deepEqual(layout.bands.map(band => band.label), ['dsh-ria', 'vggt', '未分配'])
+  assert.equal(layout.bands.at(-1).id, 'unassigned')
+
+  for (const id of ['a0', 'a1', 'a2']) assert.equal(position(id).band, 'workspace:ria')
+  for (const id of ['b0', 'b1', 'b2']) assert.equal(position(id).band, 'workspace:vggt')
+  assert.equal(position('u6').band, 'unassigned')
+
+  for (const band of layout.bands) {
+    const slots = new Set()
+    const members = [...layout.positions.entries()].filter(([, item]) => item.band === band.id)
+    assert.ok(members.length > 0, band.id + ' has cards')
+    for (const [id, item] of members) {
+      const slot = item.column + ':' + item.row
+      assert.ok(!slots.has(slot), 'band ' + band.id + ' slot ' + slot + ' is not reused by ' + id)
+      slots.add(slot)
+      assert.ok(item.y >= band.y, id + ' starts inside its band')
+      assert.ok(item.y + layoutApi.BOARD_CARD_HEIGHT <= band.y + band.height, id + ' stays inside its band')
+    }
+  }
+
+  // Height follows the rows each band actually needs.
+  assert.ok(bandById.get('workspace:vggt').height > bandById.get('workspace:ria').height)
+  assert.ok(bandById.get('workspace:ria').height > bandById.get('unassigned').height)
+
+  // A dependency may point across bands without moving the card out of its own.
+  assert.ok(position('u6').x < position('a0').x)
+  const crossEdge = layout.edges.find(edge => edge.from === 'u6' && edge.to === 'a0')
+  assert.ok(crossEdge, 'cross-band dependency edge')
+  assert.notEqual(position(crossEdge.from).band, position(crossEdge.to).band)
+  assert.equal(crossEdge.d.includes((position('u6').y + layoutApi.BOARD_CARD_HEIGHT / 2).toFixed(1)), true)
+
+  // The ruler starts after the fixed project label gutter.
+  assert.ok(layout.ticks.every(tick => tick.x >= layoutApi.BOARD_PAD_X + layoutApi.BOARD_LANE_WIDTH))
+
+  // A lane with no title falls back to the last segment of its cwd.
+  const fallback = layoutApi.boardLayout([
+    { ticketId: 'm1', laneId: 'path:/home/gkl/Desktop/vibe_proj/misc', createdAt: 1, dependsOn: [], goal: 'm1' },
+    { ticketId: 'm2', laneId: 'unassigned', createdAt: 2, dependsOn: [], goal: 'm2' },
+  ], [
+    { id: 'path:/home/gkl/Desktop/vibe_proj/misc', label: '', cwd: '/home/gkl/Desktop/vibe_proj/misc' },
+    { id: 'unassigned', label: '未分配' },
+  ])
+  assert.equal(fallback.bands[0].label, 'misc')
+  assert.equal(fallback.bands.at(-1).label, '未分配')
+
+  // The label gutter is a sticky overlay, not a column that scrolls away.
+  const labelAt = layoutApi.source.indexOf('"data-ria-band-label"')
+  assert.ok(labelAt > 0)
+  const labelBlock = layoutApi.source.slice(labelAt, labelAt + 700)
+  assert.match(labelBlock, /position:\s*"sticky"/)
+  assert.match(labelBlock, /left:\s*"10px"/)
 
   console.log('board ok')
 } finally {

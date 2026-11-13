@@ -5,7 +5,7 @@
 > 日期：2026-11-13  
 > 范围：只设计 Ria 的每日自检；不改 worker 行为，不改宿主会话存储，不新增后台定时器。
 
-**结论先行**：P0 用官方 `schedule_create` 每天 23:40（Asia/Shanghai）给 Ria 自己投一条反省 prompt。Ria 只读工单、归档、outbox、memory 和少量会话，把报告写到 `~/.dsh/state/ria/reflections/YYYY-MM-DD.md`；memory 只出候选，不自动写；不自动改代码、不自动派活、不自动重启。P1 再把锁、预算、日志窗口读取和 startup 补跑做成 `ria_reflect` 工具，避免依赖模型自觉。
+**结论先行**：P0 用官方 `schedule_create` 每天 23:40（Asia/Shanghai）给 Ria 自己投一条反省 prompt。Ria 只读工单、归档、outbox、memory 和少量会话，把报告写到 `~/.dsh/state/ria/reflections/YYYY-MM-DD.md`；memory 只出候选，不自动写；不自动改代码、不自动派活、不自动重启。P1 再把锁、预算、日志窗口读取和 startup 补跑做成 `ria_reflect` 工具，避免依赖模型自觉。它不是每天写一篇总结，而是对应 Anthropic 四层记忆里的 Dreaming：离线拿原始流水对账、修剪，见第 13 节。
 
 ---
 
@@ -224,6 +224,8 @@ ticketId
 - 会话日志的 `L` 是解压后的物理行号；`Tn` 是 `turn/start` 的 `data.turn`（`docs/ria-session-review.md:8`）。报告里至少写 `sessionId + turn`，有行号再加行号。
 - 归档工单的稳定键是 `ticketId + closedAt`；不要只用 `ticketId`，因为 reopen 后可能有多条。
 - 没有证据的判断只能放“观察”，不能放“错漏”。
+- **证据只用于定位，不搬运易变值**：结论正文只引 `ticketId`（必要时 `sessionId + turn`）；`status`、`updatedAt`、`closedAt`、`recovery.count` 等只用于筛选/排序，不写进教训。`closedAt` 只用于归档去重，不作为结论内容。
+- **每条结论标验证状态**：`已对账` 或 `未验证`。`未验证` 只能进“观察/未验证”，不能进“教训”或 memory 候选；只看到相关性、没有因果证据的，不写因果。
 - 引用 worker/用户原文时只截一句，避免把隐私全文复制进报告。
 
 ### 3.4 区分真人消息和宿主注入
@@ -250,11 +252,18 @@ ticketId
 ~/.dsh/state/ria/reflections/
   state.json                 # 幂等标记、上次运行、scheduleId
   .lock                      # O_EXCL 运行锁，0600
-  YYYY-MM-DD.md              # 日报（0600）
+  YYYY-MM-DD.md              # 每日 notes：原始观察 + 证据（0600）
   YYYY-MM-DD.manual-HHMM.md  # 手动重跑，不覆盖
   index.jsonl                # P1：每天一行统计，可选
   YYYY-MM-DD.md.partial      # 写了一半的临时文件，成功后原子改名
+  wiki/                      # P2：长期层；规则页、索引、交叉链接
+    index.md
+    rules/
+    projects/
+    _archive/                # 被推翻/过期条目，保留可追溯
 ```
+
+`YYYY-MM-DD.md` 是**每日 notes**，不是长期结论：只写当天观察、证据和未验证假设。长期规则放 P2 的 `wiki/`（见 4.6）；`memory.md` 仍是用户偏好层，独立于这两者；P0 反省不直接写，P1 只走 5.4 的窄口径。
 
 不放在仓库 `docs/reflections/`，原因：
 
@@ -292,21 +301,21 @@ durationMs: 412000
 今天 3 张工单没有闭环，主要问题是我在目标会话不明确时直接派发。
 
 ## 做对了什么（最多 3 条）
-- 阿测的回归工单在用户取消后标了 blocked，没有继续发 continuation。
+- 阿测的回归工单在用户取消后已停下，没有继续发 continuation。
 
 ## 错漏清单
 | id | 级别 | 类型 | 证据 | 发生了什么 | 影响 | 纠正 | 归属 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| E-01 | P1 | 漏反馈 | t-123 / s-abc / T42 | worker 已完成，我没有回读结果就标 done | 用户不知道结果 | 下次先 ria_read 再 resolve | Ria |
+| E-01 | P1 | 漏反馈 | t-123 / s-abc / T42 | worker 已完成后，我没有回读结果就直接收口 | 用户不知道结果 | 下次先 ria_read 再 resolve | Ria |
 
 ## 教训（最多 5 条）
-- L-2026-11-13-01：触发条件=目标会话有多个同名 worker；做法=先 ria_status scope=sessions 确认 sessionId，再 ria_request。
+- L-2026-11-13-01：触发条件=目标会话有多个同名 worker；做法=先 ria_status scope=sessions 确认 sessionId，再 ria_request；验证状态=已对账；证据=t-123/s-abc/T42。
 
 ## memory 候选
-- M-2026-11-13-01：建议追加“派工前先确认 sessionId，不按标题猜”。理由=今天两次派错；冲突=无；置信度=高；动作=提议。
+- M-2026-11-13-01：建议追加“派工前先确认 sessionId，不按标题猜”。理由=今天两次派错；冲突=无；置信度=高；验证状态=已对账；证据=t-123/t-125；动作=提议。
 
 ## 明日关注（最多 3 条）
-- t-456：阿程的迁移工单还在 working，明天先看测试。
+- t-456：明天先看迁移工单的测试结果（证据：t-456）。
 
 ## 覆盖与成本
 - 读：Ria + 4 个 worker；跳过：2 个空会话（archived executor 不读）。
@@ -322,8 +331,9 @@ durationMs: 412000
 - 正文不超过 200 行 / 30KB；超了把证据摘录放 `YYYY-MM-DD.evidence.md`，日报只留结论和引用。
 - “做对了什么”最多 3 条，避免自我表扬挤掉问题。
 - 每条错漏必须有证据；没有证据的移到“观察”。
-- “教训”必须写成“触发条件 → 做法”，不能写“今天学到了很多”。
-- “memory 候选”必须带冲突检查和动作（提议/拒绝/自动），不能只写一句“记住这个”。
+- “教训”必须写成“触发条件 → 做法”，不能写“今天学到了很多”；每条带 `验证状态` 和证据指针。最多 5 条是成本上限，不是配额；没有值得写的就写“无”。
+- “memory 候选”必须带冲突检查、验证状态和动作（提议/拒绝/自动），不能只写一句“记住这个”。
+- 不把 `status`、`updatedAt`、`closedAt` 等易变值抄进“明日关注”或教训；只引用 `ticketId`。
 
 ### 4.3 错漏分类与级别
 
@@ -376,6 +386,43 @@ durationMs: 412000
 
 P0 不做索引；先把日报写稳。
 
+### 4.6 分层：每日 notes、长期 wiki 与 memory（P2）
+
+三层职责必须分开，避免把“今天的观察”直接变成“永久规则”：
+
+| 层 | 位置 | 写什么 | 谁能写 | 生命周期 |
+| --- | --- | --- | --- | --- |
+| 每日 notes | `reflections/YYYY-MM-DD.md` | 当天观察、错漏、证据、未验证假设 | P0 反省 | 180 天，可归档 |
+| 长期 wiki | `reflections/wiki/` | 反复出现/已对账的规则、项目约束、索引 | P2，人工确认或自动提议 | 持续，按月修剪 |
+| memory | `memory.md`（4KB） | 用户稳定偏好 | 用户确认后的 `ria_memory`（P1 窄口径） | 用户控制 |
+
+wiki 页格式（P2）：
+
+```markdown
+---
+id: rule-session-routing
+status: active | superseded | refuted | expired
+evidence: [t-123, s-abc/T42]
+lastVerified: 2026-11-13
+supersedes: []
+supersededBy: null
+---
+# 规则
+触发条件 → 做法 → 边界
+
+## 反例与证据
+...
+
+## 相关
+- [[rule-...]]
+```
+
+- **进入门槛**：同一规则至少 2 次独立证据，或用户明确确认；单次事件只留在 notes。
+- **交叉链接**：按项目/规则类型链到相关页；`index.md` 只放导航，不放全文。
+- **去重**：新页先搜同义/近义规则；能合并就合并，不能合并才新建，并写 `supersedes`。
+- **修剪**：`expired`（90 天未验证且不再适用）、`refuted`（被新证据推翻）、`superseded`（被新版本替代）都不删除；保留页内状态或移入 `_archive/`，检索默认过滤非 `active`。
+- **记忆负债指标**：wiki 页数、非 active 比例、90 天未引用页数；P2 每月报告一次，超过阈值就合并/归档。
+
 ---
 
 ## 5. memory 更新边界
@@ -407,13 +454,15 @@ P0 不做索引；先把日报写稳。
 - 稳定的角色路由（“代码默认给阿程”），但必须验证 sessionId 仍存在。
 - 反复出现的用户纠正（>=2 次独立发生）。
 - 明确的审批/操作边界（“不要自动 commit”）。
+- 隐性规则/策略模型：能写成“触发条件 → 做法 → 边界”的教训（如“该 API 并发先拿锁”）。
 
 禁止：
 
 - 工单进度、今天做了什么、哪张工单卡住。
 - 一次性的偶发事件、情绪、猜测。
 - worker 的聊天细节、session 内部路径。
-- sessionId / 端口 / 模型名 / 时间等易变值（除非用户明确要求且带 TTL 复核）。
+- **易变事实**：坐标、数量、DOM/页面结构、工单 `status`、`updatedAt`/`closedAt` 等；这些只用于筛选，不进入结论正文。
+- sessionId / 端口 / 模型名 / 时间等易变值（除非用户明确要求且带 TTL 复核）；sessionId 只作证据指针，不写成规则内容。
 - 密钥、token、密码、cookie、个人隐私。
 - 对现有条目的自动改写、合并、删除。
 
@@ -433,6 +482,8 @@ P0 不做索引；先把日报写稳。
 ### 5.4 何时自动写、何时只提议
 
 **P0：全部只提议，不自动写。** 理由：memory 每轮注入，写错一条会持续影响行为；日报写错只影响一次阅读。先用两周验证候选质量，再考虑自动写。
+
+**这是安全选择，不是最优引导。** Anthropic 的记忆研究给了一个反直觉结论：对强模型，用死板 prompt 限制“记录动作”是负向约束（Opus 5 平均奖励 0.828→0.594，−0.234）；应给方向引导 + 分层容器 + 事后修正管道，让模型自己权衡显著性。P0 仍保留“只提议”，因为 memory 写错的代价是持续的；但 prompt 不应把“最多 5 条”当配额，而应给判据：只记隐性规则、每条可对账、没有就写“无”。“不自动写 memory”是权限边界，不是“少记”的引导；日报仍应鼓励记录高显著性的规则，只是先不落 memory。P3 再引入 Dreaming 式自动对账/改写，并从只读审计开始。
 
 **P1 的窄口径自动写**（建议新增 `settings.reflection.autoMemory=false`，默认关闭）必须同时满足：
 
@@ -577,6 +628,8 @@ front matter 记录：
 | 用户取消 | `turn/end aborted(user)` | 立即停，不自动重试；标 cancelled，问下一步；下次自动触发跳过 | 不推进 |
 | schedule 丢失 | `schedule_list` 找不到 | 重建并告知；重建失败则 failed | failed |
 | Host 多天未运行 | `forDate` 与今天差 >1 天 | 只反省最近一天，报告列 gap，不回填 | complete |
+| 结论无证据/仅推测 | 找不到原始事件，或只有相关性 | 标 `未验证`，移出“教训/候选”；30 天无补证标 `expired` | complete/partial |
+| 旧结论被新证据推翻 | 对账发现矛盾 | wiki 标 `refuted`，保留历史；不删；后续检索跳过 | complete |
 
 ### 7.3 用户取消与“停下问”
 
@@ -695,8 +748,10 @@ schedule reminder 是 user 角色消息，可能被 intake 自动登记。推荐
 
 - 每条 P0/P1 都有可回溯证据：`ticketId/sessionId/turn`、`ticketId+closedAt`，或 `scheduleId/occurrence_at`；抽 3 条能回到原始事件。
 - 报告里没有完整密钥、cookie、用户隐私长文。
-- “教训”不超过 5 条，且每条能直接指导下一次行动。
-- “memory 候选”不超过 3 条，每条都有冲突检查。
+- “教训”不超过 5 条，且每条能直接指导下一次行动；每条都有 `验证状态` 和证据指针，`未验证` 不得出现在“教训”里。
+- “memory 候选”不超过 3 条，每条都有冲突检查；未对账的不得成为候选。
+- 报告不把 `status`、`updatedAt`、`closedAt` 等易变值写成结论；证据用 `ticketId`（必要时 `sessionId + turn`）。
+- P2 的 wiki 页都有 `status/evidence/lastVerified`；非 `active` 条目可追溯，默认检索不返回。
 - 用户读前 20 行能知道“今天最该看什么”。
 
 ### 10.3 测试（P1）
@@ -723,6 +778,11 @@ schedule reminder 是 user 角色消息，可能被 intake 自动登记。推荐
 | 10 | 是否新增 `ria_reflect` | P1 加 | P0 纯 prompt | 稳定性 vs 开发量 |
 | 11 | 是否索引 | P1 加 `index.jsonl` | 只留日报 | 趋势分析 vs 复杂度 |
 | 12 | 反省语言 | 中文 | 中英混排 | 可读性 |
+| 13 | 产物主形态 | 日报=每日 notes，wiki 到 P2 | 直接写 wiki 页 | 先跑起来 vs 结构化复用 |
+| 14 | 是否与 `memory.md` 打通 | 不直接打通；wiki 只作候选来源 | 自动同步 | 记忆污染 vs 复用效率 |
+| 15 | Dreaming 对账频率 | 每日报告内轻量对账；P2 每周合并、每月修剪 | 只做每日 / 只做每月 | 成本 vs 记忆负债 |
+| 16 | 无证据条目 | 只进“未验证”，30 天无补证过期 | 直接丢弃 / 永久保留 | 可追溯 vs 噪音 |
+| 17 | 强模型引导方式 | P0 保留“只提议”（安全）；P3 评估自动改写 | 立刻放开自动写 | 安全 vs 能力上限 |
 
 ---
 
@@ -747,14 +807,16 @@ schedule reminder 是 user 角色消息，可能被 intake 自动登记。推荐
 ### P2：可读性与趋势（约 1 周）
 
 - `index.jsonl` + 周报/趋势（错漏类型 Top 3、重复教训）。
+- `reflections/wiki/` 长期层：规则页、交叉链接、去重；每月修剪 `expired/refuted/superseded`。
 - memory 候选卡片/一键采纳；失败微信摘要。
 - 报告脱敏后可选导出到 `docs/reflections/`（人工确认）。
 - 退出标准：用户能在 2 分钟内看完日报并决定采纳哪条。
 
-### P3：窄口径自动记忆（两周后）
+### P3：窄口径自动记忆与 Dreaming 对账（两周后）
 
 - 只有在 P1 候选连续两周高准确率、用户明确开启 `autoMemory` 后，才允许 5.4 的窄口径自动追加。
-- 仍然禁止自动删除/改写；仍然只追加稳定偏好。
+- Dreaming 式离线对账：审判模型只读原始流水，先核对再改写 notes；默认只改 wiki 候选，不直接改 `memory.md`。
+- 仍然禁止自动删除/改写用户记忆；仍然只追加稳定偏好。
 - 观察 30 天，出错就回滚到“只提议”。
 
 ### 风险与缓解
@@ -768,6 +830,69 @@ schedule reminder 是 user 角色消息，可能被 intake 自动登记。推荐
 | memory 被污染 | P0 只提议；自动写默认关闭；冲突表 |
 | 反省变成“自我表扬” | “做对了什么”最多 3 条；错漏必须带证据 |
 | 与 startup 恢复抢资源 | 反省用 schedule/一次性任务，不直接塞进 startup |
+
+---
+
+## 13. 参考：Anthropic《The components of agent memory》
+
+原文：Anthropic 研究团队《The components of agent memory》，极市平台转载（来源 Datawhale）：
+<https://mp.weixin.qq.com/s/MCaoihdhLHLIIqDxfJrY6g>
+
+这篇文章把 Claude 的长期记忆描述成“四层记忆金字塔 + 离线 Dreaming”的动态闭环，而不是“向量库 + top-k 检索”。对每日反省最有价值的不是照搬一套存储，而是三个判据：**记什么、怎么对账、什么时候修剪**。
+
+### 13.1 四层记忆金字塔
+
+| 层 | 作用 | 本设计的对应 |
+| --- | --- | --- |
+| **Transcripts**（原始执行流水） | 无损对话、工具调用、结果；唯一 ground truth，可全文检索 | `session.v4.jsonl.zstd`、`ria.json`、`tickets.log.jsonl`、`outbox.json`；只读证据，绝不重写 |
+| **Memory Notes**（记忆笔记） | 会话中自主记录的显著观察，平铺 Markdown，不承担全局结构 | `reflections/YYYY-MM-DD.md` 的观察/错漏；P0 的每日 notes |
+| **Wiki / 知识地图** | 离线算力把碎片笔记抽象、归纳、交叉链接成结构化 Markdown 网络 | P2 的 `reflections/wiki/`；规则页、索引、双向链接 |
+| **Injected Context**（开局注入） | 新会话启动预加载的极轻量导航摘要，不塞细节 | `memory.md` + manager prompt；只注入经核验的稳定偏好/规则，4KB 级 |
+
+文章给了两个规模对比：Stainless 的 wiki 在 128 轮后长成多级目录 + 双向链接，跨语料问答每问少约 20,000 token 检索开销；反例是宝可梦红里 Sonnet 3.7 到 1 万步写了 413 个文件 / 977,930 字符，光整理笔记不推进游戏，只拿 1 枚徽章；Fable 5 只留 10 个文件 / 43,406 字符，拿到 4 枚。结论不是“记得越多越好”，而是“少而结构化，比多而平铺更值钱”。
+
+### 13.2 Dreaming：离线对账，不是再写一篇总结
+
+Dreaming 是离线时用审判模型调取底层原始流水，对照 notes 核验并重写错误笔记。它的产出不是又一篇总结，而是修正后的 notes/wiki。
+
+文章里的月见山例子很直白：一条“宝可梦中心在东侧”的错误笔记导致连续 3 次跳崖；Dreaming 用原始流水核对并重写后，修正组 1,935 步穿越，未修正组仍在同一台阶失败。
+
+两个失败模式，正好对应本设计要防的两件事：
+
+- **事无巨细滥记** → 笔记本身变成负担，模型忙着整理而不推进任务。
+- **错误笔记级联** → 一条没对账的结论被后续步骤当地图，越走越错。
+
+关键判据：只记**隐性规则/策略模型**（“这个台阶不能跳”“该 API 并发要先拿锁”），不记**易变事实**（坐标、背包数量、DOM 结构——重新看一眼比查过期记录更便宜）。
+
+文章还有一个反直觉结论：对强模型用死板 prompt 限制“记录动作”是负向约束（Opus 5 平均奖励 0.828→0.594，−0.234）；应给方向引导 + 分层容器 + 事后修正管道，让模型自己权衡显著性。这直接影响了 5.4 的取舍。
+
+### 13.3 和我们的「每日反省」是什么关系
+
+**一句话：反思 = Dreaming 的工程化（离线、对账、修剪），不是简单的“每天写一篇总结”。**
+
+| 文章 | 本设计 | 差异 |
+| --- | --- | --- |
+| Transcripts | 3.3 的证据链、6.2 的原始日志定向深读 | 同样把原始流水当唯一事实源；我们不重写日志 |
+| Memory Notes | 每日 notes（`YYYY-MM-DD.md`） | 同样平铺、按天；我们要求每条结论带证据 |
+| Wiki | P2 的 `reflections/wiki/`（4.6） | 我们不在 P0 就长 wiki；先用日报验证规则质量 |
+| Injected Context | `memory.md` + manager prompt | 只注入经核验的稳定偏好/规则，不注入细节 |
+| Dreaming | 每日 23:40 的离线反省 | 同样是离线对账；P0 只提议，不自动改写 |
+
+同构之处：都在会话结束后、用离线算力回看原始流水，而不是实时猜；都要求笔记可被原始证据核对；都区分“观察”与“规则”。
+
+不同之处：Anthropic 的 Dreaming 可以直接重写 notes，我们的 P0 不能——memory 每轮注入，写错会持续影响行为，所以先只提议；日报写错只影响一次阅读。这个保守选择是有意的，不是认为“只提议”效果最好。
+
+还有一层差距：P0 是同一模型按证据模板自查，没有独立的审判模型；P3 才把“审判”拆成独立步骤/模型。所以 P0 是 Dreaming 的轻量近似，不是完整实现。
+
+如果只把当天的 `status` 抄成一篇日报，那只是 journaling；Dreaming 的核心是拿原始流水去核对、改写、淘汰旧笔记。
+
+### 13.4 已落进本设计的五条改动
+
+1. **只沉淀隐性规则与教训，不搬运易变事实**：`status`、`updatedAt`、`closedAt` 只用于筛选/排序；结论只引 `ticketId`（必要时 `sessionId + turn`）作证据（3.3、5.2）。
+2. **每条结论必须能与证据对账**：标 `已对账` / `未验证`；未验证只能进“观察”，不能进“教训”或 memory 候选；禁止把推测写成结论（3.3、4.2、10.2）。
+3. **产物分层**：每日 notes 与长期 wiki/memory 分开；长期层做交叉链接、去重和修剪；`memory.md` 不由反省直接改写（P1 仅按 5.4 窄口径追加，4.1、4.6）。
+4. **对强模型给方向而非死板禁令**：P0“只提议”是安全选择，不是最优引导；prompt 给判据而不是配额，没有值得记的就写“无”（5.4、附录 A）。
+5. **修剪机制**：过期、重复、被推翻的条目有 `expired/refuted/superseded` 状态和归档路径，避免记忆负债（4.6、7.2、11）。
 
 ---
 
@@ -787,6 +912,10 @@ windowEnd = min(occurrence_at, forDate 23:59:59.999 +08:00)。
 本次只读，不修代码、不派活、不重启、不写 memory、不写 worker。
 只允许写 ~/.dsh/state/ria/reflections/ 下的文件；目录 0700、文件 0600，写完 chmod。
 
+写报告时只沉淀隐性规则/教训；不抄 status、updatedAt 等易变事实，证据只引
+ticketId（必要时 sessionId+turn）。每条结论标“已对账/未验证”；未验证只能进
+“观察”，不能进“教训”或 memory 候选。没有值得记的就写“无”，不要凑条数。
+
 步骤：
 1. 读 ria.json 的 tickets、tickets.log.jsonl / tickets-YYYY-MM.jsonl 中
    closedAt 在窗口内的记录、outbox.json、memory.md。
@@ -798,7 +927,8 @@ windowEnd = min(occurrence_at, forDate 23:59:59.999 +08:00)。
 4. 只对异常工单读原始日志尾部：最多 3 个会话，每个最多 4MB 压缩、
    30KB 文本；按 28 B5 2F FD 找帧，逐帧 zstdDecompressSync；
    坏帧/半帧跳过；绝不写日志。
-5. 按模板写 YYYY-MM-DD.md.partial，再 rename 成 YYYY-MM-DD.md。
+5. 先对账，再按模板写 YYYY-MM-DD.md.partial，再 rename 成 YYYY-MM-DD.md。
+   结论里每个因果至少落回一条原始事件；只相关、没有因果证据的，标“未验证”。
    每条错漏必须有可回溯证据：ticketId/sessionId/turn、ticketId+closedAt，
    或 scheduleId/occurrence_at；没有证据的放“观察”。
 6. memory 只写候选（M-...），不调用 ria_memory 写；与现有 3 条
@@ -870,4 +1000,4 @@ schedule_create({
 
 ## 附：一句话总结
 
-**每天 23:40 让 Ria 用 10 分钟、60k tokens、最多 8 个会话，读工单和日志的“异常部分”，写一份带证据的错漏清单；memory 只提议，代码/派活/重启一律不自动做。**
+**每天 23:40 让 Ria 用 10 分钟、60k tokens、最多 8 个会话，读工单和日志的“异常部分”，像 Dreaming 一样先对账再写：只沉淀隐性规则、不搬运易变事实；memory 只提议，代码/派活/重启一律不自动做。**

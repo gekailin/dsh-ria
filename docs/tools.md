@@ -119,7 +119,7 @@ Ria 的系统 prompt 要求：每条真实用户消息都要用 `ria_resolve` �
 - `ria_reflect_status`：当前 run 的 runId、forDate、window、deadline/remainingMs、候选会话、limits、memoryBytes、reportPath、state。
 - `ria_reflect_read_tickets`：scope=window/open/history，可按 status/executor 过滤；limit 1–200，默认 80；每条 goal/acceptance/blockedReason/checklist 截到 500 字。
 - `ria_reflect_read_sessions`：scope=candidates/recent，limit 1–20；只返回 sessionId/title/running/blank/lastUsedAt/ticketIds 等元数据。
-- `ria_reflect_read_session`：mode=summary（默认）或 full；summary 保留 user、每 turn 最后一条 assistant、tool/thinking brief；full 返回原始事件，必须给 refs 或 from/to。refs 1–50 且只能用于本会话之前返回过的 ref；from/to 同为 ISO 时间或同为事件下标，左闭右开；maxMessages 默认 60/40，maxChars 默认 12000/30000；坏帧跳过并计入 corruptFrames。
+- `ria_reflect_read_session`：mode=summary（默认）或 full；summary 保留 user、每 turn 最后一条 assistant、tool/thinking brief；full 返回原始事件，必须给 refs 或 from/to。refs 1–50 且只能用于本会话之前返回过的 ref；from/to 同为 ISO 时间或同为事件下标，左闭右开；maxMessages 默认 50/40，maxChars 默认 10000/30000；坏帧跳过并计入 corruptFrames。
 - `ria_reflect_read_context`：kind=memory/outbox/schedule；memory 最多 4KB，outbox 最多 50 条，schedule 本轮返回空视图。
 - `ria_reflect_report`：只写 `runs/<runId>/report.partial.md`，原子写、0600、不超过 30KB；不接受 path/runId/sessionId 参数。run finish/abort 后所有工具返回 run_closed。
 

@@ -424,7 +424,7 @@ ticketId
 | `ria_reflect_status` | 无 | `{runId, forDate, window, deadlineAt, remainingMs, candidates, limits, memoryBytes, reportPath, state}` | 只返回绑定 run；不返回其他 run |
 | `ria_reflect_read_tickets` | `{scope:"window" / "open" / "history", status?, executor?, limit?}` | `{tickets, truncated}` | `limit` 1–200，默认 80；每条文本截 500 字；不返回完整对话 |
 | `ria_reflect_read_sessions` | `{scope:"candidates" / "recent", limit?}` | `{sessions:[{sessionId,title,running,blank,lastUsedAt,ticketIds}]}` | `limit` 1–20；只列本 run 候选/最近 worker，不任意全库搜索 |
-| `ria_reflect_read_session` | `{sessionId, mode?: "summary" / "full", from?, to?, refs?, maxMessages?, maxChars?}` | `{mode, messages, lastTurn, window, stats, corruptFrames, truncated, source}` | `mode` 默认 `summary`；`maxMessages` 1–200（summary 默认 60 / full 默认 40）；`maxChars` 1–40000（summary 默认 12000 / full 默认 30000）；`from/to` 为 ISO 时间或原始事件 0-based index；`refs` 1–50，与 `from/to` 互斥；full 必须给 `refs` 或 `from/to` 之一；只允许本 run 候选 sessionId；窗口夹在 run 窗口内；只读；不 resume；详见下方读取契约 |
+| `ria_reflect_read_session` | `{sessionId, mode?: "summary" / "full", from?, to?, refs?, maxMessages?, maxChars?}` | `{mode, messages, lastTurn, window, stats, corruptFrames, truncated, source}` | `mode` 默认 `summary`；`maxMessages` 1–200（summary 默认 50 / full 默认 40）；`maxChars` 1–40000（summary 默认 10000 / full 默认 30000）；`from/to` 为 ISO 时间或原始事件 0-based index；`refs` 1–50，与 `from/to` 互斥；full 必须给 `refs` 或 `from/to` 之一；只允许本 run 候选 sessionId；窗口夹在 run 窗口内；只读；不 resume；详见下方读取契约 |
 | `ria_reflect_read_context` | `{kind:"memory" / "outbox" / "schedule"}` | `{text, bytes, truncated}` | memory ≤4KB；outbox 只取窗口内/未送达 ≤50 条；schedule 只读反思任务 |
 | `ria_reflect_report` | `{markdown, status:"complete" / "partial", counts, degraded?}` | `{path, bytes, sha256}` | 只写 `runs/<runId>/report.partial.md`；≤30KB；0600；原子写；拒绝路径参数 |
 
@@ -932,10 +932,10 @@ RRULE:FREQ=WEEKLY;BYDAY=MO
 
 **Tier 1：会话摘要（默认 summary）**
 
-- 每个候选会话调用 `ria_reflect_read_session({mode:"summary", maxMessages:60, maxChars:12000})`；超过 6 个会话时降到 40 条，Ria 自己 80 条。
+- 每个候选会话调用 `ria_reflect_read_session({mode:"summary", maxMessages:50, maxChars:10000})`；超过 6 个会话时降到 40 条，Ria 自己 80 条。
 - summary 只保留用户消息、每个 turn 最后一条 assistant 文本，以及折叠后的 tool/thinking brief；不 resume。
-- 典型 60 条原始事件压到约 28–32 条摘要（user + 最后 assistant + 少量 brief），平均 120 字 ≈ 3.4–3.8k/会话；8 个会话约 27–31k；加 Tier 0 的 20k，总计约 47–51k。
-- 对比旧稿 8 × 45 条 × 150 字 ≈ 54k + 20k = 74k，省 23–27k，留给 Tier 2。若按 8 × 60 条摘要硬算，8 × 60 × 120 ≈ 57.6k，仍会挤掉 Tier 2；所以 60 是单会话硬上限，预算按典型 30 条控制，超了先降条数。
+- 典型 50 条原始事件压到约 24–28 条摘要（user + 最后 assistant + 少量 brief），平均 120 字 ≈ 2.9–3.4k/会话；8 个会话约 23–27k；加 Tier 0 的 20k，总计约 43–47k。
+- 对比旧稿 8 × 45 条 × 150 字 ≈ 54k + 20k = 74k，省 27–31k，留给 Tier 2。若按 8 × 50 条摘要硬算，8 × 50 × 120 ≈ 48k，仍会挤掉 Tier 2；所以 50 是单会话硬上限，预算按典型 24–28 条控制，超了先降条数。
 - 如果某会话窗口内没有 turn、也没有异常工单，直接跳过。
 
 三层是上限，不是都要打满：Tier 0 + Tier 1 典型 47–51k，Tier 2 ≤30k，总计 77–81k，硬顶 90k；超了先降 Tier 1 的摘要条数，再降 Tier 2 的会话数/窗口。
@@ -964,7 +964,7 @@ RRULE:FREQ=WEEKLY;BYDAY=MO
 ### 8.4 降级顺序
 
 1. 砍掉 `done` 无异常的会话。
-2. 每会话 summary 从 60 条降到 30 条，再降到 20 条；full 窗口从 3 个降到 1 个。
+2. 每会话 summary 从 50 条降到 30 条，再降到 20 条；full 窗口从 3 个降到 1 个。
 3. 原始日志只读 P0/P1，不读 P2。
 4. full 每条从 2000 字截到 800 字，summary 从 1000 字截到 500 字，引用只留一句。
 5. 若仍超预算，写 `status=partial`，列出未覆盖的工单/会话；不推进 `lastCompletedDate`，下次触发（或 startup）只重试一次（cancelled 除外）。
@@ -1210,8 +1210,8 @@ deadline = <ISO 时间>（15 分钟硬顶）
 2. 调 ria_reflect_read_tickets 读窗口内工单与归档；调 ria_reflect_read_context
    读 memory/outbox/schedule。先读结构化数据，再决定读哪些会话。
 3. 按候选优先级选最多 8 个会话；每个先用
-   ria_reflect_read_session({mode:"summary", maxMessages:60, maxChars:12000})
-   读最近 60 条原始事件（超过 6 个会话时 40 条；Ria 自己 80 条）。
+   ria_reflect_read_session({mode:"summary", maxMessages:50, maxChars:10000})
+   读最近 50 条原始事件（超过 6 个会话时 40 条；Ria 自己 80 条）。
    summary 只保留用户消息和每 turn 最后一条 assistant，tool/thinking 是 brief；
    只读窗口内内容；不 resume。
 4. 只对异常工单定向深读：用 mode:"full" + refs（从 summary 挑）或 from/to 窗口，

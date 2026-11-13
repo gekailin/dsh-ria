@@ -29,6 +29,7 @@ export async function createFixture(options = {}) {
   const ownsStateDir = !options.stateDir
   const stateDir = options.stateDir || mkdtempSync(join(tmpdir(), 'dsh-ria-fixture-'))
   const installed = new Map()
+  const agentTools = new Map()
   const prompts = []
   const steered = []
   const creates = []
@@ -66,7 +67,7 @@ export async function createFixture(options = {}) {
     model: { current() { return models.get(String(riaAgent.id)) } },
     steer(message) { steered.push(message) },
     session: {
-      snapshotEvents() { return [] },
+      snapshotEvents() { return options.sessionEvents && options.sessionEvents[riaId] ? options.sessionEvents[riaId].slice() : [] },
       append() { return { seq: 0, time: 1 } },
     },
   }
@@ -75,11 +76,24 @@ export async function createFixture(options = {}) {
     if (id === riaId) return riaAgent
     const model = models.get(id)
     if (!model) return undefined
+    let tools = agentTools.get(id)
+    if (!tools) {
+      tools = new Map()
+      agentTools.set(id, tools)
+    }
     return {
       id,
-      ctx: { tools: { register() { return () => {} } }, systemPrompt: { section() { return () => {} } } },
+      ctx: {
+        tools: {
+          register(definition) {
+            tools.set(definition.name, definition)
+            return () => tools.delete(definition.name)
+          },
+        },
+        systemPrompt: { section() { return () => {} } },
+      },
       model: { current() { return model } },
-      session: { snapshotEvents() { return [] }, append() { return { seq: 0, time: 1 } } },
+      session: { snapshotEvents() { return options.sessionEvents && options.sessionEvents[id] ? options.sessionEvents[id].slice() : [] }, append() { return { seq: 0, time: 1 } } },
     }
   }
 
@@ -189,7 +203,7 @@ export async function createFixture(options = {}) {
           return { sessionId, agentPreset: request.agentPreset }
         }
         if (options.failCreate) throw options.failCreate
-        const sessionId = 'session-spawn-' + (creates.filter(item => !item.workspaceId).length)
+        const sessionId = String(request.sessionId || ('session-spawn-' + (creates.filter(item => !item.workspaceId).length)))
         const summary = {
           sessionId,
           running: false,
@@ -200,6 +214,8 @@ export async function createFixture(options = {}) {
         }
         summaries.push(summary)
         models.set(sessionId, { provider: 'provider-ok', model: 'model-vision' })
+        const agent = makeAgent(sessionId)
+        if (agent) for (const handler of listeners.get('agent/created') || []) handler({ agent })
         return { sessionId, ...(request.agentPreset ? { agentPreset: request.agentPreset } : {}) }
       },
       async resolveAgent(id) {
@@ -222,6 +238,7 @@ export async function createFixture(options = {}) {
             withModel({ sessionId: 'session-worker', running: true, blank: false, updatedAt: 2, cwd: stateDir, projections: { values: { title: 'Worker One' } } }),
             withModel({ sessionId: 'session-no-image', running: false, blank: false, updatedAt: 3, cwd: stateDir, projections: { values: { title: 'Text Only' } } }),
             { sessionId: 'session-subagent', running: false, blank: false, updatedAt: 4, cwd: stateDir, origin: 'subagent' },
+            ...(options.extraSessions || []).map(withModel),
             ...summaries.map(withModel),
           ],
         }
@@ -291,7 +308,11 @@ export async function createFixture(options = {}) {
         const removed = queue.splice(index, 1)[0]
         return { accepted: true, removed }
       },
-      async events() { return { records: [], hasMore: false, cursor: 0 } },
+      async events(request) {
+        const id = request && request.address ? String(request.address.sessionId) : ''
+        const events = options.sessionEvents && options.sessionEvents[id]
+        return { records: Array.isArray(events) ? events.slice() : [], hasMore: false, cursor: 0 }
+      },
       async projections(request) {
         const id = request && request.sessionId ? String(request.sessionId) : ''
         const current = models.get(id) || { provider: 'provider-ok', model: 'model-vision' }
@@ -340,6 +361,7 @@ export async function createFixture(options = {}) {
     ctx,
     service,
     installed,
+    agentTools,
     prompts,
     steered,
     emit,

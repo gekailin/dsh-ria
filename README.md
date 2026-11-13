@@ -26,9 +26,9 @@ Ria 是 DSH Web 的一个常驻管理者插件，全局只有一个阿汐。她�
 
 ## 任务看板
 
-侧栏 Ria 入口右侧有一个「▦ 看板」图标按钮（在设置和「连接」之间），点开是全屏只读看板：横轴是按创建时间等分位排出的 6 段伪时间轴，纵轴按 worker 所在项目（workspace/cwd）分道，没有归属的票进「未分配」。卡片显示短 id、worker、状态色、任务目标、排队原因与依赖数；已完成/已取消的票折叠成两行，避免历史把活跃任务挤出屏幕。依赖用一层 SVG 箭头从上游指向下游，悬停卡片只高亮相关边；顶部可按全部/活跃/仅阻塞筛选，点状态图例可高亮该状态。
+侧栏 Ria 入口右侧有一个「▦ 看板」图标按钮（在设置和「连接」之间），点开是全屏只读看板：单画布上按创建时间排序，每 3 张卡一列，纵轴按 worker 所在项目（workspace/cwd）分道，没有归属的票进「未分配」。卡片显示任务目标摘要、状态与执行者、清单进度；依赖用 SVG 箭头从上游指向下游，悬停时整条上下游链高亮并弹出完整信息。顶部可搜索、按全部/活跃/仅阻塞筛选；默认停在最新一页，向左滚动自动加载更早的 60 张。
 
-数据来自只读端点 `GET /plugins/dsh-ria/api/board`，页面本身不写状态、不触发派发。示例见 [docs/assets/ria-board-preview.png](docs/assets/ria-board-preview.png)（真实 84 票，1440×1160）。
+数据来自只读端点 `GET /plugins/dsh-ria/api/board?limit=60&before=...`，页面本身不写状态、不触发派发。示例见 [docs/assets/ria-board-preview.png](docs/assets/ria-board-preview.png)（120 张 mock 票，1440×913），细节见 [docs/board-preview.md](docs/board-preview.md)。
 
 ## 聊天连接
 

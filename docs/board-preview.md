@@ -1,33 +1,40 @@
 # 任务看板预览
 
-![Ria 任务看板，真实 84 票](assets/ria-board-preview.png)
+![Ria 任务看板](assets/ria-board-preview.png)
 
-预览图基于本机真实状态 `DSH_HOME/state/ria/ria.json` 的 84 张 ticket：80 done、3 cancelled、1 working，0 张有依赖。按 executor 会话的 cwd 聚合出 5 条泳道（`ria`、`vggt`、`Ria · 管家`、`misc`、`session`），其中 `self` 与当前 Ria 会话归入「Ria · 管家」，找不到会话的 worker 进「未分配」。截图尺寸 1440×1160，浏览器内从数据加载到卡片与箭头布局完成约 31 ms。
+看板是只读的全屏浮层，不写 ticket、不派发消息。截图 1440×913，使用 mock 的 120 张 ticket 驱动真实 DSH Web shell 与工作区里的 `lib/client.js`，覆盖 5 条工作区泳道、依赖链、清单进度和各种状态；不是本机 ria.json 的实时投影。
 
-## 为什么用静态 harness
+## 布局
 
-截图时 `~/.dsh/profiles/web/node_modules/dsh-ria` 仍是旧拷贝，而任务约束不重启 dsh web、不同步安装副本，所以无法从正在运行的 Web UI 点开新看板。预览使用与 `lib/client.js` 相同的 DOM 结构、配色、分位时间桶和 SVG 依赖路径逻辑，数据由真实 `ria.json` 投影而来；它只用于视觉验收，不是生产页面。
+- 单画布：横轴按 `createdAt` 排序，每 3 张卡一列；有依赖的列整体右移，列内按泳道排序，再按上游行中位数做 3 轮对齐。
+- 纵轴按 worker 所属 workspace 分道；`self` 与 Ria 归入「Ria · 管家」，找不到会话的 worker 进「未分配」。泳道按活跃票数、最近活动排序。
+- 卡片 160×58：第一行是去掉空白与首句、最多 22 字的 goal 摘要，第二行是「状态 · 执行者」，右上角是清单进度（如 3/7），不再显示 ticket 短 id。
+- 依赖用 cubic SVG 箭头从上游指向下游；悬停卡片时整条上下游链高亮，其余卡片与边淡出，并弹出完整信息浮层（goal、状态/waitingOn、执行者与 sessionId、创建/关闭时间与历时、依赖/被依赖数、清单进度、排队原因）。
+- 顶部有搜索框和全部/活跃/仅阻塞筛选；图例可高亮状态。默认加载最新 60 张并停在最右；向左滚到距左缘 180px 时自动按 `before` 加载更早的 60 张，加载后保持视口位置。
 
-## 复现真实页面
+## 数据与复现
 
-1. 同步安装副本并重启 dsh web（重启前先征得同意）：
+端点：
 
-   ~~~bash
-   cp -a lib/. ~/.dsh/profiles/web/node_modules/dsh-ria/lib/
-   dsh-daemon restart
-   ~~~
+~~~bash
+curl -s "http://127.0.0.1:3080/plugins/dsh-ria/api/board?limit=60"
+~~~
 
-2. 展开侧栏，点 Ria 入口右侧的「▦ 看板」图标（顺序：Ria 入口 | 看板 | 设置 | 连接）。看板数据可直接检查：
+返回 `counts`、`page:{limit,before,returned,total,hasMore,nextBefore}`、`lanes` 和 `tickets`；每张票带 `dependentCount`、`archived`、`progress` 等字段。`before` 是上一页最旧一张的 `createdAt`，服务端合并热存与归档日志后按 `createdAt` 升序取最后 `limit` 张，所以首屏总是最新的一批。
 
-   ~~~bash
-   curl -s http://127.0.0.1:3080/plugins/dsh-ria/api/board | head -c 400
-   ~~~
+在真实 Web UI 查看：先同步安装副本并重启 dsh web（重启前先征得同意），展开侧栏，点 Ria 入口右侧的「▦ 看板」（顺序：Ria 入口 | 看板 | 设置 | 连接）。
 
-3. 端点返回 `ok/counts/lanes/tickets`；页面本身只读，不写 ticket、不派发消息。
+~~~bash
+cp -a lib/. ~/.dsh/profiles/web/node_modules/dsh-ria/lib/
+dsh-daemon restart
+~~~
+
+截图 `assets/ria-board-tooltip.png` 是悬停 `ticket_mock_104` 时的完整信息浮层与链高亮。
 
 ## 已覆盖的边界
 
 - 没有 ticket、筛选后为空、worker 会话缺失、worker 已归档、workspace registry 读取失败。
-- 无依赖的票不画箭头；有依赖时箭头只在上游/下游卡片悬停时高亮。
-- 已完成/已取消的票折叠为两行，避免大量历史把活跃泳道挤出首屏。
-- 横向不是真实时间比例，而是按创建时间排序后的 6 个等分位桶，标签注明 `日期 · n/6`。
+- 无依赖的票不画箭头；有依赖时只高亮整条相关链。
+- 热存与归档日志合并；归档票带 `archived:true`，不会因为不在热存里而从看板消失。
+- 分页去重、加载更早失败提示、没有更早数据时停止请求。
+- 120 张 mock 票实测：画布宽 7852px，默认 `scrollLeft` 等于最大滚动值，布局约 1ms；仅阻塞筛选 15 张，搜索无结果显示空状态。

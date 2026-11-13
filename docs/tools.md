@@ -111,3 +111,16 @@ Ria 通过宿主模型注册表（`ctx.get('llm').listProviders()/listModels(pro
 ## 管理者 prompt 的行为约束
 
 Ria 的系统 prompt 要求：每条真实用户消息都要用 `ria_resolve` 给出归宿（answered/work/merge/split/control/blocked），不能让它悄悄消失；需求不明确时先和用户澄清，再下发；不要凭猜测开工；任务要有验收标准；进度按需查询；经验按 case 集总结（需求、错误做法、正确做法），默认只在对话里输出，用户指定路径时才写文件；重启后先 read 再决定是否继续；收到 `[Worker idle]` 时先 read，确认完成才关工单，等用户输入就标 blocked；worker 明确拒绝任务或用户取消/叫停 worker turn 时，标 blocked 并停下来问用户下一步，不自行改派、重发或换方案；防误发提示由 agent system prompt section 提供，任务消息本身不加前缀；派发必须提供 note（一两句话：派给谁、做什么、用户接下来看到什么），Host 会把它显示成 Ria 会话当前轮次末尾的卡片，并同步一条微信文本；缺 note 或空白会直接报错、不投递，也不会结束本轮；成功派发后立即结束本轮，不再 sleep/poll；不给忙碌 worker（有运行中的 turn 或非空 pending 队列）用 queue 模式排队，先后顺序用 dependsOn 表达，steer 只用于同步信息、绝不下发新任务；上游 failed/cancelled 的 [Queue blocked] 要先报告用户再决定，不自行跳过或改写需求；用户要求换 worker 模型时用 ria_model，新建 worker 要指定模型时用 ria_spawn 的 model 参数；只有用户明确要求时才使用 ria_grant，绝不自行放宽 worker 权限；用户没指定 worker 时只从 scope=recent 的近期 worker 里挑，近期没有合适的就先问用户，不遍历全部会话、不凭空挑。
+
+## 反思读取工具（仅反思 worker）
+
+反思 worker 由编排层用 `ria_spawn({reflectionRunId})` 创建；创建前必须先打开 run 并写入绑定，绑定命中时只给这个 worker 注册下面 6 个工具。Ria 自己的 12 个 `ria_*` 工具、普通 worker 的会话都看不到这些工具；普通 worker 调它们会得到 unknown_tool。它们全部只读，不会 resume 冷会话，也不会写 `ria.json` 或会话日志。
+
+- `ria_reflect_status`：当前 run 的 runId、forDate、window、deadline/remainingMs、候选会话、limits、memoryBytes、reportPath、state。
+- `ria_reflect_read_tickets`：scope=window/open/history，可按 status/executor 过滤；limit 1–200，默认 80；每条 goal/acceptance/blockedReason/checklist 截到 500 字。
+- `ria_reflect_read_sessions`：scope=candidates/recent，limit 1–20；只返回 sessionId/title/running/blank/lastUsedAt/ticketIds 等元数据。
+- `ria_reflect_read_session`：mode=summary（默认）或 full；summary 保留 user、每 turn 最后一条 assistant、tool/thinking brief；full 返回原始事件，必须给 refs 或 from/to。refs 1–50 且只能用于本会话之前返回过的 ref；from/to 同为 ISO 时间或同为事件下标，左闭右开；maxMessages 默认 60/40，maxChars 默认 12000/30000；坏帧跳过并计入 corruptFrames。
+- `ria_reflect_read_context`：kind=memory/outbox/schedule；memory 最多 4KB，outbox 最多 50 条，schedule 本轮返回空视图。
+- `ria_reflect_report`：只写 `runs/<runId>/report.partial.md`，原子写、0600、不超过 30KB；不接受 path/runId/sessionId 参数。run finish/abort 后所有工具返回 run_closed。
+
+一次真实日志试跑的量级、缺口和默认值建议见 [reflection_tool_trial.md](reflection_tool_trial.md)。

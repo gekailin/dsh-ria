@@ -9,7 +9,7 @@ function loadBoardLayout() {
   const end = source.indexOf('/* board-layout:end */')
   assert.ok(start >= 0 && end > start, 'client board layout markers')
   const block = source.slice(start, end)
-  const api = new Function(block + '\nreturn { boardLayout, BOARD_CARD_WIDTH, BOARD_CARD_HEIGHT, BOARD_LANE_WIDTH, BOARD_PAD_X };')()
+  const api = new Function(block + '\nreturn { boardLayout, boardMatchesFilter, boardFilteredTickets, boardFocusScroll, BOARD_FILTERS, BOARD_DEFAULT_FILTER, BOARD_CARD_WIDTH, BOARD_CARD_HEIGHT, BOARD_LANE_WIDTH, BOARD_PAD_X };')()
   return { source, ...api }
 }
 
@@ -251,6 +251,67 @@ try {
   const labelBlock = layoutApi.source.slice(labelAt, labelAt + 700)
   assert.match(labelBlock, /position:\s*"sticky"/)
   assert.match(labelBlock, /left:\s*"10px"/)
+
+  // Status tabs only dim the cards they do not match. Search still narrows the
+  // canvas, but the tab choice never changes how many cards are laid out.
+  assert.equal(layoutApi.BOARD_DEFAULT_FILTER, 'active')
+  assert.deepEqual(layoutApi.BOARD_FILTERS.map(item => item.id), ['all', 'active', 'blocked', 'done', 'cancelled'])
+  assert.match(layoutApi.source, /useState\(BOARD_DEFAULT_FILTER\)/)
+  const filterTickets = [
+    { ticketId: 'f-open', status: 'open', laneId: 'workspace:ria', createdAt: 1, dependsOn: [], goal: 'open' },
+    { ticketId: 'f-working', status: 'working', laneId: 'workspace:ria', createdAt: 2, dependsOn: [], goal: 'working' },
+    { ticketId: 'f-blocked', status: 'blocked', laneId: 'workspace:ria', createdAt: 3, dependsOn: [], goal: 'blocked' },
+    { ticketId: 'f-done', status: 'done', laneId: 'workspace:ria', createdAt: 4, dependsOn: [], goal: 'done' },
+    { ticketId: 'f-cancelled', status: 'cancelled', laneId: 'workspace:ria', createdAt: 5, dependsOn: [], goal: 'cancelled' },
+    { ticketId: 'f-forked', status: 'forked', laneId: 'workspace:ria', createdAt: 6, dependsOn: [], goal: 'forked' },
+  ]
+  const matches = (id, filter) => layoutApi.boardMatchesFilter(filterTickets.find(ticket => ticket.ticketId === id), filter)
+  assert.equal(matches('f-open', 'active'), true)
+  assert.equal(matches('f-working', 'active'), true)
+  assert.equal(matches('f-blocked', 'active'), true)
+  assert.equal(matches('f-done', 'active'), false)
+  assert.equal(matches('f-cancelled', 'active'), false)
+  assert.equal(matches('f-forked', 'active'), false)
+  assert.equal(matches('f-blocked', 'blocked'), true)
+  assert.equal(matches('f-open', 'blocked'), false)
+  assert.equal(matches('f-done', 'done'), true)
+  assert.equal(matches('f-forked', 'done'), false)
+  assert.equal(matches('f-cancelled', 'cancelled'), true)
+  assert.equal(matches('f-done', 'cancelled'), false)
+
+  const baseTickets = layoutApi.boardFilteredTickets(filterTickets, '')
+  assert.equal(baseTickets.length, filterTickets.length)
+  assert.equal(layoutApi.boardFilteredTickets(filterTickets, 'blocked').length, 1)
+  const allTabsLayout = layoutApi.boardLayout(baseTickets, layoutLanes)
+  assert.equal(allTabsLayout.positions.size, filterTickets.length)
+  assert.match(layoutApi.source, /boardLayout\(base, board && board\.lanes\)/)
+  assert.match(layoutApi.source, /view\.base\.map/)
+  assert.doesNotMatch(layoutApi.source, /view\.visible/)
+
+  // Center the viewport on the leftmost/rightmost matching cards, including
+  // the card width; irrelevant statuses outside that span must not move it.
+  const focusLayout = {
+    width: 2000,
+    positions: new Map([
+      ['f-open', { x: 700 }],
+      ['f-working', { x: 700 }],
+      ['f-blocked', { x: 1100 }],
+      ['f-done', { x: 100 }],
+      ['f-cancelled', { x: 1500 }],
+      ['f-forked', { x: 1800 }],
+    ]),
+  }
+  assert.equal(layoutApi.boardFocusScroll(focusLayout, filterTickets, 'active', 800), 580)
+  assert.equal(layoutApi.boardFocusScroll(focusLayout, filterTickets, 'done', 800), 0)
+  assert.equal(layoutApi.boardFocusScroll(focusLayout, filterTickets, 'blocked', 800), 780)
+  assert.equal(layoutApi.boardFocusScroll(focusLayout, [
+    { ticketId: 'f-done', status: 'done', goal: 'done' },
+  ], 'active', 800), null)
+  const clampLayout = {
+    width: 2000,
+    positions: new Map([['f-blocked', { x: 1900 }]]),
+  }
+  assert.equal(layoutApi.boardFocusScroll(clampLayout, filterTickets, 'blocked', 800), 1200)
 
   // User-facing copy calls a ticket a 工单, while ids and API fields stay unchanged.
   assert.match(layoutApi.source, /正在加载更早的工单…/)

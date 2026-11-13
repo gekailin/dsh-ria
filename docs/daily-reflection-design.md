@@ -45,23 +45,23 @@
 
 | 事实 | 位置 | 对设计的约束 |
 | --- | --- | --- |
-| `ria.json` 当前 schema v4，存 `riaSessionId`、`riaPreset`、`tickets`、`ticketFeedback`、`deliveries`、`grants`、`settings`、`recentWorkers`、`dispatchNotes` | `DESIGN.md:537` | 工单里写的“schemaVersion 2”已过时；按 v4 设计，v3 可读、首次写 `.v3.bak` |
-| `ria.json` / `memory.md` 不存 transcript；原始日志在 `DSH_HOME/sessions` | `DESIGN.md:558`、`docs/state-and-api.md:20` | 必须去会话日志取证据，不能指望工单里带全文 |
-| 会话日志路径 `DSH_HOME/sessions/<workspace-key>/session-<uuid>/session.v4.jsonl.zstd` | `DESIGN.md:555` | 由 `executor` sessionId 反查目录；不按 workspace 名猜 |
+| `ria.json` 当前 schema v4，存 `riaSessionId`、`riaPreset`、`tickets`、`ticketFeedback`、`deliveries`、`grants`、`settings`、`recentWorkers`、`dispatchNotes` | `docs/DESIGN.md:538` | 工单里写的“schemaVersion 2”已过时；按 v4 设计，v3 可读、首次写 `.v3.bak` |
+| `ria.json` / `memory.md` 不存 transcript；原始日志在 `DSH_HOME/sessions` | `docs/DESIGN.md:559`、`docs/state-and-api.md:20` | 必须去会话日志取证据，不能指望工单里带全文 |
+| 会话日志路径 `DSH_HOME/sessions/<workspace-key>/session-<uuid>/session.v4.jsonl.zstd` | `docs/DESIGN.md:556` | 由 `executor` sessionId 反查目录；不按 workspace 名猜 |
 | 日志是多帧 zstd 拼接、append-only，末帧可能 torn；读取器拒绝 torn JSONL | `docs/ria-session-review.md:8` | 只能逐帧解压、坏帧跳过；绝不能重写/重压（P0-1 事故） |
 | 一次 7.94MB 压缩日志全量解压是 25.29MB / 10887 行 | `docs/ria-session-review.md:8` | 全量读一天不可行；必须采样和截断 |
 | 当前 12 个今日会话合计 102,363,990 bytes 压缩；Ria 自己 9.77MB、Ria开发 35.87MB、底商 24.41MB、f725 27.41MB | 2026-11-13 实测 | 全量解压约 300MB+，必须在入口就限流 |
 | 工单热存 + 归档日志；归档按 `ticketId + closedAt` 去重，保留 12 个月 | `docs/operations.md:90-94` | 当天闭环要从热存 + 归档一起看，不能只看 `ria.json` |
 | outbox 至少一次投递，重试 10s/1m/5m/15m/1h，最多 6 次；delivered 留 24h；上限 500 | `lib/outbox.mjs:10-16`、`docs/operations.md:55-65` | 能查“今天的 note 是否送达”；超过 24h 的 delivered 不再可见，不能拿它做长期统计 |
-| 定时只用官方 `schedule_create/list/view/edit`，`target` 只能 `this_session`，title 带 `Ria:` 前缀，插件不实现 timer | `DESIGN.md:335-339` | 不新增 cron/nextAt；反省必须走 schedule |
+| 定时只用官方 `schedule_create/list/view/edit`，`target` 只能 `this_session`，title 带 `Ria:` 前缀，插件不实现 timer | `docs/DESIGN.md:336-340` | 不新增 cron/nextAt；反省必须走 schedule |
 | startup 延迟 1.5s，先恢复未收敛工单；没有单位/ pending 直接返回 | `docs/operations.md:96-108`、`lib/index.js:4630-4751`、`:5048` | 反省不能抢在恢复前；补跑要么排队，要么用一次性 schedule |
 | `ria_read` 默认 30、最多 100 条，返回 messages/lastTurn/queue，不 resume | `lib/index.js:4177` | P0 的低成本读法；不是全量日志读取器 |
-| `ria_memory` 只处理 memory；memory 上限 4KB，只放稳定偏好 | `lib/index.js:4333-4359`、`DESIGN.md:288-322` | 反省不能把进度、会话细节、密钥写进去 |
+| `ria_memory` 只处理 memory；memory 上限 4KB，只放稳定偏好 | `lib/index.js:4333-4359`、`docs/DESIGN.md:288-321` | 反省不能把进度、会话细节、密钥写进去 |
 | 现有 memory 实际只有 3 条（1215 bytes）：restart-report、restart-method、worker-routing | 2026-11-13 实测 | 工单列的其他几条在 manager prompt，不在 memory；不要重复写回 |
 
 ### 1.1 对工单里“数据源”的两处更正
 
-- `ria.json` 不是 schemaVersion 2，是 **v4**（`DESIGN.md:537`）。v2 只是迁移输入。
+- `ria.json` 不是 schemaVersion 2，是 **v4**（`docs/DESIGN.md:538`）。v2 只是迁移输入。
 - `docs-routing`、`worker-notify-steer`、“restart 需同意”、“有始有终”、“拒绝或取消要停下”目前**不在 memory.md**，而在 manager prompt（`lib/index.js:1744`、`:1747`、`:1753`、`:1766`）；`docs/memory-audit.md` 记录过这次迁移。反省如果把这几条当“缺失记忆”写回 memory，会造成重复和冲突。
 
 ---
@@ -205,7 +205,7 @@ ticket.executor
 ```
 
 - 用 sessionId 直接 glob `DSH_HOME/sessions/*/<sessionId>/session.v4.jsonl.zstd`，不要用 workspace 名拼路径。
-- `ria_status scope=sessions` 可以拿到 title、cwd、running、blank、updatedAt、lastUsedAt（`DESIGN.md:327`），用来判断“这个 worker 今天是否活跃”，但不作为读取授权依据。
+- `ria_status scope=sessions` 可以拿到 title、cwd、running、blank、updatedAt、lastUsedAt（`docs/DESIGN.md:328`），用来判断“这个 worker 今天是否活跃”，但不作为读取授权依据。
 - `executorArchived` / `executorMissing` 的工单不读日志，只在报告里标注；绝不 resume 冷会话。
 - 同一 executor 的多张工单只读一次会话，避免重复计费。
 
@@ -689,7 +689,7 @@ P0 的缺点：模型可能漏步骤、算错日期、超预算。所以 P0 只�
 
 - `read_session` 是唯一允许读原始日志的入口；内部强制 4MB/30KB/3 会话上限，坏帧跳过，绝不写。
 - `begin` 在服务端做候选排序，避免模型自己数；`finish` 校验报告 front matter 的 `date/status/runId` 与 begin 一致。
-- 工具不启动后台定时器；触发仍然只来自 schedule（`DESIGN.md:335-339`）。
+- 工具不启动后台定时器；触发仍然只来自 schedule（`docs/DESIGN.md:336-340`）。
 - 工具不自动派活、不自动写 memory、不重启。
 
 ### 8.3 intake 怎么处理

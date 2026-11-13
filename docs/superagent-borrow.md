@@ -1,10 +1,10 @@
 # superagent 借鉴评估：哪些设计值得 Ria 学
 
 > 评估对象：`/home/gkl/Desktop/vibe_proj/misc/dsh-superagent-prototype`（约 2.8 万行 TS；`docs/000–008`、`prompts/`、`src/core`、`src/app`、`src/executor`）
-> 对照基线：本仓库 `dsh-ria`（`lib/index.js`、`lib/tickets.mjs`、`lib/worker-idle.mjs` 等）与 `DESIGN.md`、`docs/task-model-design.md`
+> 对照基线：本仓库 `dsh-ria`（`lib/index.js`、`lib/tickets.mjs`、`lib/worker-idle.mjs` 等）与 `docs/DESIGN.md`、`docs/task-model-design.md`
 > 性质：**只读评估**。本文不改 `lib/`、`test/`，不跑会改文件的脚本，不重启、不推送。
 > 引用：`文件:行号`，行号以评估时的 HEAD 为准；跨仓库时以文件名区分。
-> 历史基线说明：本文是 Phase 22/23 实施前的评估，下面“Ria 现状”及旧代码位置仅指评估时基线，不是当前缺陷清单。outbox 与结构化 attention 已分别在 Phase 22/23 落地；跨 worker 的 idle 合并投递仍是建议。outbox 对已成功持久化条目提供至少一次（at-least-once）投递与有限重试，不保证派发接受到落盘前的窗口或入队写盘失败不会丢确认。当前状态以 README.md 与 DESIGN.md 第 20 节为准。
+> 历史基线说明：本文是 Phase 22/23 实施前的评估，下面“Ria 现状”及旧代码位置仅指评估时基线，不是当前缺陷清单。outbox 与结构化 attention 已分别在 Phase 22/23 落地；跨 worker 的 idle 合并投递仍是建议。outbox 对已成功持久化条目提供至少一次（at-least-once）投递与有限重试，不保证派发接受到落盘前的窗口或入队写盘失败不会丢确认。当前状态以 README.md 与 docs/DESIGN.md 第 20 节为准。
 
 ---
 
@@ -117,7 +117,7 @@ Ria 的 `waitingOn` 是**半派生**：`normalizeTicket` 有按状态的默认�
 **解决的痛点：** Ria 用 `waitingOn='user'` + `blockedReason` 自由文本来表达「需要人」。但这只能告诉人「有事」，告诉不了「要你做什么」：
 
 - 微信里只有一句自然语言，用户离开半天回来，得往上翻才能拼出他要决定什么；
-- Ria 下一个 turn 要判断「这张工单在等什么」，只能 `ria_read` 读 transcript（`DESIGN.md` 的 ria_read 语义），既慢又容易读错；
+- Ria 下一个 turn 要判断「这张工单在等什么」，只能 `ria_read` 读 transcript（`docs/DESIGN.md` 的 ria_read 语义），既慢又容易读错；
 - `lib/` 里没有任何 `question` 字段（全仓 grep 只有 prompt 文本里的 "question" 一词，`index.js:1205`、`:1206`、`:1552`），所以面板、微信、状态查询都没有结构可渲染。
 
 **对方怎么做：** `Attention { question, triggerId }`（`src/core/model.ts:275`）挂在工单上，卡片直接带 `attention.question`（`cards.ts:31`）；报告里没有结构化 question 就不算「在请求人」（`prompts/handoff.md`），回复目的也按它校验（`replies.md`）。
@@ -153,7 +153,7 @@ Ria 的 `waitingOn` 是**半派生**：`normalizeTicket` 有按状态的默认�
 | 5.1 | `ticketStage()` 纯派生（`stage.ts:9-21`） | Ria 的 `waitingOn` 已经半派生，面板也已把 `blocked + waitingOn=user` 排最前（`lib/index.js:405-411`）。剩余价值只在「统一的 queued/idle/review 视图」，而 Ria 没有 assignment 概念，派生不出这些中间态。等真的要做总览页再说。 |
 | 5.2 | prompt 版本化 + `base` 漂移提示（`prompts.ts:28-30`、`:174-189`） | 痛点真实（改 Ria 的 prompt 就是改 `index.js:1198-1237` 的字符串，无版本、无 diff、无回滚），但收益与成本不成比例：单人维护、测试已锁文案。可先做「prompt 变更记到 `docs/`」，把版本化的时机推到「多人协作或 A/B」出现时。 |
 | 5.3 | host 级「不许等」护栏（`sessions.ts:77-86`） | Ria 已有明文禁令（`index.js:1216`："do not sleep, do not poll…"）。护栏能兜住模型失误，但会误伤真实的长命令场景，且需要在 Ria 侧装饰宿主工具（可行性已由同宿主的 prototype 证明，但未在 Ria 验证权限）。痛点弱 → 观察一段日志再说。 |
-| 5.4 | 100 词硬上限 + 回复目的校验（`prompts/replies.md`、`main.ts:225`） | 微信侧已有「超过 800 字/含表格代码 → 转 .md 文件」的降级（`DESIGN.md`），长回复的实际伤害已被处理；再叠一层硬上限容易把有用的结论截断。 |
+| 5.4 | 100 词硬上限 + 回复目的校验（`prompts/replies.md`、`main.ts:225`） | 微信侧已有「超过 800 字/含表格代码 → 转 .md 文件」的降级（`docs/DESIGN.md`），长回复的实际伤害已被处理；再叠一层硬上限容易把有用的结论截断。 |
 | 5.5 | `Later`（延迟但不计失败，`effects.ts:5`、`:138-139`） | 它服务于「worker 槽位满」这类资源约束。Ria 没有槽位/排队概念，没有「稍后再试比失败更对」的场景，等 5.1 或并发控制落地后再引入。 |
 | 5.6 | 恢复提示里「重复外部动作前先核对」 | Ria 的恢复指令已经说了「inspect the workspace, changed files, and tests before resuming, and not repeat finished work」（`index.js:1221`），只差「外部动作（push/评论/PR）」这个词。属于一句话的打磨，不单列成项。 |
 
@@ -167,7 +167,7 @@ Ria 的 `waitingOn` 是**半派生**：`normalizeTicket` 有按状态的默认�
 
 **为什么不适合 Ria：**
 - Ria 的入口只有人（微信、Web、DSH 会话），**没有「判断要不要开工」这一步**——用户说要做就是要做，不确定就问。Eval 是为「外部噪声」存在的，Ria 没有噪声源。
-- 与 Ria 的硬约束直接冲突：intake 要求「每条真实用户消息恰好被定性一次」（`lib/index.js:430-448`；`DESIGN.md` 的四个强制点），而 fan-out 的语义是「一条消息进多张工单、每张工单的 worker 自己决定」，两者不能共存。
+- 与 Ria 的硬约束直接冲突：intake 要求「每条真实用户消息恰好被定性一次」（`lib/index.js:430-448`；`docs/DESIGN.md` 的四个强制点），而 fan-out 的语义是「一条消息进多张工单、每张工单的 worker 自己决定」，两者不能共存。
 - 概念税过高：Ria 现在 `ticket` 一个实体就能解释「用户消息 → 一张工单 → 一个 executor」。引入订阅后，「这条消息为什么进了这张工单」变成要查 Thread 绑定，调试成本翻倍。
 
 **结论：无对应痛点，且破坏模型。** 唯一值得带走的是它的**结论**：authorization（能不能干）与 context（消息给谁看）要分开——Ria 用 `ticket_executor_mismatch` 预检 + `grants` 的 worker 绑定已经在做同一件事。

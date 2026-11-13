@@ -242,7 +242,7 @@ The latest message may not belong to this session's current work. If it is clear
    - test/dispatch-guard.mjs 覆盖安装、agent/created 与 disposed、重复安装、开关文本、失败 warning、shutdown；
    - test/smoke.mjs 覆盖 worker 和 Ria 都安装 section、默认文本、POST /settings 关闭后 text 为空、再次打开恢复、非法值 400、GET /state 的 settings；
    - task 派发 content 只有一段原文；quick relay 也只有一段原文。
-7. README.md、DESIGN.md 第 6 节、设置页、Phase 13、验收和实现状态已更新。
+7. README.md、docs/DESIGN.md 第 6 节、设置页、Phase 13、验收和实现状态已更新。
 8. 设置页已在隔离 DSH 中真实点击验证；section 安装、开关和空文本同时由单元测试和 smoke 覆盖。
 9. npm test 九个 suite 全绿后提交；真实 ~/.dsh/profiles/web 仍不安装。
 

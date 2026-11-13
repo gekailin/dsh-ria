@@ -8,7 +8,7 @@
 - 最终验证：npm test 21 suite 全绿，exit 0；git diff --check 通过。无重启/同步/push；工作树最终仅保留未跟踪 .tmp-repair/。
 - 无公开工具删除、持久schema版本变更或其他破坏性API变更；故意收紧不完整模型目录的隐式路由，保留显式provider路径。错误v2 attempt不再被隐式标legacy，可能使损坏历史记录暴露校验错误。
 - 初次核对 HEAD：`6a21088`；最终代码 HEAD：`2d960aa`（最终报告提交在其后）；备份提交：`ecb068b`（保留 superagent 调研，不提交 .tmp-repair）。
-- 范围：lib/、test/（19 suite）、README.md、DESIGN.md、docs/task-model-design.md、docs/superagent-borrow.md；不触碰 docs/icon-concepts/ 与 .tmp-repair/ 内容。
+- 范围：lib/、test/（19 suite）、README.md、docs/DESIGN.md、docs/task-model-design.md、docs/superagent-borrow.md；不触碰 docs/icon-concepts/ 与 .tmp-repair/ 内容。
 - 方法：只读代码/文档审计、子 agent 独立审计、内存 fake 故障复现、回归测试、npm pack --dry-run 检查发布清单。
 - 恢复现场：没有未提交受跟踪改动，仅 .tmp-repair/ 未跟踪；npm test 19 suite 全绿。
 - 禁止重启 dsh web、同步安装副本、push；另一个 worker 的 workspace attach 修复保留且不纳入本人的提交。
@@ -17,7 +17,7 @@
 
 - README.md:224/243 的副作用不丢仅适用于已成功入 durable outbox 的条目，不覆盖派发接受到 note 落盘前崩溃/写失败。
 - lib/index.js:2630-2631 声称共享 noteId 防止微信重复，实际 wxweb 每次随机 ClientMsgId；本地卡片 noteId 去重不能代表远端 exactly-once。
-- 已修 `a2c2a58`：工具数10、ticket_executor_mismatch描述、split P1、quick relay 历史边界、图片已实现、历史方案版本提示；README/DESIGN 与源码不再承诺微信崩溃 exactly-once。
+- 已修 `a2c2a58`：工具数10、ticket_executor_mismatch描述、split P1、quick relay 历史边界、图片已实现、历史方案版本提示；README/docs/DESIGN.md 与源码不再承诺微信崩溃 exactly-once。
 - outbox delivered 幂等仅限现存记录：lib/outbox.mjs:129、193、198-205；24h 清理或超过500提前清理后相同 key 可重新入队。
 
 ## 暂不修 / 需要决定

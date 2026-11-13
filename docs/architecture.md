@@ -1,6 +1,6 @@
-# Ria 顶层设计
+# Ria 软件架构设计
 
-> 一页读懂当前系统：边界、对象、流程与可靠性。用户用法见 [README.md](../README.md)，历史设计与细节见 [DESIGN.md](../DESIGN.md)。
+> 一页读懂当前系统：边界、对象、流程与可靠性。用户用法见 [README.md](../README.md)，历史设计与细节见 [docs/DESIGN.md](DESIGN.md)。
 
 ## 目录
 
@@ -158,4 +158,4 @@ outbox 与 `ria.json` 不是同一个事务：派发已被接受、但 outbox �
 
 ## 9. 文档分工
 
-README 讲用户怎么用；DESIGN.md 记录历史设计、取舍与实现细节；本文是当前系统的顶层地图；`docs/` 下的专题文件展开单个主题。代码与测试是最终事实；行为变化时，先更新这张地图，再把原因补进 DESIGN.md。
+README 讲用户怎么用；[docs/DESIGN.md](DESIGN.md) 记录历史设计、取舍与实现细节；本文是当前系统的顶层地图；`docs/` 下的专题文件展开单个主题。代码与测试是最终事实；行为变化时，先更新这张地图，再把原因补进 [docs/DESIGN.md](DESIGN.md)。

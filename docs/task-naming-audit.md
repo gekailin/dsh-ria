@@ -24,7 +24,7 @@
 | `docs/task-model-design.md` | 328 | 历史设计资料 | 保留 | ticket 改名前的 T1–T28 设计；文件末尾已写明后续统一为 ticket，改词会破坏历史记录。 |
 | `docs/system-dispatch-guard.md` | 21 | 历史评审 | 保留 | 记录当时的 taskId 派发守卫方案，不是现行契约。 |
 | `docs/ria-session-review.md`、`docs/code-audit.md`、`docs/ticket-queue-design.md`、`docs/superagent-borrow.md` | 10 | 历史/关联资料 | 保留 | 引用旧设计文档名、旧 ticket id 或当时的审计范围。 |
-| `DESIGN.md` | 14 | 设计正文 + 历史 Phase | 保留 | 现行设计已统一 ticket；Phase 10/11/20 的 task 是历史阶段记录，:143 是旧归档名迁移说明。 |
+| `docs/DESIGN.md` | 14 | 设计正文 + 历史 Phase | 保留 | 现行设计已统一 ticket；Phase 10/11/20 的 task 是历史阶段记录，:143 是旧归档名迁移说明。 |
 | `test/startup.mjs`、`test/task-state.mjs`、`test/archive.mjs`、`test/attention.mjs`、`test/merge.mjs`、`test/intake.mjs`、`test/grants.mjs`、`test/approvals.mjs` | 84 | 测试夹具/迁移覆盖 | 保留 | 故意构造 v1/v2 `taskId`、`tasks[]`、旧 `tasks.*` 文件与 `task_*` ID，验证兼容读取、去重和迁移。 |
 | `test/smoke.mjs`、`test/wechat.mjs`、`test/attachments.mjs`、`test/channels.mjs`、`test/ticket-queue-restart.mjs` | 35 | 测试变量/协议 | 保留 | `eventsBeforeTaskDispatch` 等是局部变量名；QQ 测试数据使用平台 `task_id`；不是旧 ticket 字段。 |
 | `lib/index.js`、`lib/tickets.mjs`、`lib/grants.mjs` | 48 | 旧字段/旧名读取 + 通用英文 | 保留 | 双读 `ticketId || taskId`、`lastTicketId || lastTaskId`、旧 `tasks*` 归档名、旧 source.kind `ria-task-host`；删掉会读不了旧 ria.json/归档。其余是 “tracked task”“new task” 这类通用英文。 |
@@ -47,7 +47,7 @@
 - 新写入：`lib/index.js` 的 `ticketLogFile('tickets.log.jsonl')` 与月度 `tickets-YYYY-MM.jsonl`。
 - 旧名读取：`LEGACY_TICKET_LOG`、`LEGACY_TICKET_LOG_PREFIX`、`TICKET_LOG_PATTERN`，以及 startup 的一次性 rename。
 - 测试：`test/archive.mjs` 显式写旧 `tasks.log.jsonl` / `tasks-2023-12.jsonl` 验证迁移与去重。
-- 文档：`docs/operations.md:92` 与 `DESIGN.md:143` 都只把旧名描述为迁移来源。
+- 文档：`docs/operations.md:92` 与 `docs/DESIGN.md:143` 都只把旧名描述为迁移来源。
 
 ## 验证
 

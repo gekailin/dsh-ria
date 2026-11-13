@@ -13,6 +13,16 @@ function loadBoardLayout() {
   return { source, ...api }
 }
 
+function loadBoardTooltip() {
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const start = source.indexOf('/* board-tooltip:start */')
+  const end = source.indexOf('/* board-tooltip:end */')
+  assert.ok(start >= 0 && end > start, 'client board tooltip markers')
+  const block = source.slice(start, end)
+  const api = new Function(block + '\nreturn { boardChecklistView, BOARD_CHECKLIST_LIMIT };')()
+  return { source, ...api }
+}
+
 const fixture = await createFixture()
 
 function get(path) {
@@ -249,6 +259,49 @@ try {
   assert.match(layoutApi.source, /搜索目标或工单 ID/)
   assert.match(layoutApi.source, /\["工单", ticket\.ticketId\]/)
   assert.doesNotMatch(layoutApi.source, /加载更早的票|搜索目标或 ticket id/)
+
+  // The tooltip lists checklist steps instead of only the progress ratio.
+  const tooltipApi = loadBoardTooltip()
+  assert.equal(tooltipApi.BOARD_CHECKLIST_LIMIT, 6)
+  const many = tooltipApi.boardChecklistView({
+    checklist: [
+      { text: '读取现有实现', done: true },
+      { text: '补 schema 迁入', done: true },
+      { text: '写接口', done: true },
+      { text: '补测试', done: false },
+      { text: '更新文档', done: false },
+      { text: '截图复核', done: false },
+      { text: '清理临时目录', done: false },
+      { text: '提交', done: false },
+    ],
+  })
+  assert.equal(many.items.length, 6)
+  assert.deepEqual(many.items.map(item => item.done), [true, true, true, false, false, false])
+  assert.equal(many.items[0].text, '读取现有实现')
+  assert.equal(many.items[5].text, '截图复核')
+  assert.equal(many.more, 2)
+
+  const short = tooltipApi.boardChecklistView({
+    checklist: [{ text: '只做一步', done: true }, { text: '然后再走一步', done: false }],
+  })
+  assert.equal(short.items.length, 2)
+  assert.equal(short.more, 0)
+
+  const empty = tooltipApi.boardChecklistView({ checklist: [] })
+  assert.deepEqual(empty.items, [])
+  assert.equal(empty.more, 0)
+  assert.equal(tooltipApi.boardChecklistView({}).items.length, 0)
+
+  // Completed steps use a tick and normal text, pending ones an open circle
+  // and a lighter colour; long steps ellipsize instead of wrapping.
+  assert.match(tooltipApi.source, /item\.done \? "✓" : "○"/)
+  assert.match(tooltipApi.source, /color: item\.done \? "#334155" : "#94a3b8"/)
+  assert.match(tooltipApi.source, /textOverflow: "ellipsis"/)
+  assert.match(tooltipApi.source, /whiteSpace: "nowrap"/)
+  assert.match(tooltipApi.source, /…还有 " \+ checklist\.more \+ " 步/)
+  assert.match(tooltipApi.source, /checklist\.items\.length \? checklistRow\(\) : null/)
+  assert.match(tooltipApi.source, /maxHeight: "calc\(100vh - 40px\)"/)
+  assert.match(tooltipApi.source, /window\.innerHeight - rect\.height - margin/)
 
   console.log('board ok')
 } finally {

@@ -30,7 +30,7 @@ Ria 入口标题右侧有一个“连接”chip。点开后是一个通道面板
 | 方向 | 触发 | 处理 |
 |---|---|---|
 | 入站 | `item_list` 中 `type=2` 的 `image_item` | 从 `media.full_url` 或加密 CDN 地址下载，用 `aeskey`/`media.aes_key` 做 AES-128-ECB 解密，按文件头只收 PNG/JPEG/GIF/WebP，上限 20 MB（且不超过宿主附件限制） |
-| 出站 | assistant 文本里的 `![alt](path)` | 本机真实图片；先 `getuploadurl`，AES-128-ECB 加密后 POST 到 CDN，取响应头 `x-encrypted-param`，再发 `type=2` 的 `image_item` |
+| 出站 | assistant 文本里的 `![alt](path)` | 本机真实图片；先 `getuploadurl`（`media_type=1`），AES-128-ECB 加密后 POST 到 CDN，取响应头 `x-encrypted-param`，再发 `type=2` 的 `image_item`；`media.aes_key` 用 `base64(32 位 hex 字符串)`（44 字符），用裸密钥的 base64（24 字符）会显示成黑图并提示“已过期或被清理” |
 
 - 入站落盘：`DSH_HOME/state/ria/wechat-claw-inbound/YYYYMMDD-HHMMSS-<msgid>.<ext>`，目录 0700、文件 0600，重名追加 `-2`；保留最近 30 天、最多 500 个。图片作为 `{ type: 'image', mediaType, data }` 内容块和原文字一起投给 Ria，路径附在文字里，可直接作为 `ria_request` 的附件。
 - 入站失败：下载、解密、格式、大小或附件校验失败都不会丢消息；Ria 仍收到原文字（纯图用“（用户发来一张图片）”占位）加 `[图片接收失败：<原因>]`，日志记 `[claw inbound] image <id> rejected (<code>): <reason>`。

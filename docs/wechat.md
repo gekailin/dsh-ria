@@ -118,6 +118,7 @@ Ria 入口标题右侧有一个“连接”chip。点开后默认打开上次使
 - 落盘：`DSH_HOME/state/ria/wechat-claw-inbound/YYYYMMDD-HHMMSS-<msgid>.<ext>`，目录 0700、文件 0600，重名追加 `-2`；同样保留 30 天、最多 500 个。
 - 投递：原文字（纯图用占位）加每张图的“（图片已保存：<path>）”和 `{ type: 'image', mediaType, data }`；投递前走宿主 `validateImageBatch`/`validateImage`。
 - 失败：下载、解密、超限、格式或附件校验失败都保留文字并追加 `[图片接收失败：<原因>]`；日志是 `[claw inbound] image <id> rejected (<code>): <reason>`。
-- 出站：`![alt](path)` 指向本机图片时，先 `getuploadurl` 拿上传地址，AES-128-ECB 加密后 POST 到 CDN，成功以响应头 `x-encrypted-param` 为准，再发 `type=2` 的 `image_item`；一条消息一张图，caption 作为单独文本先发。
+- 出站：`![alt](path)` 指向本机图片时，先 `getuploadurl`（`media_type=1`）拿上传地址，AES-128-ECB 加密后 POST 到 CDN，成功以响应头 `x-encrypted-param` 为准，再发 `type=2` 的 `image_item`；一条消息一张图，caption 作为单独文本先发。
+- 出站密钥编码：`image_item.media.aes_key` 必须是 `base64(<32 位 hex 字符串>)`（44 字符），不是 `base64(<16 字节裸密钥>)`（24 字符）。后者能发出、返回 `ret=0`，但客户端解不开：缩略图是黑的，点开提示“图片已过期或被清理”。2026-11-14 真实账号实测，与 `Tencent/openclaw-weixin` 的 `src/messaging/send.ts` 一致；入站解码两种形式都接受。
 - 出站失败：单张图失败只回退一条可见文本“图片 <name> 发送失败，请在 Ria 会话中查看原图”，不吞整条回复；围栏代码块不发送；暂停时图片和文本一样不发。
 - 协议来源：腾讯公开的 `Tencent/openclaw-weixin` 客户端实现（`docs/protocol.md`、`src/api/types.ts`、`src/messaging/send.ts`、`src/cdn/upload.ts`、`src/media/media-download.ts`）。

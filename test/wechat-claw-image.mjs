@@ -260,7 +260,11 @@ try {
     assert.equal(item.type, 2)
     assert.equal(item.image_item.media.encrypt_query_param, 'encrypted-param-1')
     assert.equal(item.image_item.media.encrypt_type, 1)
-    assert.deepEqual(Buffer.from(item.image_item.media.aes_key, 'base64').toString('hex'), start.aeskey)
+    // The wire format is base64 of the hex string (44 chars); base64 of the raw
+    // bytes (24 chars) makes the client show a black, "expired" image.
+    assert.equal(item.image_item.media.aes_key, Buffer.from(start.aeskey, 'utf8').toString('base64'))
+    assert.equal(item.image_item.media.aes_key.length, 44)
+    assert.equal(Buffer.from(item.image_item.media.aes_key, 'base64').toString('utf8'), start.aeskey)
     assert.equal(item.image_item.mid_size, uploads[0].length)
     await claw.shutdown()
   }

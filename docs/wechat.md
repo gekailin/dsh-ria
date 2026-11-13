@@ -75,7 +75,7 @@ Ria 入口标题右侧有一个“连接”chip。点开后默认打开上次使
 
 ## 图片
 
-微信「文件传输助手」和微信 Claw 都支持图片双向收发，默认全部开启。两个通道分别配置：
+微信「文件传输助手」和微信 Claw 都支持图片双向收发。微信 Claw 固定开启；「文件传输助手」可以配置：
 
 ~~~yaml
 - id: ria
@@ -83,14 +83,11 @@ Ria 入口标题右侧有一个“连接”chip。点开后默认打开上次使
     wechatImage:
       inbound: true
       outbound: true
-    wechatClawImage:
-      inbound: true
-      outbound: true
 ~~~
 
-- `inbound: false` 时，该通道的图片消息只收到“目前只能接收文本消息”的提示，不下载、不落盘；文本消息不受影响。
-- `outbound: false` 时，assistant 文本里的 Markdown 图片按原样当文本发送；文本、暂停、去重和 outbox 路径不受影响。
-- 设置页的“微信 Claw 图片”一行也能改这两个 Claw 开关；`wechatImage` 只控制「文件传输助手」。
+- `wechatImage.inbound: false` 时，「文件传输助手」的图片消息只收到“目前只能接收文本消息”的提示，不下载、不落盘；文本消息不受影响。
+- `wechatImage.outbound: false` 时，assistant 文本里的 Markdown 图片按原样当文本发送；文本、暂停、去重和 outbox 路径不受影响。
+- 微信 Claw 的 `wechatClawImage.inbound` / `wechatClawImage.outbound` 只为兼容旧 profile 保留，始终按 true 处理；设置页没有 Claw 图片开关，PATCH 该字段也会被忽略。
 
 下面先写「文件传输助手」，微信 Claw 的差异在最后一小节。
 

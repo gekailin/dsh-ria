@@ -1,9 +1,9 @@
 import { EventEmitter } from 'node:events'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import assert from 'node:assert/strict'
-import { apply } from '../lib/index.js'
+import { RiaStore, apply } from '../lib/index.js'
 
 // Every relative host import must be shipped, not only available in the checkout.
 const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
@@ -11,6 +11,25 @@ const hostSource = readFileSync(new URL('../lib/index.js', import.meta.url), 'ut
 for (const match of hostSource.matchAll(/from '\.\/([^']+)'/g)) {
   const modulePath = 'lib/' + match[1]
   assert.ok(manifest.files.some(entry => modulePath === entry || modulePath.startsWith(entry + '/')), 'missing runtime module in package files: ' + modulePath)
+}
+
+// Older state files may contain wechatClawImage=false. Loading must normalize
+// it to true, and writes through setSettings must not turn it off again.
+{
+  const legacyDir = mkdtempSync(join(tmpdir(), 'dsh-ria-legacy-image-'))
+  try {
+    writeFileSync(join(legacyDir, 'ria.json'), JSON.stringify({
+      schemaVersion: 3,
+      version: 3,
+      settings: { wechatClawImage: { inbound: false, outbound: false } },
+    }))
+    const legacyStore = new RiaStore(legacyDir)
+    assert.deepEqual(legacyStore.settings().wechatClawImage, { inbound: true, outbound: true })
+    legacyStore.setSettings({ wechatClawImage: { inbound: false, outbound: false } })
+    assert.deepEqual(legacyStore.settings().wechatClawImage, { inbound: true, outbound: true })
+  } finally {
+    rmSync(legacyDir, { recursive: true, force: true })
+  }
 }
 
 const stateDir = mkdtempSync(join(tmpdir(), 'dsh-ria-test-'))
@@ -265,23 +284,29 @@ assert.deepEqual(autoPauseOff.body, { dispatchGuard: true, progressCards: false,
 const autoPauseOn = await request('POST', '/plugins/dsh-ria/api/settings', { wechatAutoPause: true })
 assert.equal(autoPauseOn.status, 200)
 assert.deepEqual(autoPauseOn.body, { dispatchGuard: true, progressCards: false, wechatAutoPause: true, wechatClawImage: { inbound: true, outbound: true } })
+// Claw image transfer is fixed on. Older clients may still try to turn it off;
+// the field is accepted and ignored so their save does not fail.
 const clawImageOff = await request('POST', '/plugins/dsh-ria/api/settings', { wechatClawImage: { inbound: false, outbound: false } })
 assert.equal(clawImageOff.status, 200)
-assert.deepEqual(clawImageOff.body, { dispatchGuard: true, progressCards: false, wechatAutoPause: true, wechatClawImage: { inbound: false, outbound: false } })
+assert.deepEqual(clawImageOff.body, { dispatchGuard: true, progressCards: false, wechatAutoPause: true, wechatClawImage: { inbound: true, outbound: true } })
 const clawImageInbound = await request('POST', '/plugins/dsh-ria/api/settings', { wechatClawImage: { inbound: true } })
 assert.equal(clawImageInbound.status, 200)
-assert.deepEqual(clawImageInbound.body, { dispatchGuard: true, progressCards: false, wechatAutoPause: true, wechatClawImage: { inbound: true, outbound: false } })
+assert.deepEqual(clawImageInbound.body, { dispatchGuard: true, progressCards: false, wechatAutoPause: true, wechatClawImage: { inbound: true, outbound: true } })
 const clawImageOn = await request('POST', '/plugins/dsh-ria/api/settings', { wechatClawImage: { inbound: true, outbound: true } })
 assert.equal(clawImageOn.status, 200)
 assert.deepEqual(clawImageOn.body, { dispatchGuard: true, progressCards: false, wechatAutoPause: true, wechatClawImage: { inbound: true, outbound: true } })
+const badClawImage = await request('POST', '/plugins/dsh-ria/api/settings', { wechatClawImage: { inbound: 'yes' } })
+assert.equal(badClawImage.status, 200)
+assert.deepEqual(badClawImage.body.wechatClawImage, { inbound: true, outbound: true })
+const emptyClawImage = await request('POST', '/plugins/dsh-ria/api/settings', { wechatClawImage: {} })
+assert.equal(emptyClawImage.status, 200)
+assert.deepEqual(emptyClawImage.body.wechatClawImage, { inbound: true, outbound: true })
+const stillOn = await request('GET', '/plugins/dsh-ria/api/settings')
+assert.deepEqual(stillOn.body.wechatClawImage, { inbound: true, outbound: true })
 const badGuard = await request('POST', '/plugins/dsh-ria/api/settings', { dispatchGuard: 'yes' })
 assert.equal(badGuard.status, 400)
 const badAutoPause = await request('POST', '/plugins/dsh-ria/api/settings', { wechatAutoPause: 'yes' })
 assert.equal(badAutoPause.status, 400)
-const badClawImage = await request('POST', '/plugins/dsh-ria/api/settings', { wechatClawImage: { inbound: 'yes' } })
-assert.equal(badClawImage.status, 400)
-const emptyClawImage = await request('POST', '/plugins/dsh-ria/api/settings', { wechatClawImage: {} })
-assert.equal(emptyClawImage.status, 400)
 const emptySettings = await request('POST', '/plugins/dsh-ria/api/settings', {})
 assert.equal(emptySettings.status, 400)
 const reopened = await request('POST', '/plugins/dsh-ria/api/ensure')
@@ -626,14 +651,16 @@ assert.equal(activeGrants.grants[0].grantId, grant.grant.grantId)
 assertLossless(activeGrants)
 const paused = await request('POST', '/plugins/dsh-ria/api/wechat/pause', { paused: true, reason: 'smoke' })
 assert.equal(paused.status, 200)
-assert.equal(paused.body.paused, true)
+// The legacy channel has no session in this fixture, so the persisted pause
+// flag is stored but status reports false until it is connected again.
+assert.equal(paused.body.paused, false)
 assert.equal(paused.body.pausedBy, 'manual')
 assert.equal(paused.body.pauseReason, 'smoke')
 assert.equal(typeof paused.body.pausedAt, 'string')
 assert.ok(!Number.isNaN(Date.parse(paused.body.pausedAt)))
 assert.equal(paused.body.resumedAt, null)
 const pausedStatus = await request('GET', '/plugins/dsh-ria/api/wechat/status')
-assert.equal(pausedStatus.body.paused, true)
+assert.equal(pausedStatus.body.paused, false)
 assert.equal(pausedStatus.body.pausedBy, 'manual')
 assert.equal(pausedStatus.body.pausedAt, paused.body.pausedAt)
 assert.equal(pausedStatus.body.pauseReason, 'smoke')
@@ -656,6 +683,17 @@ assert.deepEqual(Object.keys(channelStatus.body.channels).sort(), ['qq-bot', 'we
 assert.equal(channelStatus.body.channels.wechat.paused, false)
 assert.equal(channelStatus.body.channels['wechat-claw'].loggedIn, false)
 assert.equal(channelStatus.body.channels['qq-bot'].loggedIn, false)
+// A persisted pause flag must not read as "push paused" while the channel is
+// disconnected; paused only applies to a connected channel.
+for (const channelId of ['wechat-claw', 'qq-bot', 'wechat']) {
+  const pausedOffline = await request('POST', '/plugins/dsh-ria/api/channels/' + channelId + '/pause', { paused: true, reason: 'offline-smoke' })
+  assert.equal(pausedOffline.status, 200)
+  assert.equal(pausedOffline.body.paused, false, channelId + ' should not report paused while offline')
+  const offlineStatus = await request('GET', '/plugins/dsh-ria/api/channels/' + channelId + '/status')
+  assert.equal(offlineStatus.body.paused, false, channelId + ' status should not report paused while offline')
+  const resumedOffline = await request('POST', '/plugins/dsh-ria/api/channels/' + channelId + '/pause', { paused: false })
+  assert.equal(resumedOffline.status, 200)
+}
 const clawStatus = await request('GET', '/plugins/dsh-ria/api/channels/wechat-claw/status')
 assert.equal(clawStatus.status, 200)
 assert.equal(clawStatus.body.id, 'wechat-claw')

@@ -25,15 +25,7 @@ Ria 入口标题右侧有一个“连接”chip。点开后是一个通道面板
 
 ### 图片
 
-图片默认双向开启，可在设置页或 profile 里分别关闭：
-
-~~~yaml
-- id: ria
-  config:
-    wechatClawImage:
-      inbound: true
-      outbound: true
-~~~
+图片双向固定开启，设置页没有开关。旧 profile 里的 `wechatClawImage.inbound` / `wechatClawImage.outbound` 仍然可以读取，但不再生效；启动时统一归一为 true，旧的 `PATCH /plugins/dsh-ria/api/settings` 也会被忽略。
 
 | 方向 | 触发 | 处理 |
 |---|---|---|
@@ -43,7 +35,7 @@ Ria 入口标题右侧有一个“连接”chip。点开后是一个通道面板
 - 入站落盘：`DSH_HOME/state/ria/wechat-claw-inbound/YYYYMMDD-HHMMSS-<msgid>.<ext>`，目录 0700、文件 0600，重名追加 `-2`；保留最近 30 天、最多 500 个。图片作为 `{ type: 'image', mediaType, data }` 内容块和原文字一起投给 Ria，路径附在文字里，可直接作为 `ria_request` 的附件。
 - 入站失败：下载、解密、格式、大小或附件校验失败都不会丢消息；Ria 仍收到原文字（纯图用“（用户发来一张图片）”占位）加 `[图片接收失败：<原因>]`，日志记 `[claw inbound] image <id> rejected (<code>): <reason>`。
 - 出站失败：单张图片发送失败只回退成一条可见文本“图片 <name> 发送失败，请在 Ria 会话中查看原图”，不影响已发出的文本和其他图片；围栏代码块里的示例不发送；暂停推送时图片和文本一样不发送。
-- `inbound: false` 时图片消息仍回“目前只能接收文本消息。”，不下载、不落盘；`outbound: false` 时 Markdown 图片按原样当文本发送。
+- 旧配置里的 `inbound: false` / `outbound: false` 不再生效：服务启动时归一到 true，接口也不接受关闭。图片消息始终下载、落盘并转给 Ria，回复里的本地图片始终上传发送。
 - 协议来源：腾讯公开的 `Tencent/openclaw-weixin` 客户端实现（`docs/protocol.md`、`src/api/types.ts`、`src/messaging/send.ts`、`src/cdn/upload.ts`、`src/media/media-download.ts`）；CDN 下载不带 bot token，上传成功以响应头 `x-encrypted-param` 为准。
 
 ### 正在输入
@@ -181,9 +173,25 @@ DSH_HOME/state/ria/
 
 正在发送的那一条会发完；还没开始发送的排队消息丢弃。暂停和恢复会写 info/warn 日志，日志前缀分别是 `dsh-ria: wechat:`、`dsh-ria: wechat-claw:`、`dsh-ria: qq-bot:`。
 
+## 状态语义
+
+状态颜色和文案由登录态与登录阶段决定，三个通道使用同一套规则：
+
+| 条件 | 颜色 | 文案 |
+|---|---|---|
+| 未登录，无登录流程（idle 或其它阶段） | 灰 `#9ca3af` | 未连接 |
+| 未登录，`waiting`（二维码等待扫描） | 灰 `#9ca3af` | 未扫码 |
+| 未登录，`scanned` | 琥珀 `#f59e0b` | 已扫码，待确认 |
+| 未登录，`connecting` / `starting` | 琥珀 `#f59e0b` | 连接中 |
+| 已登录，未暂停 | 绿 `#22c55e` | 已连接 |
+| 已登录，已暂停推送 | 琥珀 `#f59e0b` | 推送已暂停 |
+| 登录阶段为 `error`（无论是否已登录） | 红 `#ef4444` | 连接失败 |
+
+“推送已暂停”只表示“已连接但暂停推送”。通道断开后即使本机还保存着上次的暂停标记，`/channels/status` 也返回 `paused: false`，面板显示“未连接”或“未扫码”，不会显示“推送已暂停”。重新登录后，原来的暂停状态仍按各通道的 `state.json` 恢复。
+
 ## 面板行为
 
-- chip 上有三个小圆点，分别对应三个通道：绿色已连接、橙色暂停或登录中、红色错误、灰色未连接。标签显示“连接”或“连接 N”。
+- chip 上有三个小圆点，分别对应三个通道：绿色已连接、橙色登录中或已连接但暂停推送、红色错误、灰色未连接（含等待扫码）。标签显示“连接”或“连接 N”。
 - 打开面板停在最近使用的 tab（没有记录时是微信）。当前 tab 没有登录且不在登录中时，会自动请求一次二维码；切到其他 tab 也会自动请求一次。
 - 二维码 210×210，显示在面板里；“刷新二维码”会重新创建会话或绑定任务。
 - 已登录时显示账号、推送状态、暂停/恢复和退出登录。错误状态显示在二维码下方或状态卡下方。

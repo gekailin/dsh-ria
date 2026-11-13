@@ -17,7 +17,7 @@ function fakeCtx() {
 }
 
 function makeService(ctx, dir, logs, overrides = {}) {
-  return new WechatService({
+  const service = new WechatService({
     ctx,
     stateDir: dir,
     ensureRia: async () => 'ria-1',
@@ -25,6 +25,10 @@ function makeService(ctx, dir, logs, overrides = {}) {
     log: (level, message) => logs.push({ level, message }),
     ...overrides,
   })
+  // Paused status only applies to a connected channel, so these pause tests
+  // model a logged-in service.
+  service.session = { client: {} }
+  return service
 }
 
 function dispatch(service, rpcId, kind = 'user') {

@@ -48,7 +48,7 @@ Ria 是 DSH Web 的一个常驻管理者插件，全局只有一个阿汐。她�
 - 下载或校验失败不会丢消息：Ria 仍会收到原文字，并多一行 `[图片接收失败：<原因>]`。
 - 反向也成立：Ria 回复里的 Markdown 图片若指向本机文件，会作为微信图片发给你；单张发送失败会回一条可见文本，不会吞掉整条回复。
 
-配置项是 `wechatImage.inbound` / `wechatImage.outbound`（「文件传输助手」）和 `wechatClawImage.inbound` / `wechatClawImage.outbound`（微信 Claw），都可以在 profile 的 `cordis.yml` 或设置页里单独关闭。协议、落盘和清理细节见 [docs/wechat.md](docs/wechat.md#图片)。
+配置项是 `wechatImage.inbound` / `wechatImage.outbound`（「文件传输助手」），可以在 profile 的 `cordis.yml` 或设置页里单独关闭。微信 Claw 的 `wechatClawImage.inbound` / `wechatClawImage.outbound` 只为兼容旧配置保留，图片始终双向开启，设置页不提供开关。协议、落盘和清理细节见 [docs/wechat.md](docs/wechat.md#图片)。
 
 ## 设置
 

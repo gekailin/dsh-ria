@@ -78,6 +78,8 @@ async function waitForStatus(service, predicate, label) {
   assert.doesNotMatch(source, /React\.useState\(DEFAULT_CHANNEL\)/, 'the default must not ignore the remembered channel')
   assert.doesNotMatch(source, /React\.useState\("wechat"\)/, 'default must not be an inline tab literal')
   assert.match(source, /rememberChannel\(channel\.id\)/, 'switching tabs should remember the channel')
+  assert.doesNotMatch(source, /微信 Claw 图片/, 'Claw image transfer has no settings UI')
+  assert.doesNotMatch(source, /clawImageIn|clawImageOut/, 'Claw image toggles should be gone')
 
   // The dialog is portalled under the Ria entry row in the React tree. Without
   // local event isolation, a click inside it also activates the host row and
@@ -85,6 +87,46 @@ async function waitForStatus(service, predicate, label) {
   assert.match(source, /if \(event\.target === event\.currentTarget\) onClose\(\)/)
   assert.match(source, /onMouseDown: function \(event\) \{ event\.stopPropagation\(\); \}/)
   assert.match(source, /onPointerDown: function \(event\) \{ event\.stopPropagation\(\); \}/)
+}
+
+// Channel status mapping: paused only applies to a connected channel, and the
+// same phase-to-color/text rules hold for all three channels.
+{
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const start = source.indexOf('/* status-view:start */')
+  const end = source.indexOf('/* status-view:end */')
+  assert.ok(start >= 0 && end > start, 'client should keep the status-view helpers in a marker block')
+  const block = source.slice(start, end)
+  const helpers = new Function(block + '\nreturn { channelColor, channelSummary };')()
+  const color = channel => helpers.channelColor(channel)
+  const summary = channel => helpers.channelSummary(channel, 'fallback')
+
+  assert.equal(color(null), '#9ca3af')
+  assert.equal(summary(null), 'fallback')
+
+  const cases = [
+    ['idle', { loggedIn: false, login: { phase: 'idle' } }, '#9ca3af', '未连接'],
+    ['waiting', { loggedIn: false, login: { phase: 'waiting' } }, '#9ca3af', '未扫码'],
+    ['scanned', { loggedIn: false, login: { phase: 'scanned' } }, '#f59e0b', '已扫码，待确认'],
+    ['connecting', { loggedIn: false, login: { phase: 'connecting' } }, '#f59e0b', '连接中'],
+    ['starting', { loggedIn: false, login: { phase: 'starting' } }, '#f59e0b', '连接中'],
+    ['error', { loggedIn: false, login: { phase: 'error' } }, '#ef4444', '连接失败'],
+    ['connected', { loggedIn: true }, '#22c55e', '已连接'],
+    ['connected+paused', { loggedIn: true, paused: true }, '#f59e0b', '推送已暂停'],
+    ['offline+paused', { loggedIn: false, paused: true, login: { phase: 'idle' } }, '#9ca3af', '未连接'],
+    ['offline+error+paused', { loggedIn: false, paused: true, login: { phase: 'error' } }, '#ef4444', '连接失败'],
+  ]
+  for (const [label, channel, expectedColor, expectedSummary] of cases) {
+    assert.equal(color(channel), expectedColor, label + ' color')
+    assert.equal(summary(channel), expectedSummary, label + ' summary')
+  }
+
+  for (const id of ['wechat-claw', 'qq-bot', 'wechat']) {
+    assert.equal(color({ id, loggedIn: false, login: { phase: 'waiting' } }), '#9ca3af', id + ' waiting color')
+    assert.equal(summary({ id, loggedIn: false, login: { phase: 'waiting' } }), '未扫码', id + ' waiting summary')
+    assert.equal(color({ id, loggedIn: true, paused: true }), '#f59e0b', id + ' paused color')
+    assert.equal(summary({ id, loggedIn: true, paused: true }), '推送已暂停', id + ' paused summary')
+  }
 }
 
 // Pure helpers: account-id normalization, QR rendering, request-id prefixes and
@@ -258,6 +300,7 @@ async function waitForStatus(service, predicate, label) {
     assert.equal(creds.appSecret, 'qq-secret')
 
     service.setPaused(true, { by: 'manual', reason: 'test' })
+    assert.equal(service.statusView().paused, true, 'a connected channel can be paused')
     const restored = new QqBotService({
       ctx: fakeContext(),
       stateDir: dir,
@@ -265,7 +308,7 @@ async function waitForStatus(service, predicate, label) {
       getRiaId: () => 'ria-session',
       log: () => {},
     })
-    assert.equal(restored.statusView().paused, true)
+    assert.equal(restored.statusView().paused, false, 'a disconnected channel is not paused')
     assert.equal(restored.statusView().pauseReason, 'test')
     await service.shutdown()
     await restored.shutdown()

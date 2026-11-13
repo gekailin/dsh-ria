@@ -194,7 +194,7 @@ function openTicket(store, overrides = {}) {
     settings: { dispatchGuard: false },
   }, at)
   assert.equal(result.migrated, true)
-  assert.equal(result.data.schemaVersion, 3)
+  assert.equal(result.data.schemaVersion, 4)
   assert.equal(result.data.tickets.length, 2)
   assert.equal(result.data.tickets[0].ticketId, 'task_old')
   assert.equal(result.data.tickets[0].status, 'working')

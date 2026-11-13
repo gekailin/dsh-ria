@@ -196,8 +196,8 @@ ticket 是 Ria 的管理单位；一个 ticket 只对应一个 executor。完整
 
 “近期用过”只按 Host 成功接受过的 ria_request 计算；只建/改 ticket 不算。用户手工会话不计入。
 
-- 窗口 7 天，最多返回 10 个，按 lastUsedAt 倒序；ria.json 保留 30 天后清理。
-- scope=recent 返回 sessionId、title、cwd、lastUsedAt、lastTicketGoal、lastTicketStatus，以及 windowDays=7、limit=10、pendingDeliveries。
+- 窗口 7 天，最多返回 20 个，按 lastUsedAt 倒序；ria.json 保留 30 天后清理。
+- scope=recent 返回 sessionId、title、cwd、lastUsedAt、lastTicketGoal、lastTicketStatus，以及 windowDays=7、limit=20、pendingDeliveries。
 - scope=sessions 也带 title、lastUsedAt；title 来自 DSH 的 title projection，缺失时省略该字段。
 - 用户没指定 worker 时，Ria 只能从 scope=recent 里选；不得遍历全部会话，不得凭空挑一个没用过的。
 - scope=recent 为空、没有明显合适或 Ria 判断不清时，先问用户用哪个会话；不回退到任意或新会话。
@@ -326,7 +326,7 @@ ria_status 按需读取，不后台轮询；主动推送只有 worker idle 通�
 
 - scope=tickets：ticket 列表。
 - scope=sessions：可用的顶层 Session，排除 Ria 自己与 origin=subagent 的会话；`parentSessionId` 只记录 fork/seed 血缘（这类会话 delegationDepth=0，仍是顶层），不作为子会话判据。字段含 sessionId、title、cwd、running、blank、updatedAt、lastUsedAt，有血缘时含 parentSessionId。
-- scope=recent：近 7 天成功使用过的顶层 worker，最多 10 个，按 lastUsedAt 倒序；字段见第 5 节“近期 worker”。
+- scope=recent：近 7 天成功使用过的顶层 worker，最多 20 个，按 lastUsedAt 倒序；字段见第 5 节“近期 worker”。
 - 可选 sessionId 查看一个会话的 running/queue/pendingInput/blank。
 
 ria_read 只读最近消息，默认 30 条，最多 100 条，不 resume 冷会话。返回值同时带 queue（与 ria_queue list 相同的 pending 视图；冷会话为 null）。
@@ -677,7 +677,7 @@ Phase 28：会话改名工具。新增 `ria_title({ sessionId, title })`，走�
 30. 带 ticketId 派发必须传 note（最多 500 字）；缺失、空白或超长直接报错，不投递、不 concludeTurn；成功后 Host 把 note 与微信镜像入 outbox，有活跃 turn 时写入 ria.json，由 client 在 conversation.chat.turnTail 渲染为当前轮次末尾的可见卡片，再 concludeTurn；已持久化条目的后续投递写入失败退避重试并保留原因；入队写盘失败不在此保证内。ria_request 的 ticketId 与 note 均必填，没有 quick relay 例外。
 31. 设置页默认 dispatchGuard=true、wechatAutoPause=true；关闭 dispatchGuard 后所有已安装 section 的 text 返回空字符串；POST /settings 接受 dispatchGuard 和/或 wechatAutoPause（至少一个 boolean，非法值 400）并持久化到 ria.json；GET /state 与 ria_status 可见 settings。
 32. manager prompt 明确：用户未指定 worker 时只从 scope=recent 选择，不遍历全部会话，不凭空挑没用过的；没有合适候选时先问用户。
-33. “近期用过”定义为成功 ria_request 过的顶层 worker，窗口 7 天、最多 10 个、保留 30 天；task 创建/更新不算，用户手工会话不算。
+33. “近期用过”定义为成功 ria_request 过的顶层 worker，窗口 7 天、最多 20 个、保留 30 天；task 创建/更新不算，用户手工会话不算。
 34. scope=recent 返回 sessionId、title、cwd、lastUsedAt、lastTicketGoal、lastTicketStatus；scope=sessions 也带 title、lastUsedAt；缺失字段省略且输出 lossless。
 35. 投递失败不更新 recentWorkers；只有成功派发才更新 lastUsedAt 和 lastTicketId。
 36. 微信弹层显示推送状态（正常“推送中”，暂停“已暂停推送”+ 来源 + 时间），按钮可手动暂停/恢复并立即刷新；自动暂停时只出现轻提示，不弹窗；设置页只提供“自动暂停”策略开关，不重复提供暂停/恢复按钮。

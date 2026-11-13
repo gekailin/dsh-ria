@@ -159,7 +159,7 @@ ticket 是 Ria 的管理单位；一个 ticket 只对应一个 executor。完整
 
 | 工具 | 作用 | 参数 |
 |---|---|---|
-| ria_ticket | 创建/更新/关闭/合并 ticket；dependsOn 表达先后，cascade=downstream 级联取消 | ticketId?, goal, acceptance?, executor, status?, dependsOn?, cascade?, action=merge + sourceTicketId/targetTicketId/note |
+| ria_ticket | 创建/更新/关闭/合并 ticket；dependsOn 表达先后，checklist 记录步骤，cascade=downstream 级联取消 | ticketId?, goal, acceptance?, executor, status?, dependsOn?, checklist?, replaceAll?, drop?, check?{index,done}, cascade?, action=merge + sourceTicketId/targetTicketId/note |
 | ria_status | 查 ticket、历史归档、单条 ticket、可用顶层会话，或列近期 worker；sessions/recent 项带当前 provider/model/reasoningEffort | scope: tickets/sessions/recent/history, sessionId?, ticketId?, limit? |
 | ria_spawn | 在已存在的绝对目录中新建顶层 worker 会话；可先解析并设置模型，再创建会话；title 失败只返回 titleError | cwd, agentPreset?, title?, model?, provider?, reasoningEffort? |
 | ria_model | 改一个已存在会话（worker 或 Ria 自己）的模型；只改选择，不发消息、不建 ticket | sessionId, model, provider?, reasoningEffort? |
@@ -534,9 +534,9 @@ stateDir/
 
 没有 lessons、lock、briefs。`outbox.json` 是唯一独立于 ria.json 的副作用队列，不与微信内部的 Outbound 队列混用。
 
-ria.json schema v3 只存 schemaVersion、riaSessionId、riaPreset、tickets、ticketFeedback、deliveries、grants、settings、recentWorkers、dispatchNotes（v2 可直接读，首次加载写 `ria.json.v2.bak` 后归一化为 v3）：
+ria.json schema v4 只存 schemaVersion、riaSessionId、riaPreset、tickets、ticketFeedback、deliveries、grants、settings、recentWorkers、dispatchNotes（v3 可直接读，首次加载写 `ria.json.v3.bak` 后归一化为 v4；v2/v1 分别写 `.v2.bak`/`.v1.bak`）：
 
-- tickets：8 态 ticket，字段见第 4 节；依赖票带 dependsOn、readyAt、readyNotifiedAt、dependencyAlerts。非终态全留，终态按 24h/50 条窗口保留。
+- tickets：8 态 ticket，字段见第 4 节；依赖票带 dependsOn、readyAt、readyNotifiedAt、dependencyAlerts；checklist 为有序 {text, done}，最多 50 条、每条 ≤200 字，缺省为空。非终态全留，终态按 24h/50 条窗口保留。
 - ticketFeedback：kind、code、ticketId、body（≤500）、card、mirror、workerTurn、at；每 ticket 保留最近若干条，5 秒内同 (ticketId,kind,code,workerTurn) 去重；与状态同一次 save。
 - recentWorkers：sessionId -> lastUsedAt、lastTicketId?；只在 request 成功投递后写入，30 天后清理。
 - settings：dispatchGuard（boolean，默认 true）、progressCards（boolean，默认 false）、wechatAutoPause（boolean，默认 true）。
@@ -634,6 +634,8 @@ Phase 24：worker 模型选择。ria_spawn 支持 model/provider/reasoningEffort
 Phase 25：排队消息控制。ria_queue 支持 list/remove，读取 sessionController.state 的 pending 队列（queued/steering/context），只删 pending、不 cancel turn、不改 ticket、不影响 recentWorkers；remove 支持 itemId 或 rpcId（ria_request 的 requestId）；ria_read 返回值增加 queue。
 
 Phase 27：ticket 排队与依赖 P0。schema v3（dependsOn/readyAt/readyNotifiedAt/dependencyAlerts，兼容读 v2）；`open + waitingOn=dependency` 作为等待态，依赖全部 done 后转 ready 并写 queueToken；outbox 新增 queue_wake/queue_blocked，pump 合并同批就绪票、按 token 幂等、turn/end 与 startup 补泵；startup reconcileDependencies 并把排队摘要并进恢复 prompt（ready 票不重复列入恢复单位）；ria_status 每票带 queueState/queueText/blockedBy，scope=tickets 带 queue 汇总；级联取消与 merge 依赖边转移；`ria_request` 对依赖票校验 queueToken，对忙碌 worker 的 queue 投递返回 worker_busy，steer 仅允许信息同步。微信入站图片见 Phase 26。InboundBridge 识别 MsgType 3 后由 WebWxClient.downloadImage 复用登录态取原图（webwxgetmsgimg，失败回落文件域名与 webwxgetmedia）；receiveInboundImage 校验大小/文件头并落盘 stateDir/wechat-inbound（30 天/500 个清理）；以原文字或占位加 image 内容块投给 Ria，成功后路径可直接用于 ria_request attachments；失败仍投文字并附 `[图片接收失败：原因]`；inbound 默认改为 true。
+
+Phase 29：ticket checklist。schema v3→v4，旧文件原样读入、无 checklist 视为空，首次写前备份 `ria.json.v3.bak`；`ria_ticket` 支持 checklist 追加/保留勾选、`replaceAll` 整表重建、`drop` 删旧索引与 `check:{index,done}` 单项切换（错误码 checklist_invalid / checklist_index，终态拒绝 check）。`ticketSummary`、`ria_status` 与看板卡片带 progress（已完成/总数），归档摘要记录 total/done 与最多 5 条未勾项；manager prompt 要求多步任务先建清单、完成一步勾一项、`[Worker idle]` 先读清单再决定续派。
 
 Phase 28：会话改名工具。新增 `ria_title({ sessionId, title })`，走宿主 `sessionController.rename`，只改会话名，不发消息、不建 ticket、不唤醒 worker；预检复用 `sessionProblem`（存在、顶层、未归档、cwd 可用），允许改 Ria 自己，subagent 一律拒绝；空标题或宿主 `session/title-invalid` 映射为 `title_invalid` 并保留宿主原始 message；成功返回 accepted title 与已知 previous。`ria_spawn` 的 title 设置复用同一 helper，返回值语义不变（失败仍只写 `titleError`）。
 
@@ -755,9 +757,9 @@ Phase 28：会话改名工具。新增 `ria_title({ sessionId, title })`，走�
 
 截至当前版本：
 
-当前状态：单例与侧边栏入口、PTC 创建、ticket 任务模型（intake、8 态状态机、resolve 定性、merge、归档、重启恢复、dependsOn 排队与依赖唤醒）、转述与 note 卡片、worker 完成自动唤醒、审批可见性（自动 blocked+attention、卡片/微信提醒、TTL 与重启对账）与临时权限、worker 模型选择、附件投递、排队消息撤回、结构化 attention、副作用 outbox、worker 会话改名，以及进程内微信（文本、.md、本机图片出站、图片入站，推送可暂停）均已实现。已验证环境为 DSH 0.2.2-rc.1、Node 26，使用真实 Web profile 的隔离副本。逐阶段的落地记录见第 15 节。
+当前状态：单例与侧边栏入口、PTC 创建、ticket 任务模型（intake、8 态状态机、resolve 定性、merge、归档、重启恢复、dependsOn 排队与依赖唤醒）、转述与 note 卡片、worker 完成自动唤醒、审批可见性（自动 blocked+attention、卡片/微信提醒、TTL 与重启对账）与临时权限、worker 模型选择、附件投递、排队消息撤回、结构化 attention、ticket checklist、副作用 outbox、worker 会话改名，以及进程内微信（文本、.md、本机图片出站、图片入站，推送可暂停）均已实现。已验证环境为 DSH 0.2.2-rc.1、Node 26，使用真实 Web profile 的隔离副本。逐阶段的落地记录见第 15 节。
 
-- Phase 0–28 已实现；Phase 0–4、Phase 6、Phase 13 和 Phase 16 的 turn-tail 卡片通过隔离环境的真实 DSH 验证，其余阶段由单元测试和 smoke 覆盖。Phase 16 的截图使用手工写入 ria.json 的 note 验证渲染；真实 toolRequest 写入路径由 smoke 覆盖。
+- Phase 0–29 已实现；Phase 0–4、Phase 6、Phase 13 和 Phase 16 的 turn-tail 卡片通过隔离环境的真实 DSH 验证，其余阶段由单元测试和 smoke 覆盖。Phase 16 的截图使用手工写入 ria.json 的 note 验证渲染；真实 toolRequest 写入路径由 smoke 覆盖。
 - Phase 17 的微信 note 镜像由 test/wechat.mjs 和 smoke 覆盖：ticket 格式、未登录/暂停/发送异常不影响派发和 concludeTurn，失败条目进入副作用 outbox 并按退避补投；没有用真实微信账号验证实际收件。
 - 副作用 outbox 由 test/outbox.mjs 覆盖：幂等入队、重载、退避与 6 次上限、delivered 清理、坏文件恢复、无活跃 turn 排队、turn 开始后补投、失败原因可见、startup 补投；smoke 覆盖卡片写入失败仍记录 note、微信异常后按 due 重试并 delivered。
 - 结构化 attention 由 test/attention.mjs 覆盖：设置/读取/清空、旧 blockedReason 票、ria_status 输出；ria_approval 仍只读 worker 审批，不处理 attention。
@@ -774,7 +776,7 @@ Phase 28：会话改名工具。新增 `ria_title({ sessionId, title })`，走�
 
 文件：
 
-- lib/tickets.mjs：ticket 归一化、状态机与 22 条不变量、attention、依赖校验/评估/就绪纯函数、v1→v3 迁移。
+- lib/tickets.mjs：ticket 归一化、状态机与 22 条不变量、attention、checklist 归一化/严格解析/合并与进度、依赖校验/评估/就绪纯函数、v1→v4 迁移。
 - lib/index.js：Host、RiaStore（含 recentWorkers、dispatchNotes）、12 个工具（含 ria_queue、ria_title）、manager prompt、启动恢复、HTTP API（含 settings、dispatch-notes、只读 board）、模型解析与 selectModel 接线、approval observer 接线、grant 接线、微信服务接线、DispatchGuard 接线。
 - lib/dispatch-guard.mjs：agent 作用域静态 system prompt section 的安装、agent/created 与 disposed 监听、开关求值、dispose。
 - lib/approvals.mjs：approval/request 只读观察器、pending 列表、TTL/abort/shutdown 清理。
@@ -793,7 +795,7 @@ Phase 28：会话改名工具。新增 `ria_title({ sessionId, title })`，走�
 - test/title.mjs：ria_title 成功改名与 previous、session_missing、subagent 的 not_top_level、归档、宿主 title_invalid 原 message 透传，以及改 Ria 自己。
 - test/queue.mjs：ria_queue 的三种 placement 列表、ria_read.queue、itemId/rpcId 撤回与 itemId 优先、找不到/解析失败、session_missing/not_top_level/session_archived、冷会话 queue=null、updateQueue 错误映射。
 - test/ticket-queue.mjs：依赖创建/等待不可派、ready 只唤醒一次与 queueToken、缺 token/过期 token、worker_busy（queue 拒绝、steer 放行、空闲放行）、依赖输入校验（自指/重复/缺失/环/上限且不写入）、failed/cancelled 告警与 blocked 不告警、级联取消 deferred、merge 边转移、ria_status queue 输出、ria_resolve dependsOn。
-- test/ticket-queue-restart.mjs：v2→v3 迁移与备份、startup 重算、恢复单位排除 waiting 票、排队摘要合并、未派发 ready 票补发 boot wake。
+- test/checklist.mjs：v3→v4 迁移与 .v3.bak、创建/追加/显式清勾/replaceAll/drop、check 成功与越界/非布尔/终态/混用拒绝、ria_status 与看板 progress、归档摘要；test/ticket-queue-restart.mjs：v2→v3 迁移与备份、startup 重算、恢复单位排除 waiting 票、排队摘要合并、未派发 ready 票补发 boot wake。
 - test/board.mjs：GET /board 投影（counts/lanes/queue/dependsOn、self 归 Ria、缺失 worker 进未分配、workspaceRegistry 失败降级、归档标记）与路由 JSON 响应。
 - test/smoke.mjs：Host 流程 smoke；近期 worker 记录、scope=recent/sessions 字段、空窗口、失败不更新、prompt 规则与 lossless 断言；dispatch-notes 按 session/turn 过滤、错误 session 空列表、note 持久化、snapshot 读取失败仍派发并记录 note；派发 note 的微信镜像调用、失败隔离与 outbox 重试。
 - test/attention.mjs：attention 设置/读取/清空、旧 blockedReason 票、ria_status 输出。
@@ -810,10 +812,10 @@ Phase 28：会话改名工具。新增 `ria_title({ sessionId, title })`，走�
 - test/dispatch-guard.mjs：section 安装、agent/created 与 disposed、重复安装、开关文本、失败 warning、shutdown。
 - docs/system-dispatch-guard.md：系统级防误发提示调研，含 DSH 注入点、对比、推荐方案和落地步骤；v0.23 已按静态 section + 设置页方案实施。
 - docs/operations.md：运行入口、欢迎提示、ticket 生命周期与转述、派发 note 卡片、副作用 outbox、派发提示开关、归档、重启恢复、worker idle 唤醒。
-- docs/tools.md：12 个 ria_* 工具参考、排队消息、ticket 排队与依赖、worker 模型、会话改名、attention、近期 worker、审批可见性和临时权限、manager prompt 约束。
+- docs/tools.md：12 个 ria_* 工具参考、ticket checklist、排队消息、ticket 排队与依赖、worker 模型、会话改名、attention、近期 worker、审批可见性和临时权限、manager prompt 约束。
 - docs/wechat.md：微信连接、暂停推送、长回复转 .md、出站图片与入站图片（下载协议、落盘、清理、失败降级）。
 - docs/state-and-api.md：状态目录文件清单与 HTTP API。
-- docs/testing.md：29 个测试套件的覆盖范围与本地隔离验证方式。
+- docs/testing.md：35 个测试套件的覆盖范围与本地隔离验证方式。
 - docs/limitations.md：已知限制与安全边界。
 - docs/ui-settings.png：隔离 DSH 中“设置 > Ria”开关的真实界面截图。
 - docs/ui-dispatch-note.png：隔离 DSH 中 Ria 会话轮次末尾的“任务已派发”卡片截图（note 为手工写入 ria.json 的验证数据）。
@@ -829,7 +831,7 @@ Phase 28：会话改名工具。新增 `ria_title({ sessionId, title })`，走�
 - 宽侧边栏中 chip 位于 Ria 标题右侧；折叠侧边栏不插入。
 - startup 测试覆盖 recoveryCount=3 的 working ticket：启动后产生一条通知、任务变 blocked 并带 blockedReason，status 可见；通知包含 ticketId/executor/goal；更新 task 和成功派发都会把 recoveryCount 清零；pending delivery 重试成功也不会误判为超限；resolveAgent 失败时产生启动失败通知。测试不调用模型。
 - smoke 覆盖近期 worker：首次派发前 scope=recent 为空；成功 ticket 派发后出现 1 个候选并带 title/cwd/lastTicketId/lastTicketGoal/lastTicketStatus/lastUsedAt；scope=sessions 带 title 和可选的 cwd/lastUsedAt；失败 request 不更新；ria.json 持久化 recentWorkers；所有工具输出递归检查为 lossless。
-- smoke 覆盖 Workspace 挂载、12 个工具注册（含 ria_queue、ria_title）、request 投递、ticket 派发不加前缀、dispatch guard section 同时装到 worker 和 Ria、GET/POST /settings 与 GET /state 的 settings、status、read、memory、持久化，以及新建 Ria 不写任何 session 事件、第二次 ensure 不重复；dispatch-guard 测试覆盖安装、created/disposed、重复安装、开关文本、失败 warning、shutdown；wechat 测试覆盖文本提取、事件过滤、入站去重/回显过滤、失败标记、reconnect skip、状态视图，以及图片开关默认开启、MsgType 3 路由与显式关闭提示；wechat-image 覆盖默认开启的本机图片出站、上传/发送协议、文本回退、围栏示例过滤与 outbound 开关；wechat-image-inbound 覆盖原图下载与 webwxgetmedia 回落、超限/无 Cookie、落盘与重名、纯图片占位、各类失败降级、30 天/500 个清理、宿主校验失败与投递失败回退 text+image；approvals 测试覆盖活跃 executor 过滤、始终 next()、abort/TTL/shutdown 清理和 lossless 输出；grants 测试覆盖授权门槛、原值记录、ticket done 自动恢复、显式 reset、过期、startup、漂移跳过、恢复失败和审计；wechat-file 测试覆盖阈值/代码块/表格/标题/链接、配置/env、文件名、短消息不变、长消息发 .md、失败回退，以及上传和 appmsg 字段；wechat-pause 测试覆盖手动开关与持久化、非微信自动暂停、微信自动恢复、host_/schedule 过滤、manual 不被 channel 覆盖、暂停时不发送、排队丢弃而在途完成、恢复后补发 outbox，以及日志字段。spawn 测试覆盖 create 参数、title 重命名、workspace_missing/preset_not_found/spawn_failed、ria_status scope=sessions 可见且不是 subagent；model 测试覆盖 ria_spawn 带模型、ria_model 改 worker/Ria、previous、未知/歧义模型、归档/subagent/缺失会话、status 模型字段与失败后仍用默认模型；title 测试覆盖成功改名与 previous、session_missing、subagent、归档、宿主 title_invalid 原 message 透传和改 Ria 自己；attachments 测试覆盖图片投递 content、attachment_missing/attachment_invalid/model_no_image、多目标部分成功、失败不投递且不动 ticket；attention 与 outbox 测试覆盖结构化等待项和副作用可靠投递；queue 测试覆盖三种 placement、itemId/rpcId 撤回、冷会话 queue=null 与错误映射。本次 npm test 二十九个 suite 全部通过（含 queue、ticket-queue、ticket-queue-restart、title）；此前历史记录为二十六个测试通过。
+- smoke 覆盖 Workspace 挂载、12 个工具注册（含 ria_queue、ria_title）、request 投递、ticket 派发不加前缀、dispatch guard section 同时装到 worker 和 Ria、GET/POST /settings 与 GET /state 的 settings、status、read、memory、持久化，以及新建 Ria 不写任何 session 事件、第二次 ensure 不重复；dispatch-guard 测试覆盖安装、created/disposed、重复安装、开关文本、失败 warning、shutdown；wechat 测试覆盖文本提取、事件过滤、入站去重/回显过滤、失败标记、reconnect skip、状态视图，以及图片开关默认开启、MsgType 3 路由与显式关闭提示；wechat-image 覆盖默认开启的本机图片出站、上传/发送协议、文本回退、围栏示例过滤与 outbound 开关；wechat-image-inbound 覆盖原图下载与 webwxgetmedia 回落、超限/无 Cookie、落盘与重名、纯图片占位、各类失败降级、30 天/500 个清理、宿主校验失败与投递失败回退 text+image；approvals 测试覆盖活跃 executor 过滤、始终 next()、abort/TTL/shutdown 清理和 lossless 输出；grants 测试覆盖授权门槛、原值记录、ticket done 自动恢复、显式 reset、过期、startup、漂移跳过、恢复失败和审计；wechat-file 测试覆盖阈值/代码块/表格/标题/链接、配置/env、文件名、短消息不变、长消息发 .md、失败回退，以及上传和 appmsg 字段；wechat-pause 测试覆盖手动开关与持久化、非微信自动暂停、微信自动恢复、host_/schedule 过滤、manual 不被 channel 覆盖、暂停时不发送、排队丢弃而在途完成、恢复后补发 outbox，以及日志字段。spawn 测试覆盖 create 参数、title 重命名、workspace_missing/preset_not_found/spawn_failed、ria_status scope=sessions 可见且不是 subagent；model 测试覆盖 ria_spawn 带模型、ria_model 改 worker/Ria、previous、未知/歧义模型、归档/subagent/缺失会话、status 模型字段与失败后仍用默认模型；title 测试覆盖成功改名与 previous、session_missing、subagent、归档、宿主 title_invalid 原 message 透传和改 Ria 自己；attachments 测试覆盖图片投递 content、attachment_missing/attachment_invalid/model_no_image、多目标部分成功、失败不投递且不动 ticket；attention 与 outbox 测试覆盖结构化等待项和副作用可靠投递；queue 测试覆盖三种 placement、itemId/rpcId 撤回、冷会话 queue=null 与错误映射。本次 npm test 三十五个 suite 全部通过（含 queue、ticket-queue、ticket-queue-restart、title）；此前历史记录为二十六个测试通过。
 - 新建 Ria 后真实 Web UI 在输入框上方显示欢迎卡片（blank 状态），发出第一条消息后消失；没有浏览器 runtime error。修复后的 Ria 会话日志通过 v4 校验（restoreReleasedV4Artifact：VALID，264 个事件），隔离 DSH 重启并重新打开 Ria 不再出现 corrupt。
 - 真实 Web UI 中 ticket 派发的 note 渲染在轮次末尾：DOM 有 [data-ria-dispatch-note="ticket"]，标题“任务已派发”，位于轮次末尾；无 runtime error；截图 docs/ui-dispatch-note.png。真实 ria_request 写入路径由 smoke 覆盖。
 - 审批观察器没有在真实 UI 中触发过；只做了单元测试和 smoke。首次实际审批时需确认 pending 列表和清理行为。

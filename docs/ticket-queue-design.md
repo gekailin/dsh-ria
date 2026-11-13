@@ -120,7 +120,7 @@
 |---|---|---|---|---|
 | 与「一票一 executor」 | 不冲突；边在票之间，票仍只有一个 executor | 不冲突，但 plan/step 需要额外 executor 校验 | 不冲突；父无 executor，子各自一个 | 不冲突，但没有约束 |
 | 与 ria_request 预检 | 完全复用 | runner 若直接派发会绕过；若让 Ria 派发则仍复用 | 子票派发可复用；父解锁逻辑另写 | 复用，但无门禁 |
-| 与归档 | 依赖求值要能查 hot + tasks.log.jsonl | plan step 引用归档票要额外处理 | 父子归档都要处理 | 不处理 |
+| 与归档 | 依赖求值要能查 hot + tickets.log.jsonl | plan step 引用归档票要额外处理 | 父子归档都要处理 | 不处理 |
 | 与 merge | 需要把 source 的入边转移到 target，source 的 merged done 不能解锁下游 | step 指向 source 会失效，需要重写 plan | 子票 merge 后父聚合要重算 | 不处理 |
 | 重启后恢复 | 从 ria.json + 归档重算即可 | 需要恢复 plan 状态 + ticket 状态，双阶段 | 父聚合可恢复，但没有顺序状态 | 丢上下文就断 |
 | 用户可见性 | 每张票可显示「等 A」；状态自然 | plan 视图最直观，但票视图仍要重复 | 树形直观，但只适用于父子 | 基本不可见 |
@@ -242,7 +242,7 @@ ticket_b 仍在等 ticket_a，但 ticket_a 已 failed。
 - v2 已经持久化 dependsOn，但从未被工具写入，也从未被语义使用；v3 明确它的语义和校验。
 - 新字段都是可选的、可重算的；读取 v2 时不丢数据，首次保存写 v3。
 - 仍然接受 schemaVersion: 2 或 version: 2 的文件；迁移函数只做归一化和字段补全，不做破坏性改写。
-- 归档日志 tasks.log.jsonl 的 schema:1 不变；归档 ticket 快照里如果有 dependsOn，按同样规则读取。
+- 归档日志 tickets.log.jsonl 的 schema:1 不变；归档 ticket 快照里如果有 dependsOn，按同样规则读取。
 
 ### 4.2 ticket 字段
 
@@ -324,7 +324,7 @@ open + waitingOn='dependency' 必须同时满足：dependsOn.length > 0 且至�
 
 11. dependsOn 必须去重；不能包含自身；最多 8 个。
 12. 依赖图必须无环。新增/修改依赖时，从被依赖票出发做 DFS；发现回到当前票即拒绝 dependency_cycle，不做部分写入。
-13. 依赖票必须存在：优先查热存储，其次查 tasks.log.jsonl / 月日志；不存在返回 dependency_missing。不允许依赖 intake（它还没有稳定归宿）。
+13. 依赖票必须存在：优先查热存储，其次查 tickets.log.jsonl / 月日志；不存在返回 dependency_missing。不允许依赖 intake（它还没有稳定归宿）。
 14. open + waitingOn='ria' 要求所有 dependsOn 都是 done；否则必须处于 open + waitingOn='dependency'。这条是「不能提前派发」的硬门禁。
 15. open + waitingOn='dependency' 要求 dependsOn.length > 0 且至少一个依赖不是 done；否则归一化为 ready。
 16. waitingOn='dependency' 只允许出现在 open；intake/forked/working/terminal 不允许。

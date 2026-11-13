@@ -140,7 +140,7 @@ ticket 是 Ria 的管理单位；一个 ticket 只对应一个 executor。完整
 
 ### 4.1 归档与恢复
 
-- 热文件 `ria.json` 保留所有非终态，加上最近 24h 关闭或按 closedAt 倒序最新 50 条终态；超窗写 `stateDir/tasks.log.jsonl`，同时按月写 `tasks-YYYY-MM.jsonl`（保留 12 个月）。写成功后才从内存删除。
+- 热文件 `ria.json` 保留所有非终态，加上最近 24h 关闭或按 closedAt 倒序最新 50 条终态；超窗写 `stateDir/tickets.log.jsonl`，同时按月写 `tickets-YYYY-MM.jsonl`（保留 12 个月）。新写入只用新名；启动时一次性把旧 `tasks*` 文件 rename 到新名（幂等，目标存在则跳过，失败只 log）。读取端同时兼容新旧名，按 `ticketId + closedAt` 去重，reopen 也扫两边。写成功后才从内存删除。
 - `ria_status scope=history` / `ticketId` 可查归档；reopen 时先从日志捞回热存储，再走 T27。
 - 重启恢复单位是 ticket：`intake`、`open`、`working`；`open + waitingOn=dependency` 不是恢复单位，`open` 且已有 `readyAt` 的依赖票交给 queue wake，不重复列进恢复 prompt；`forked` 父只递归子 ticket；blocked/failed/done/cancelled 不自动恢复。每个 ticket 连续恢复最多 3 次，超过则 blocked + `failure.code=recovery_exhausted` + 卡片，不再发 prompt。
 - 候选合并成一条恢复 prompt，逐条给 ticketId、status、executor、goal、acceptance、原消息、开始时间、最近动作和 recovery=n/3；排队中的票只给一行汇总（排队中/已就绪/告警/无效计数），不逐条展开。
@@ -522,8 +522,8 @@ stateDir/
   ria.json
   ria.json.v1.bak   # 首次从 schema v1 迁移时留下的备份
   outbox.json       # 副作用投递队列（dispatch note、微信镜像），0600
-  tasks.log.jsonl   # 终态归档（追加），受 24h/50 条窗口控制
-  tasks-YYYY-MM.jsonl # 按月滚动，保留 12 个月
+  tickets.log.jsonl   # 终态归档（追加），受 24h/50 条窗口控制
+  tickets-YYYY-MM.jsonl # 按月滚动，保留 12 个月
   memory.md
   audit.jsonl      # 临时权限审计，0600
   wechat/

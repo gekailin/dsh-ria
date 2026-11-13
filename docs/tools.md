@@ -47,7 +47,7 @@ ticket 的先后顺序用 `dependsOn` 表达，不复用 `ria_queue`（后者管
 
 多步或长程工作在建票时用 `checklist` 写清具体步骤，例如 `checklist: ['复现问题', '改解析器', '补回归测试']`。每完成一步调用 `ria_ticket({ ticketId, check: { index, done: true } })`；索引从 0 开始，输入越界返回 `checklist_index`。更新时默认是追加：老条目原位保留、勾选保留，新条目排在末尾；重复传同一条没有 `done` 不会清掉原有勾选，要清勾必须显式 `{ text, done: false }`。要整体重写就传 `replaceAll: true`，同 text 的条目仍保留旧勾，除非显式给了 `done`；要删旧条目就用 `drop: [index, ...]`，索引按更新前的列表计算。
 
-`ria_status` 的单票、`scope=tickets` 每项与看板卡片都带 `progress`（`已完成/总数`），看板只多这一行文本，不改布局。归档摘要 `tasks.log.jsonl` 的 `checklist` 记录 `{ total, done, pending }`，`pending` 最多列 5 条未勾项文本。终态票的清单视为最终结果，`check` 返回 `checklist_invalid`；要改先 reopen 或新建票。
+`ria_status` 的单票、`scope=tickets` 每项与看板卡片都带 `progress`（`已完成/总数`），看板只多这一行文本，不改布局。归档摘要 `tickets.log.jsonl` 的 `checklist` 记录 `{ total, done, pending }`，`pending` 最多列 5 条未勾项文本。终态票的清单视为最终结果，`check` 返回 `checklist_invalid`；要改先 reopen 或新建票。
 
 ## 排队消息（ria_queue）
 

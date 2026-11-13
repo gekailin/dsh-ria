@@ -89,7 +89,7 @@ Ria 自己是一个普通的顶层 DSH Session，运行 PTC preset，带管理�
 
 ## 任务归档
 
-终态 ticket 不会无限留在 ria.json。热文件保留所有非终态，加上最近 24 小时内关闭的终态和按 closedAt 倒序最新 50 条终态；超出的写进 `~/.dsh/state/ria/tasks.log.jsonl`，并按 closedAt 的 UTC 月份同时追加到 `tasks-YYYY-MM.jsonl`（保留最新 12 个月）。先写成功再从内存删除；写失败时 ticket 留在 ria.json，下次启动重试。
+终态 ticket 不会无限留在 ria.json。热文件保留所有非终态，加上最近 24 小时内关闭的终态和按 closedAt 倒序最新 50 条终态；超出的写进 `~/.dsh/state/ria/tickets.log.jsonl`，并按 closedAt 的 UTC 月份同时追加到 `tickets-YYYY-MM.jsonl`（保留最新 12 个月）。新写入只用 `tickets.log.jsonl` / `tickets-YYYY-MM.jsonl`。启动时会一次性把遗留的 `tasks.log.jsonl` / `tasks-YYYY-MM.jsonl` 改名到新名（目标已存在则跳过，失败只记日志）；读取端同时兼容新旧名，并按 `ticketId + closedAt` 去重。先写成功再从内存删除；写失败时 ticket 留在 ria.json，下次启动重试。
 
 `ria_status scope=history` 和 `ria_status ticketId=<id>` 会按需扫日志；`ria_ticket status=open` 与 `ria_resolve kind=control action=reopen/retry` 可以先把归档 ticket 捞回热存储再走正常转移，history/reopenCount 都会保留。
 

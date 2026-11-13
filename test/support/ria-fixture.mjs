@@ -258,7 +258,15 @@ export async function createFixture(options = {}) {
         if (summary) summary.projections.values.modelSelection = { next: selected }
         return { selected }
       },
-      async state(request) {
+      async state(request, signal) {
+        // The host calls signal.throwIfAborted() unconditionally, so a missing
+        // signal is a programming error rather than "not cancellable".
+        if (!signal || typeof signal.throwIfAborted !== 'function') {
+          throw new TypeError("Cannot read properties of undefined (reading 'throwIfAborted')")
+        }
+        signal.throwIfAborted()
+        const failure = typeof options.stateFailure === 'function' ? options.stateFailure(request) : options.stateFailure
+        if (failure) throw failure
         const id = String(request && request.sessionId)
         const running = runningOverrides.has(id)
           ? Boolean(runningOverrides.get(id))

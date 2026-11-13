@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { QqBotService, decryptBindSecret } from '../lib/channels/qq-bot.mjs'
 import { WechatClawService, normalizeAccountId } from '../lib/channels/wechat-claw.mjs'
 import { qrDataUrl } from '../lib/channels/common.mjs'
+import { Outbound } from '../lib/wechat/outbound.mjs'
 import {
   isForeignChannelRequestId,
   isQqRequestId,
@@ -365,6 +366,69 @@ async function waitForStatus(service, predicate, label) {
     })
     assert.deepEqual(prompts[1].content, [{ type: 'text', text: 'hello from Claw' }])
     assert.ok(claw.lastInboundAt > 0, 'inbound Claw messages should mark the channel as active')
+    await qq.shutdown()
+    await claw.shutdown()
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+// A channel can be connected before its user has sent anything. Assistant
+// replies in that window must be dropped silently; async send failures must be
+// logged instead of escaping as unhandled rejections and killing the host.
+{
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-ria-no-peer-'))
+  const logs = []
+  const ctx = {
+    on() { return () => {} },
+    sessionController: { prompt() { return Promise.resolve() } },
+  }
+  const qq = new QqBotService({
+    ctx,
+    stateDir: dir,
+    ensureRia: async () => 'ria-session',
+    getRiaId: () => 'ria-session',
+    log: (level, message) => logs.push(message),
+  })
+  const bot = {
+    sendText() { throw new Error('must not send without a peer') },
+  }
+  qq.session = { appId: '102000001', abort: new AbortController(), bot, ready: true }
+  qq.outbound = new Outbound({
+    send: text => qq.sendText(text),
+    log: message => logs.push(message),
+  })
+
+  const claw = new WechatClawService({
+    ctx,
+    stateDir: dir,
+    ensureRia: async () => 'ria-session',
+    getRiaId: () => 'ria-session',
+    log: (level, message) => logs.push(message),
+  })
+  claw.session = { token: 'token-1', baseUrl: 'http://127.0.0.1:1', abort: new AbortController() }
+  claw.outbound = new Outbound({
+    send: text => claw.sendText(text),
+    log: message => logs.push(message),
+  })
+
+  try {
+    assert.equal(await qq.sendText('no peer'), undefined)
+    assert.equal(await claw.sendText('no peer'), undefined)
+    qq.forwardAssistant('no peer')
+    claw.forwardAssistant('no peer')
+    await new Promise(resolve => setTimeout(resolve, 40))
+    assert.equal(logs.some(line => line.includes('could not send assistant text')), false)
+    assert.equal(logs.some(line => line.includes('发送失败')), false)
+
+    qq.peer = { scope: 'c2c', targetId: 'openid-1' }
+    qq.session.bot.sendText = () => { throw new Error('gateway down') }
+    qq.forwardAssistant('fails')
+    await new Promise(resolve => setTimeout(resolve, 40))
+    assert.ok(
+      logs.some(line => line.includes('could not send assistant text to QQ')),
+      'async QQ send failures should be logged',
+    )
     await qq.shutdown()
     await claw.shutdown()
   } finally {

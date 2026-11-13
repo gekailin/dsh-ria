@@ -23,10 +23,12 @@
 ## 安装
 
 ~~~bash
-dsh plugin --profile web add file:$PWD
+dsh plugin --profile web add github:gekailin/dsh-ria
 ~~~
 
-重启 dsh web 生效。pnpm store 不可写时，进入 `~/.dsh/profiles/web` 执行 `pnpm add --ignore-scripts file:/绝对路径/dsh-ria`。
+重启 dsh web 生效。
+
+若 `dsh plugin` 报 pnpm store 不可写，进入 `~/.dsh/profiles/web` 执行 `pnpm add --ignore-scripts github:gekailin/dsh-ria`；github: 简写解析不稳时改用 `git+https://github.com/gekailin/dsh-ria.git`。本地改代码调试才用 `file:` 路径：`dsh plugin --profile web add file:$PWD`。
 
 ## License
 

@@ -29,7 +29,7 @@ DSH_HOME/state/ria/
 - GET /dispatch-notes?sessionId&turn：读取 Ria 的派发 note；sessionId 必须是当前 Ria，turn 可选且必须是非负整数；返回 {notes}。
 - GET /board?limit=60&before=<createdAt>：只读任务看板数据。limit 默认 60、范围 1–200，before 是上一页最旧一张的 createdAt；服务端合并热存与归档日志后按 createdAt 升序取最后 limit 张。返回 {ok, generatedAt, riaSessionId, counts:{total,active,terminal,blocked}, page:{limit,before,returned,total,hasMore,nextBefore}, lanes, tickets}；tickets 含 ticketId/goal/status/waitingOn/blockedReason/attention/dependsOn/dependentCount/checklist/progress/executor/executorTitle/executorCwd/executorArchived/executorMissing/archived/laneId/laneLabel/createdAt/updatedAt/closedAt/readyAt/queueState/queueText。executor 为 `self` 或当前 Ria 时归入「Ria · 管家」；worker session 缺失或已归档只降级标道，不返回错误；归档工单带 archived=true。limit 非法或 before 不是时间戳时返回 400。
 - GET /health：健康检查。
-- GET /wechat/status：微信登录和连接状态，含 paused/pausedBy/pauseReason/pausedAt/resumedAt/resumedBy 和 wechatAutoPause。
+- GET /wechat/status：微信登录和连接状态，含 paused/pausedBy/pauseReason/pausedAt/resumedAt/resumedBy、wechatAutoPause、folded 和 lastFoldedAt。
 - POST /wechat/login：获取登录二维码。
 - POST /wechat/logout：退出微信登录。
 - POST /wechat/start：用已有凭据重连。

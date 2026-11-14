@@ -25,7 +25,9 @@ DSH_HOME/state/ria/
 
 - POST /ensure：创建或打开全局唯一的 Ria。
 - GET /state：riaSessionId、tickets、pendingDeliveries、grants、settings、workerIdleNotifications（enabled/throttleMs）、wechatClawAssistant（最近一条 assistant 正文的转发结果，未产生过为 null）。
-- GET/POST /settings：读取或设置 {dispatchGuard:boolean, wechatAutoPause:boolean}（GET 还返回 progressCards）；POST 可只传其中一个，传了非布尔值或一个都没传返回 400。
+- GET/POST /settings：读取或设置 {dispatchGuard:boolean, wechatAutoPause:boolean, reflection:object}（GET 还返回 progressCards 与 reflectionStatus）。reflection 默认 {enabled:false, cadence:"daily", time:"23:40", weekday:1, model:null, provider:null, reasoningEffort:null}，timezone 固定 Asia/Shanghai；POST 可只传其中一个，reflection 可只传部分字段并浅合并。校验：enabled 必须 boolean，cadence 为 daily|weekly，time 匹配 HH:MM，weekday 为 1–7 的整数，model/provider/reasoningEffort 为非空字符串或 null；任一项非法整包 400 且不部分写入。开启 reflection 时维护「Ria: 定期反思」计划；宿主无 schedule 服务时设置仍保存，reflectionStatus.scheduleError 给出原因。
+- GET /reflection/status：只读返回 {lastCompletedDate, lastStatus, lastError, activeRunId, workerSessionId, scheduleId}。
+- POST /reflection/run：body {force?:boolean, forDate?:YYYY-MM-DD}；forDate 缺省为 Asia/Shanghai 今天，非法日期 400。已有运行中的反思返回 409 {error, runId}；否则向 Ria 注入 `[REFLECTION MANUAL] forDate=… force=…` 提醒并返回 202 {queued:true, forDate}。注入失败返回 500，不假报成功。
 - GET /dispatch-notes?sessionId&turn：读取 Ria 的派发 note；sessionId 必须是当前 Ria，turn 可选且必须是非负整数；返回 {notes}。
 - GET /board?limit=60&before=<createdAt>：只读任务看板数据。limit 默认 60、范围 1–200，before 是上一页最旧一张的 createdAt；服务端合并热存与归档日志后按 createdAt 升序取最后 limit 张。返回 {ok, generatedAt, riaSessionId, counts:{total,active,terminal,blocked}, page:{limit,before,returned,total,hasMore,nextBefore}, lanes, tickets}；tickets 含 ticketId/goal/status/waitingOn/blockedReason/attention/dependsOn/dependentCount/checklist/progress/executor/executorTitle/executorCwd/executorArchived/executorMissing/archived/laneId/laneLabel/createdAt/updatedAt/closedAt/readyAt/queueState/queueText。executor 为 `self` 或当前 Ria 时归入「Ria · 管家」；worker session 缺失或已归档只降级标道，不返回错误；归档工单带 archived=true。limit 非法或 before 不是时间戳时返回 400。
 - GET /health：健康检查。

@@ -134,6 +134,88 @@ export async function createFixture(options = {}) {
     return entity
   }
 
+  const schedules = []
+  const scheduleCalls = []
+  let scheduleSeq = 0
+  const scheduleFailure = options.scheduleFailure
+  const failSchedule = (operation, request) => {
+    scheduleCalls.push({ operation, request })
+    if (typeof scheduleFailure === 'function') scheduleFailure(operation, request)
+    else if (scheduleFailure) throw scheduleFailure
+  }
+  const scheduleClone = task => JSON.parse(JSON.stringify(task))
+  const scheduleTimingAt = timing => {
+    if (!timing || typeof timing !== 'object') throw Object.assign(new Error('timing required'), { code: 'invalid_rule' })
+    if (timing.kind === 'after') return Date.now() + Number(timing.after_seconds || 0) * 1000
+    if (timing.kind === 'at') return Number(timing.at)
+    if (timing.kind === 'rrule') {
+      const match = /^DTSTART;TZID=Asia\/Shanghai:(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})$/m.exec(String(timing.rrule || ''))
+      if (!match) throw Object.assign(new Error('bad rrule'), { code: 'invalid_rule' })
+      const [, year, month, day, hour, minute, second] = match
+      return Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour) - 8, Number(minute), Number(second))
+    }
+    throw Object.assign(new Error('bad timing'), { code: 'invalid_rule' })
+  }
+  const scheduleService = {
+    async create(request) {
+      failSchedule('create', request)
+      if (typeof request.prompt !== 'string' || !request.prompt) throw Object.assign(new Error('prompt required'), { code: 'invalid_prompt' })
+      if (!request.target || request.target.kind !== 'session') throw Object.assign(new Error('target required'), { code: 'invalid_rule' })
+      const scheduledAt = scheduleTimingAt(request.timing)
+      const now = Date.now()
+      const task = {
+        id: 'schedule-' + (++scheduleSeq),
+        title: request.title,
+        prompt: request.prompt,
+        target: JSON.parse(JSON.stringify(request.target)),
+        timing: JSON.parse(JSON.stringify(request.timing)),
+        ...(request.timing.kind === 'rrule' ? { rrule: request.timing.rrule } : {}),
+        status: 'active',
+        scheduledAt: new Date(scheduledAt).toISOString(),
+        updatedAt: new Date(now).toISOString(),
+      }
+      schedules.push(task)
+      return scheduleClone(task)
+    },
+    async list(request = {}) {
+      failSchedule('list', request)
+      const limit = request.limit === undefined ? 100 : Number(request.limit)
+      const offset = request.offset === undefined ? 0 : Number(request.offset)
+      let items = schedules.slice()
+      if (request.active === true) items = items.filter(item => item.status === 'active')
+      if (request.active === false) items = items.filter(item => item.status !== 'active')
+      const total = items.length
+      return { items: items.slice(offset, offset + limit).map(scheduleClone), shown: Math.max(0, Math.min(limit, total - offset)), total, limit, offset }
+    },
+    async view(request) {
+      failSchedule('view', request)
+      const task = schedules.find(item => item.id === String(request && request.id))
+      return task ? scheduleClone(task) : { id: String(request && request.id), code: 'schedule_not_found' }
+    },
+    async edit(request, actorSessionId, signal) {
+      failSchedule('edit', request)
+      if (signal) signal.throwIfAborted()
+      const index = schedules.findIndex(item => item.id === String(request && request.id))
+      if (index < 0) return { id: String(request && request.id), code: 'schedule_not_found' }
+      if (request.action === 'delete') {
+        schedules.splice(index, 1)
+        return { id: request.id, deleted: true }
+      }
+      if (request.action !== 'update') throw Object.assign(new Error('bad action'), { code: 'invalid_rule' })
+      const patch = request.patch || {}
+      if (!Object.keys(patch).length) throw Object.assign(new Error('patch required'), { code: 'invalid_rule' })
+      const task = schedules[index]
+      for (const key of ['title', 'prompt', 'target', 'timing']) if (key in patch) task[key] = JSON.parse(JSON.stringify(patch[key]))
+      if ('timing' in patch) {
+        task.scheduledAt = new Date(scheduleTimingAt(patch.timing)).toISOString()
+        if (patch.timing.kind === 'rrule') task.rrule = patch.timing.rrule
+      }
+      if ('active' in patch) task.status = patch.active ? 'active' : 'paused'
+      task.updatedAt = new Date().toISOString()
+      return scheduleClone(task)
+    },
+  }
+
   const ctx = {
     logger: { info() {}, warn() {}, error() {} },
     agents: { list() { return [] } },
@@ -185,7 +267,17 @@ export async function createFixture(options = {}) {
       if (name === 'agentDefaultModel') {
         return { currentSelection() { return { provider: 'provider-ok', model: 'model-vision' } } }
       }
+      if (name === 'schedule') return options.noSchedule ? undefined : scheduleService
       return undefined
+    },
+    inject(names, factory) {
+      if (Array.isArray(names) && names.includes('schedule') && !options.noSchedule) {
+        factory({
+          get(name) { return name === 'schedule' ? scheduleService : ctx.get(name) },
+          effect(inner) { return ctx.effect(inner) },
+        })
+      }
+      return { dispose() {} }
     },
     webServer: { register(route) { routes.push(route); return () => {} } },
     workspaceRegistry: {
@@ -391,6 +483,8 @@ export async function createFixture(options = {}) {
     workspaceCalls,
     workspaceAttachments,
     routes,
+    schedules,
+    scheduleCalls,
     riaAgent,
     call,
     cleanup,
@@ -401,6 +495,12 @@ export async function createFixture(options = {}) {
     },
     queues,
     setRunning(sessionId, value) { runningOverrides.set(String(sessionId), Boolean(value)) },
+    setRiaSession(sessionId) {
+      riaId = String(sessionId)
+      riaAgent.id = riaId
+      if (!models.has(riaId)) models.set(riaId, { provider: 'provider-ok', model: 'model-vision' })
+      service.store.setRia(riaId, 'ptc')
+    },
     updateQueueCalls,
     setPromptFailure(error) { promptFailure = error },
     get concluded() { return concluded },

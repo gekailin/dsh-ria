@@ -1,6 +1,6 @@
 # Ria 定期反思（Daily Reflection）设计
 
-> 状态：设计稿；编排层已实现（2026-11-14），设置页与自动触发未实现
+> 状态：设计稿；服务端、调度与 API 已实现（2026-11-14），设置页 UI 未实现
 > 工单：`ticket_mwdosvus_66255e499a`
 > 日期：2026-11-13（2026-11-13 修订：执行者改为独立 worker；2026-11-14 补齐编排层）
 > 范围：只设计 Ria 的定期反思；不改 worker 的日常行为，不改宿主会话存储，不新增后台 timer。
@@ -13,16 +13,19 @@
 - Ria 侧 `ria_reflect` 五动作 status / begin / dispatch / finish / abort；状态文件 `reflections/state.json`、`reflections/.lock`、`reflections/runs/<runId>/run.json`；三重幂等、20 分钟锁 TTL 与接管、attempts、自动重试上限 1 次、没有新增后台 timer。
 - 报告 front matter 与八个固定标题校验；可选「对 dsh-ria 的迭代建议」存在时要求非空、最多 5 条；memory 候选支持 `[target: global|worker:<sessionId>]`，非法 target 降级 global 并记 warning；正式报告 `<forDate>.md` / `<forDate>.partial.md` / `<forDate>.manual-HHMM.md` 原子写；只有 complete 推进 lastCompletedDate。
 - 安全收缩：反思 worker 绑定后只保留 6 个只读工具；在真实宿主 ToolsService 上 `restrict({allow: []})` 实测可见工具恰好 6 个。
-- `test/reflection-run.mjs` 覆盖同日 skipped、运行中 locked、force 新 run、非法报告、abort、dispatch 失败与重试上限。
+- `settings.reflection`（enabled/cadence/time/weekday/model/provider/reasoningEffort）默认值、旧档迁移与未知字段保留；`GET /settings` 返回 reflection 与 reflectionStatus，`POST /settings` 对 reflection 整包校验，非法请求 400 且不部分写入。反思设置里的模型字段会覆盖 `ria_reflect begin` 的 spawn 参数。
+- `GET /reflection/status` 返回 lastCompletedDate/lastStatus/lastError/activeRunId/workerSessionId/scheduleId；`POST /reflection/run` 注入 `[REFLECTION MANUAL]` 提醒并返回 202，已有运行中的反思返回 409。
+- schedule 可选注入：只维护一条标题为「Ria: 定期反思」的 this_session 计划，rrule 按 Asia/Shanghai 的未来 occurrence 生成；改频率/时间/星期立即 edit，Ria 换会话后按 scheduleId 与 riaSessionId 重建；关闭只 edit active:false，不删除。宿主没有 schedule 服务时设置仍可保存，状态里给出原因。
+- startup 补跑：enabled、当期未完成、已过点且没有 active run 时，补最近一次；优先创建 90 秒后的一次性 schedule，没有 schedule 服务时直接注入 host_ 提醒；state 记录 lastReminderForDate/lastReminderAt，重复启动不重复提醒。
+- `test/reflection-run.mjs` 覆盖同日 skipped、运行中 locked、force 新 run、非法报告、abort、dispatch 失败与重试上限；`test/reflection-schedule.mjs` 覆盖设置校验正负例、schedule create/edit/pause、换 Ria 重建、202/409、startup 补跑幂等与无 schedule 降级。
 
-本轮明确未实现（不要当成已有能力）：
+仍未实现（不要当成已有能力）：
 
-- `POST /reflection/run`、`GET /reflection/status` 等 HTTP 路由。
-- `settings.reflection`（enabled/cadence/time/model 等）与设置页 UI。
-- schedule 自动触发、"现在启动"按钮。
+- 设置页 UI（开关、频率、时间、模型、"现在启动"按钮）：下一张工单 `ticket_mwgboym3_6f7d24e071`。服务端路由已就绪。
 - 报告渲染/归档 UI、微信通知全文。
+- 多天回填：只补最近一次，不逐天补历史。
 
-以上未实现项落地前，只能由 Ria 在会话里手动调用 `ria_reflect` 驱动一次反思。
+设置页 UI 落地前，自动触发与手动 HTTP 路由已可用，但仍可用 Ria 在会话里手动调用 `ria_reflect` 驱动一次反思。
 
 **结论先行**：每次反思由 Ria 启动一个**全新的 worker** 执行。Ria 只做管理者：收 schedule reminder、申请运行锁、派发 instruction、等 worker 结束、审阅报告、写 state、收口 intake。worker 在干净上下文里，通过一组**只读专用工具**读取 Ria 主会话和候选 worker 的 transcript、工单与上下文，把报告写到本次 run 的目录；它不写 memory、不派活、不改代码、不重启。设置页提供“定期反思”开关、每天/每周、时间和“现在启动”；默认关闭。P0 先手动验证“Ria 派 worker”这条链路，P1 接自动 schedule 与设置页，P2 再把读取工具化、把 worker 收紧到只读 preset。
 
@@ -319,7 +322,7 @@ startup 恢复顺序不变：先恢复未收敛工单，再做反思的只读 re
 
 - 计算 `localYesterday`。
 - 若 `lastCompletedDate < localYesterday`，且没有 active run，且没有未执行的一次性补跑：
-  - 用 `schedule_create` 建一个 `FREQ=DAILY;COUNT=1`、90 秒后的一次性任务，prompt 显式带 `forDate=localYesterday`。
+  - 用 schedule 服务的 `timing:{kind:"after", after_seconds:90}` 建一个一次性任务（标题 `Ria: 反思补跑 <日期>`），prompt 显式带 `forDate`；宿主没有 schedule 服务时直接注入 host_ 提醒。
   - 只补最近一天；更早的只在报告里列为 gap。
 - 补跑检查放在 `startup()` 的统一出口（`finally` 或所有 early return 之前），不要只放在“有单位才走”的恢复分支（`lib/index.js:4630-4751` 有多处提前返回）。
 
@@ -1101,11 +1104,11 @@ front matter 记录：
 | 4 | 设置页是否暴露模型/推理强度 | 放在“高级”折叠区，默认跟随 Ria | 完全不暴露 | 可调性 vs 界面复杂度 |
 | 5 | 周模式的“一周”从周一开始？ | 是（1=周一） | 周日开始 | 周报窗口与用户习惯 |
 
-**实现前确认（不是用户选型）**：
+**实现前确认（已确认，不是用户选型）**：
 
-- DSH 是否支持插件注册 `ria-reflection` preset。若不支持，需要宿主提供一个等效只读 preset；在此之前不得用普通 shell preset 跑反思。
-- `ria_spawn` 能否在 `create` 前预生成 sessionId 并携带 `reflectionRunId`；若不能，需要改成专用 spawn 接口，否则 `agent/created` 竞态会导致工具装不上。
-- 宿主是否暴露与官方 schedule 工具同一实现的 schedule 服务，供设置页创建/暂停任务；若没有，设置页只能保存配置并提示“下次 Ria 活跃时同步”，不能自建 timer。
+- 没有注册专用 `ria-reflection` preset；反思 worker 用 `agentPreset=minimal` 创建，绑定后 `restrict({allow:[]})` 移除全部全局工具。真实宿主实测可见工具恰好 6 个只读工具。
+- `ria_spawn` 已支持在 `create` 前预生成 sessionId 并携带 `reflectionRunId`；绑定在 `agent/created` 时安装，避免竞态。
+- 宿主通过 `ctx.inject(['schedule'])` 可选提供与官方 schedule 工具同一实现的服务。服务缺失时设置仍保存，状态里给 `scheduleError`；不自建 timer。
 
 ---
 
@@ -1309,18 +1312,18 @@ schedule_create({
 })
 ~~~
 
-补跑昨天（P1）：
+补跑昨天（P1，插件直接调用 schedule 服务）：
 
 ~~~text
-schedule_create({
-  title: "Ria: 定期反思补跑",
-  prompt: "[REFLECTION] 补跑 forDate=2026-11-12；按 ria_reflect 流程执行。",
-  rrule: "DTSTART;TZID=Asia/Shanghai:20261113T091500\nRRULE:FREQ=DAILY;COUNT=1",
-  target: "this_session"
+schedule.create({
+  title: "Ria: 反思补跑 2026-11-12",
+  prompt: '[REFLECTION CATCHUP] forDate=2026-11-12 — 请用 ria_reflect status/begin(trigger="schedule")/dispatch/finish 补跑这次定期反思；如果已经完成或已有运行，报告状态并停止。',
+  timing: { kind: "after", after_seconds: 90 },
+  target: { kind: "session", sessionId: "<Ria sessionId>" }
 })
 ~~~
 
-创建前先 `schedule_list`，同 title 只留一个；一次性任务执行完删除。
+创建前先 `schedule.list`，同 title 只留一个；一次性任务执行完删除。
 
 ## 附录 C：字段映射
 

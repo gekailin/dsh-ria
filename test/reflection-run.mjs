@@ -86,7 +86,8 @@ try {
   assert.equal(emptyStatus.ok, true, JSON.stringify(emptyStatus))
   assert.equal(emptyStatus.run, null)
   assert.equal(emptyStatus.state.lastCompletedDate, null)
-  assert.equal(emptyStatus.settings.implemented, false)
+  assert.equal(emptyStatus.settings.implemented, true)
+  assert.equal(emptyStatus.settings.scheduleAvailable, true)
 
   const dateA = '2026-11-13'
   const started = await begin(dateA)

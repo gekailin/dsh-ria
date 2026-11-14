@@ -229,6 +229,40 @@ service.wechat.sendDispatchNote = async (note, options) => {
   return true
 }
 
+const REFLECTION_DEFAULTS = {
+  enabled: false,
+  cadence: 'daily',
+  time: '23:40',
+  weekday: 1,
+  model: null,
+  provider: null,
+  reasoningEffort: null,
+}
+
+function expectedSettings(patch = {}) {
+  const { reflection, reflectionStatus, ...rest } = patch
+  return {
+    dispatchGuard: true,
+    progressCards: false,
+    wechatAutoPause: true,
+    wechatClawImage: { inbound: true, outbound: true },
+    reflection: { ...REFLECTION_DEFAULTS, ...(reflection || {}) },
+    reflectionStatus: {
+      lastCompletedDate: null,
+      lastStatus: null,
+      lastError: null,
+      activeRunId: null,
+      workerSessionId: null,
+      scheduleId: null,
+      enabled: false,
+      scheduleAvailable: false,
+      scheduleError: null,
+      ...(reflectionStatus || {}),
+    },
+    ...rest,
+  }
+}
+
 function request(method, path, payload) {
   const req = new EventEmitter()
   req.method = method
@@ -259,7 +293,7 @@ assert.deepEqual(workspaceAttachments, [riaId])
 assert.deepEqual(riaEvents, [])
 const initialSettings = await request('GET', '/plugins/dsh-ria/api/settings')
 assert.equal(initialSettings.status, 200)
-assert.deepEqual(initialSettings.body, { dispatchGuard: true, progressCards: false, wechatAutoPause: true, wechatClawImage: { inbound: true, outbound: true } })
+assert.deepEqual(initialSettings.body, expectedSettings())
 assertLossless(initialSettings.body)
 const workerGuard = guardSections.find(item => item.agentId === 'worker')
 const riaGuard = guardSections.find(item => item.agentId === 'ria')
@@ -270,31 +304,31 @@ assert.match(workerGuard.section.text(), /clearly unrelated/)
 assert.equal(riaGuard.section.text(), workerGuard.section.text())
 const guardOff = await request('POST', '/plugins/dsh-ria/api/settings', { dispatchGuard: false })
 assert.equal(guardOff.status, 200)
-assert.deepEqual(guardOff.body, { dispatchGuard: false, progressCards: false, wechatAutoPause: true, wechatClawImage: { inbound: true, outbound: true } })
+assert.deepEqual(guardOff.body, expectedSettings({ dispatchGuard: false }))
 assert.equal(workerGuard.section.text(), '')
 assert.equal(riaGuard.section.text(), '')
 const guardOn = await request('POST', '/plugins/dsh-ria/api/settings', { dispatchGuard: true })
 assert.equal(guardOn.status, 200)
-assert.deepEqual(guardOn.body, { dispatchGuard: true, progressCards: false, wechatAutoPause: true, wechatClawImage: { inbound: true, outbound: true } })
+assert.deepEqual(guardOn.body, expectedSettings())
 assert.match(workerGuard.section.text(), /ask the user to confirm/)
 assert.doesNotMatch(workerGuard.section.text(), /\bRia\b/i)
 const autoPauseOff = await request('POST', '/plugins/dsh-ria/api/settings', { wechatAutoPause: false })
 assert.equal(autoPauseOff.status, 200)
-assert.deepEqual(autoPauseOff.body, { dispatchGuard: true, progressCards: false, wechatAutoPause: false, wechatClawImage: { inbound: true, outbound: true } })
+assert.deepEqual(autoPauseOff.body, expectedSettings({ wechatAutoPause: false }))
 const autoPauseOn = await request('POST', '/plugins/dsh-ria/api/settings', { wechatAutoPause: true })
 assert.equal(autoPauseOn.status, 200)
-assert.deepEqual(autoPauseOn.body, { dispatchGuard: true, progressCards: false, wechatAutoPause: true, wechatClawImage: { inbound: true, outbound: true } })
+assert.deepEqual(autoPauseOn.body, expectedSettings())
 // Claw image transfer is fixed on. Older clients may still try to turn it off;
 // the field is accepted and ignored so their save does not fail.
 const clawImageOff = await request('POST', '/plugins/dsh-ria/api/settings', { wechatClawImage: { inbound: false, outbound: false } })
 assert.equal(clawImageOff.status, 200)
-assert.deepEqual(clawImageOff.body, { dispatchGuard: true, progressCards: false, wechatAutoPause: true, wechatClawImage: { inbound: true, outbound: true } })
+assert.deepEqual(clawImageOff.body, expectedSettings())
 const clawImageInbound = await request('POST', '/plugins/dsh-ria/api/settings', { wechatClawImage: { inbound: true } })
 assert.equal(clawImageInbound.status, 200)
-assert.deepEqual(clawImageInbound.body, { dispatchGuard: true, progressCards: false, wechatAutoPause: true, wechatClawImage: { inbound: true, outbound: true } })
+assert.deepEqual(clawImageInbound.body, expectedSettings())
 const clawImageOn = await request('POST', '/plugins/dsh-ria/api/settings', { wechatClawImage: { inbound: true, outbound: true } })
 assert.equal(clawImageOn.status, 200)
-assert.deepEqual(clawImageOn.body, { dispatchGuard: true, progressCards: false, wechatAutoPause: true, wechatClawImage: { inbound: true, outbound: true } })
+assert.deepEqual(clawImageOn.body, expectedSettings())
 const badClawImage = await request('POST', '/plugins/dsh-ria/api/settings', { wechatClawImage: { inbound: 'yes' } })
 assert.equal(badClawImage.status, 200)
 assert.deepEqual(badClawImage.body.wechatClawImage, { inbound: true, outbound: true })
@@ -704,7 +738,8 @@ const httpState = await request('GET', '/plugins/dsh-ria/api/state')
 assert.equal(httpState.status, 200)
 assert.equal(httpState.body.grants.length, 1)
 assert.equal(httpState.body.grants[0].grantId, grant.grant.grantId)
-assert.deepEqual(httpState.body.settings, { dispatchGuard: true, progressCards: false, wechatAutoPause: true, wechatClawImage: { inbound: true, outbound: true } })
+const { reflectionStatus: ignoredStateStatus, ...stateSettings } = expectedSettings()
+assert.deepEqual(httpState.body.settings, stateSettings)
 const closedTask = await call('ria_ticket', { ticketId: ticket.ticket.ticketId, status: 'done' })
 assert.equal(closedTask.ticket.status, 'done')
 assert.equal(permissions.sandboxOverride, 'workspace-write')

@@ -256,9 +256,15 @@ export async function createFixture(options = {}) {
           ],
         }
       },
-      async prompt(request) {
-        prompts.push(request)
+      async prompt(request, signal) {
+        // The host prompt() calls signal.throwIfAborted() unconditionally, so a
+        // missing signal is a programming error rather than "not cancellable".
+        if (!signal || typeof signal.throwIfAborted !== 'function') {
+          throw new TypeError("Cannot read properties of undefined (reading 'throwIfAborted')")
+        }
+        signal.throwIfAborted()
         if (promptFailure) throw promptFailure
+        prompts.push(request)
         if (options.onPrompt) await options.onPrompt(request)
         return { accepted: true }
       },

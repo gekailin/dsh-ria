@@ -165,6 +165,7 @@ ticket 是 Ria 的管理单位；一个 ticket 只对应一个 executor。完整
 - 风险窗口只做短核验：入队后 +2s、+10s 各一次一次性 timer，只查这一张工单；`readyNotifiedAt` 已写或工单不再就绪就清理，wake 已 delivered 就补写标记，仍 pending 就重新发布并尝试 pump。核验结束即释放，不常驻、不扫全表。
 - `invalidate` 只删除 `payload.readyAt` 与事件 `readyAt` 相同的 wake；事件没带 `readyAt` 时才删除该工单全部 wake。不在 invalidate 里立即对账，下一次发布点会按状态补回仍然有效的就绪。
 - 自愈补投和「delivered 但未标记」都记 `warn`，包含 ticketId、readyAt 和就绪到现在的 age。
+- 投递失败可观测：`sessionController.prompt` 必须带 signal（宿主无条件调用 `signal.throwIfAborted()`），outbox 冷路径使用永不取消的 `NEVER_ABORTED`。每次失败由 `markFailed` 累加 attempts 并写 lastError，按 10s/1m/5m/15m/1h 退避（30 秒 tick 扫描 due），第 6 次转 failed 并保留；`ria_status` 的 outbox 摘要给出 pending/failed 计数与未投递条目的 kind、attempts、due、lastError，可按 ticketId 过滤。
 - 生产事故：`ticket_mwf7lpk4_62a20be388` 在 2026-11-14 00:55:32 因上游 `ticket_mwf71wso_fd944757e9` 关闭而就绪，`readyAt` 已写入，但 `outbox.json` 里没有 `queue_wake`，Ria 会话也没有 `[Queue ready]`，空转 3 小时 36 分，直到 04:31 重启后人工发现。旧实现把通知押在一次性回调上，回调丢失后没有任何状态能补发；新实现让写入提交、启动和 turn 结束都能从状态补投。
 
 ## 5. 工具

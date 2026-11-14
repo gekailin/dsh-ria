@@ -10,6 +10,8 @@ smoke 使用 mock ctx 覆盖 ensure、Workspace 挂载、13 个工具、request�
 
 queue-wake-recovery 测试覆盖：ready 事件回调丢失后仍由工单提交钩子从 `readyAt` / `readyNotifiedAt` 状态补发并投递 `queue_wake`；同 `readyAt` 的 invalidate 删除 pending wake 后由下一次发布补回且不重复，不同 `readyAt` 的 invalidate 不误删；`readyNotifiedAt` 已写后发布返回 0、不重投、不新增 prompt；startup 对账使工单首次就绪时只产生一条 boot-scoped wake，`[Queue ready]` 只列一次该工单。
 
+queue-wake-delivery 测试覆盖：fixture 的 `sessionController.prompt` 和宿主一样要求 signal；无活跃 turn 的冷路径直接投递并写 `readyNotifiedAt`；wake 已在 pending 时开启 turn，turn/start 泵不投递、turn/end 泵投递一次；turn 运行中上游关闭后由 turn/end 泵投递；prompt 失败写 lastError、attempts 递增，第 6 次转 failed 后仍出现在 `ria_status` 的 outbox 摘要中。
+
 ## 本地开发与隔离验证
 
 开发时也可以不改 profile，直接用 patch 叠加：

@@ -156,6 +156,17 @@ ticket 是 Ria 的管理单位；一个 ticket 只对应一个 executor。完整
 - 级联取消（`ria_ticket status=cancelled, cascade=downstream`）只取消排队/阻塞/intake 下游；working 下游不打断，作为 deferred 返回并报告用户。
 - 忙碌 worker 禁止排队：`ria_request` 默认 mode=queue 时，只要目标有运行中的 turn 或非空 pending 队列就返回 `worker_busy`；steer 只允许做信息同步，不能下发新任务。
 
+### 4.3 就绪通知：状态即真相
+
+- 就绪通知的唯一依据是已提交的工单字段 `status === 'open' && waitingOn === 'ria' && readyAt` 且 `readyNotifiedAt` 为空。任何时刻都能从状态推导出「还有哪些就绪工单没通知 Ria」，不依赖 `onQueueEvent` 这一次回调一定送达。
+- `publishReadyNotices()` 只读热工单，按 `queue_wake:<ticketId>:<readyAt>` 去重入队；已存在 pending 就不重复，已 delivered 但 `readyNotifiedAt` 未落盘则补写标记并 warn。它幂等，返回本次新入队数量。
+- 发布点只有三处：每次工单写入提交之后（同一调用栈，不经过 emit 回调链）、进程 startup、Ria turn 结束。不挂 30 秒常驻对账，也不把状态扫描塞进 outbox 的投递重试。
+- 启动时的 `reconcileDependencies` 期间暂停保存钩子发布：对账本身会为首次就绪的工单入队 boot-scoped wake，若中间保存也发布就会为同一 `readyAt` 多出一条 no-boot wake，`[Queue ready]` 会重复列同一张工单。对账结束后的 startup 发布点只补事件丢失的情况。
+- 风险窗口只做短核验：入队后 +2s、+10s 各一次一次性 timer，只查这一张工单；`readyNotifiedAt` 已写或工单不再就绪就清理，wake 已 delivered 就补写标记，仍 pending 就重新发布并尝试 pump。核验结束即释放，不常驻、不扫全表。
+- `invalidate` 只删除 `payload.readyAt` 与事件 `readyAt` 相同的 wake；事件没带 `readyAt` 时才删除该工单全部 wake。不在 invalidate 里立即对账，下一次发布点会按状态补回仍然有效的就绪。
+- 自愈补投和「delivered 但未标记」都记 `warn`，包含 ticketId、readyAt 和就绪到现在的 age。
+- 生产事故：`ticket_mwf7lpk4_62a20be388` 在 2026-11-14 00:55:32 因上游 `ticket_mwf71wso_fd944757e9` 关闭而就绪，`readyAt` 已写入，但 `outbox.json` 里没有 `queue_wake`，Ria 会话也没有 `[Queue ready]`，空转 3 小时 36 分，直到 04:31 重启后人工发现。旧实现把通知押在一次性回调上，回调丢失后没有任何状态能补发；新实现让写入提交、启动和 turn 结束都能从状态补投。
+
 ## 5. 工具
 
 | 工具 | 作用 | 参数 |

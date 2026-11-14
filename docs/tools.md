@@ -21,7 +21,7 @@ Ria 通过 run_code SDK 调用 12 个 `ria_*` 工具。工具只在 Ria 的 Agen
 
 ## 工单排队与依赖
 
-工单的先后顺序用 `dependsOn` 表达，不复用 `ria_queue`（后者管理单个 worker 还没执行的消息）。创建或更新工单时给 `dependsOn: ["ticket_a", ...]`：只要有一个上游没到 `done`，工单就保持 `open + waitingOn=dependency`，不能 `ria_request`。上游全部 done 后 host 写 `readyAt`、算出 `queueToken = ticketId:readyAt:revision`，并通过 outbox 的 `queue_wake` 叫醒 Ria；`ria_request` 必须带当前 `queueToken`，同一次就绪最多派发一次（工单已 working、退回等待或 revision 变了都返回 `ticket_not_ready`）。
+工单的先后顺序用 `dependsOn` 表达，不复用 `ria_queue`（后者管理单个 worker 还没执行的消息）。创建或更新工单时给 `dependsOn: ["ticket_a", ...]`：只要有一个上游没到 `done`，工单就保持 `open + waitingOn=dependency`，不能 `ria_request`。上游全部 done 后 host 写 `readyAt`、算出 `queueToken = ticketId:readyAt:revision`，并通过 outbox 的 `queue_wake` 叫醒 Ria；`ria_request` 必须带当前 `queueToken`，同一次就绪最多派发一次（工单已 working、退回等待或 revision 变了都返回 `ticket_not_ready`）。就绪通知以已提交的 `readyAt` / `readyNotifiedAt` 为准：写入提交、启动和 Ria turn 结束都会从状态补发缺失的 `queue_wake`，不依赖单次事件回调。
 
 上游 `failed`/`cancelled` 不自动跳过：下游留在 `open/dependency`，写 `dependencyAlerts`，并发 `[Queue blocked]` 让 Ria 报告用户；上游 `blocked` 只是继续等，不告警。`dependsOn` 最多 8 个，可跨 root、可指向已归档的 done 工单；自指、重复、缺失、指向 intake、成环或超限都会整次拒绝写入（`dependency_invalid/duplicate/limit/self/missing/intake/cycle`）。
 

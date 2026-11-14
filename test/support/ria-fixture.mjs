@@ -53,15 +53,33 @@ export async function createFixture(options = {}) {
   models.set('session-worker', { provider: 'provider-ok', model: 'model-vision' })
   models.set('session-no-image', { provider: 'provider-text', model: 'model-text-only' })
 
+  const restrictions = new Map()
+  const globalTools = ['bash', 'read', 'write', 'edit', 'run_code']
+  const toolsApi = (id, tools) => ({
+    register(definition) {
+      tools.set(definition.name, definition)
+      return () => tools.delete(definition.name)
+    },
+    restrict(filter) {
+      restrictions.set(String(id), filter && typeof filter === 'object' ? filter : {})
+    },
+    view() {
+      const filter = restrictions.get(String(id))
+      const visible = new Map()
+      for (const name of globalTools) {
+        if (filter && Array.isArray(filter.allow) && !filter.allow.includes(name)) continue
+        if (filter && Array.isArray(filter.deny) && filter.deny.includes(name)) continue
+        visible.set(name, { name })
+      }
+      for (const [name, definition] of tools) visible.set(name, definition)
+      return { visible }
+    },
+  })
+
   const riaAgent = {
     id: riaId,
     ctx: {
-      tools: {
-        register(definition) {
-          installed.set(definition.name, definition)
-          return () => {}
-        },
-      },
+      tools: toolsApi(riaId, installed),
       systemPrompt: { section() { return () => {} } },
     },
     model: { current() { return models.get(String(riaAgent.id)) } },
@@ -84,12 +102,7 @@ export async function createFixture(options = {}) {
     return {
       id,
       ctx: {
-        tools: {
-          register(definition) {
-            tools.set(definition.name, definition)
-            return () => tools.delete(definition.name)
-          },
-        },
+        tools: toolsApi(id, tools),
         systemPrompt: { section() { return () => {} } },
       },
       model: { current() { return model } },
@@ -375,6 +388,11 @@ export async function createFixture(options = {}) {
     riaAgent,
     call,
     cleanup,
+    visibleTools(sessionId) {
+      const agent = makeAgent(String(sessionId))
+      if (!agent) return []
+      return [...agent.ctx.tools.view().visible.keys()]
+    },
     queues,
     setRunning(sessionId, value) { runningOverrides.set(String(sessionId), Boolean(value)) },
     updateQueueCalls,

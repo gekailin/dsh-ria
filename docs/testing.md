@@ -12,6 +12,8 @@ queue-wake-recovery 测试覆盖：ready 事件回调丢失后仍由工单提交
 
 queue-wake-delivery 测试覆盖：fixture 的 `sessionController.prompt` 和宿主一样要求 signal；无活跃 turn 的冷路径直接投递并写 `readyNotifiedAt`；wake 已在 pending 时开启 turn，turn/start 泵不投递、turn/end 泵投递一次；turn 运行中上游关闭后由 turn/end 泵投递；prompt 失败写 lastError、attempts 递增，第 6 次转 failed 后仍出现在 `ria_status` 的 outbox 摘要中。
 
+reflection-settings-ui 测试覆盖：客户端反思设置的上海日期、星期与状态文案、cadence 摘要、高级字段空值省略与显式清空发送 null；并用源码断言确认「定期反思」段、开关/频率/星期/时间/高级字段、运行按钮与状态行、当天已完成确认、`POST /reflection/run`、10 秒 `GET /reflection/status` 轮询和卸载清理都已接入。
+
 ## 本地开发与隔离验证
 
 开发时也可以不改 profile，直接用 patch 叠加：

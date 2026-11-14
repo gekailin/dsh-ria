@@ -1,6 +1,6 @@
 # Ria 定期反思（Daily Reflection）设计
 
-> 状态：设计稿；服务端、调度与 API 已实现（2026-11-14），设置页 UI 未实现
+> 状态：设计稿；服务端、调度、API 与设置页 UI 已实现（2026-11-14）
 > 工单：`ticket_mwdosvus_66255e499a`
 > 日期：2026-11-13（2026-11-13 修订：执行者改为独立 worker；2026-11-14 补齐编排层）
 > 范围：只设计 Ria 的定期反思；不改 worker 的日常行为，不改宿主会话存储，不新增后台 timer。
@@ -18,14 +18,14 @@
 - schedule 可选注入：只维护一条标题为「Ria: 定期反思」的 this_session 计划，rrule 按 Asia/Shanghai 的未来 occurrence 生成；改频率/时间/星期立即 edit，Ria 换会话后按 scheduleId 与 riaSessionId 重建；关闭只 edit active:false，不删除。宿主没有 schedule 服务时设置仍可保存，状态里给出原因。
 - startup 补跑：enabled、当期未完成、已过点且没有 active run 时，补最近一次；优先创建 90 秒后的一次性 schedule，没有 schedule 服务时直接注入 host_ 提醒；state 记录 lastReminderForDate/lastReminderAt，重复启动不重复提醒。
 - `test/reflection-run.mjs` 覆盖同日 skipped、运行中 locked、force 新 run、非法报告、abort、dispatch 失败与重试上限；`test/reflection-schedule.mjs` 覆盖设置校验正负例、schedule create/edit/pause、换 Ria 重建、202/409、startup 补跑幂等与无 schedule 降级。
+- 设置页 UI：Ria 设置卡片内新增「定期反思」段，包含开关、每天/每周、星期、时间、高级模型字段、现在启动按钮和状态行；打开时读 `GET /settings`，运行中每 10 秒读 `GET /reflection/status`，卸载时清理定时器。手工验证步骤见 §6.4，客户端纯函数与源码断言见 `test/reflection-settings-ui.mjs`。
 
 仍未实现（不要当成已有能力）：
 
-- 设置页 UI（开关、频率、时间、模型、"现在启动"按钮）：下一张工单 `ticket_mwgboym3_6f7d24e071`。服务端路由已就绪。
 - 报告渲染/归档 UI、微信通知全文。
 - 多天回填：只补最近一次，不逐天补历史。
 
-设置页 UI 落地前，自动触发与手动 HTTP 路由已可用，但仍可用 Ria 在会话里手动调用 `ria_reflect` 驱动一次反思。
+设置页 UI 之外，自动触发与手动 HTTP 路由也已可用；仍可在会话里手动调用 `ria_reflect` 驱动一次反思。
 
 **结论先行**：每次反思由 Ria 启动一个**全新的 worker** 执行。Ria 只做管理者：收 schedule reminder、申请运行锁、派发 instruction、等 worker 结束、审阅报告、写 state、收口 intake。worker 在干净上下文里，通过一组**只读专用工具**读取 Ria 主会话和候选 worker 的 transcript、工单与上下文，把报告写到本次 run 的目录；它不写 memory、不派活、不改代码、不重启。设置页提供“定期反思”开关、每天/每周、时间和“现在启动”；默认关闭。P0 先手动验证“Ria 派 worker”这条链路，P1 接自动 schedule 与设置页，P2 再把读取工具化、把 worker 收紧到只读 preset。
 
@@ -821,7 +821,40 @@ supersededBy: null
 - 设置页组件在 `lib/client.js:926` 的 `RiaSettingsSection`；slot 注册在 `lib/client.js:2559`。
 - 不在设置页显示运行日志/报告全文；只显示状态和路径提示。
 
-### 6.4 schedule 的 rrule
+### 6.4 设置页 UI 与手工验证
+
+组件仍在 `lib/client.js` 的 `RiaSettingsSection`；数据来自 `GET /settings`（含 `reflection` 与 `reflectionStatus`），保存只向 `POST /settings` 发送 `{reflection:{...}}` 子对象，"现在启动"走 `POST /reflection/run`。高级字段失焦保存；空值不写字段，只有显式清空已存值才发送 `null`。运行中每 10 秒读一次 `GET /reflection/status`，关闭设置页（组件卸载）或运行结束时清理定时器。
+
+前提：当前 dsh web 已加载包含本改动的 `lib/client.js`（真实 profile 需要同步安装副本并重启后才生效；开发验证可用 `.verify-home` 或 CDP 注入，不要为此修改宿主代码）。
+
+手工步骤：
+
+1. **打开设置**：账号菜单 → 设置 → Ria。页面停在 Ria 卡片；已有两个开关下方出现「定期反思」段。若之前从未开启，开关为空，说明文字为「每天 23:40 启动一个独立的 worker 做反思。默认关闭。」，状态行为「最近完成：— · 状态：暂无记录」。
+2. **开启**：勾选开关。Network 面板应看到 `POST /settings`，请求体只有 `{"reflection":{"enabled":true}}`；成功后状态行变为「当前：已开启」。若宿主没有 schedule 服务，设置仍保存、开关保持开启，并显示「自动计划：…」；若创建计划失败，服务端会把 enabled 回滚为 false，页面提示本次保存失败并刷新回滚后的状态。
+3. **改时间**：把时间改成 `22:15`。Network 面板应看到 `POST /settings`，请求体只有 `{"reflection":{"time":"22:15"}}`；刷新页面后时间仍为 `22:15`。开启状态下宿主会把已有计划改到新时间，UI 不展示计划详情，可用下一步的 `GET /reflection/status` 确认 `scheduleId` 没丢。
+4. **切每周**：频率选「每周」，旁边出现「星期」下拉；选「周三」。两次保存分别只带 `cadence` 与 `weekday`；刷新后说明文字变为「每周三 22:15 启动一个独立的 worker 做反思。默认关闭。」
+5. **关闭**：取消勾选。请求体只有 `{"reflection":{"enabled":false}}`；状态行变回「当前：已关闭」，`GET /reflection/status` 里 `scheduleId` 仍存在（关闭只暂停，不删除计划）。关闭状态下「现在启动」仍可点。
+6. **现在启动**：点击按钮。若 `lastCompletedDate` 已是今天，先弹「今天已完成，仍要再跑一次？」；点取消不应发请求，点确认才发 `POST /reflection/run` 且带 `{"force":true}`。接受后按钮先显示「已交给 Ria，等待状态…」，`activeRunId` 出现后显示「反思进行中…」并禁用；若已有运行，服务端返回 409，页面显示「已有反思正在运行，请稍后再看状态。」。
+7. **状态刷新**：Network 面板过滤 `reflection/status`，运行中应约每 10 秒请求一次；完成后状态行更新为新的 `lastCompletedDate` 与中文状态（完成/部分完成/失败/超时/已取消）。失败时额外显示红色「上次失败：…」，计划失败显示琥珀色「自动计划：…」。关闭设置窗口后，再等 10 秒不应出现新的 `reflection/status` 请求；重新打开设置页会先读一次 `GET /settings`。
+8. **强制重跑**：当天已完成后再点「现在启动」，确认后 `force=true`，报告写到 `<forDate>.manual-HHMM.md`，不覆盖已有报告；状态行的 `lastCompletedDate` 仍是当天。
+
+开发时可执行的控制台检查：
+
+~~~js
+await fetch('/plugins/dsh-ria/api/settings', { credentials: 'same-origin' }).then(r => r.json())
+await fetch('/plugins/dsh-ria/api/reflection/status', { credentials: 'same-origin' }).then(r => r.json())
+~~~
+
+自动化验证：
+
+~~~bash
+node test/reflection-settings-ui.mjs
+npm test
+~~~
+
+`test/reflection-settings-ui.mjs` 直接执行 `lib/client.js` 的纯函数：上海日期、星期/状态文案、cadence 摘要、高级字段空值/清空规则，并用源码断言确认开关、下拉、时间、运行按钮、状态行、确认文案、`POST /reflection/run`、10 秒轮询和 `clearInterval` 都已接上。
+
+### 6.5 schedule 的 rrule
 
 每天：
 

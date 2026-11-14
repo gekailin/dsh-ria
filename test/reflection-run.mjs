@@ -68,6 +68,12 @@ async function spawn(runId, forDate) {
 }
 
 try {
+  const emptyStatus = await call('ria_reflect', { action: 'status' })
+  assert.equal(emptyStatus.ok, true, JSON.stringify(emptyStatus))
+  assert.equal(emptyStatus.run, null)
+  assert.equal(emptyStatus.state.lastCompletedDate, null)
+  assert.equal(emptyStatus.settings.implemented, false)
+
   const dateA = '2026-11-13'
   const started = await begin(dateA)
   assert.equal(started.ok, true, JSON.stringify(started))
@@ -77,6 +83,11 @@ try {
   assert.match(started.instruction, new RegExp(started.runId))
   assert.ok(existsSync(lockFile), 'begin must create the lock')
   assert.equal(readReflectionState(stateDir).activeRunId, started.runId)
+
+  const activeStatus = await call('ria_reflect', { action: 'status' })
+  assert.equal(activeStatus.ok, true, JSON.stringify(activeStatus))
+  assert.equal(activeStatus.run.runId, started.runId)
+  assert.equal(activeStatus.run.status, 'starting')
 
   const worker = await spawn(started.runId, dateA)
   assert.deepEqual(fixture.visibleTools(worker).sort(), [

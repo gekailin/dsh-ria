@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, mkdirSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { zstdCompressSync } from 'node:zlib'
 import { createFixture } from './support/ria-fixture.mjs'
-import { makeReflectionRun, querySession, readArchiveSession, writeReflectionReport } from '../lib/reflection.mjs'
+import { makeReflectionRun, querySession, readArchiveSession, sessionArchiveInfo, writeReflectionReport } from '../lib/reflection.mjs'
 
 const base = Date.UTC(2026, 10, 14, 9, 0, 0)
 const t = offset => base + offset
@@ -58,6 +58,23 @@ const idleNote = querySession({
   seenRefs: new Set(),
 })
 assert.equal(idleNote.messages[0].injected, true)
+const tailOne = querySession({ run, events, mode: 'summary', tailTurns: 1, seenRefs: new Set() })
+assert.equal(tailOne.ok, true)
+assert.deepEqual(tailOne.window, { from: 8, to: 9 })
+assert.equal(tailOne.messages.length, 1)
+assert.equal(tailOne.messages[0].text, 'host note')
+const tailAll = querySession({ run, events, mode: 'summary', tailTurns: 2, seenRefs: new Set() })
+assert.equal(tailAll.messages.filter(item => item.role === 'user' || item.role === 'assistant').length, 3)
+assert.equal(tailAll.messages.at(-1).text, 'host note')
+const tailBudget = querySession({ run, events, mode: 'summary', tailTurns: 2, maxMessages: 1, seenRefs: new Set() })
+assert.equal(tailBudget.messages.length, 1)
+assert.equal(tailBudget.messages[0].text, 'host note')
+assert.equal(tailBudget.truncated, true)
+assert.equal(querySession({ run, events, mode: 'summary', tailTurns: 50, seenRefs: new Set() }).ok, true)
+assert.equal(querySession({ run, events, mode: 'summary', tailTurns: 0, seenRefs: new Set() }).code, 'invalid_window')
+assert.equal(querySession({ run, events, mode: 'summary', tailTurns: 1, refs: ['e2'], seenRefs: new Set() }).code, 'invalid_window')
+assert.equal(querySession({ run, events, mode: 'full', tailTurns: 1, seenRefs: new Set() }).code, 'invalid_window')
+
 const longEvents = [
   { type: 'user/message', time: t(2), data: { turn: 1, content: [{ type: 'text', text: 'y'.repeat(2500) }], source: { kind: 'user' } } },
   { type: 'assistant/message', time: t(3), data: { turn: 1, step: 1, message: { content: [{ type: 'text', text: 'still visible' }] } } },
@@ -112,6 +129,10 @@ const file = join(sessionDir, 'session.v4.jsonl.zstd')
 const badLine = Buffer.from('{not json\n')
 const frames = [zstdCompressSync(good), zstdCompressSync(badLine), zstdCompressSync(line(events[5]))]
 writeFileSync(file, Buffer.concat(frames))
+const archiveInfo = sessionArchiveInfo('session-archive', { dshHome: home })
+assert.equal(archiveInfo.file, file)
+assert.ok(Number.isFinite(archiveInfo.mtimeMs))
+assert.deepEqual(sessionArchiveInfo('session-missing', { dshHome: home }), { file: undefined, mtimeMs: undefined })
 const archive = readArchiveSession('session-archive', { dshHome: home })
 assert.equal(archive.corruptFrames, 1)
 assert.equal(archive.events.length, 3)
@@ -131,10 +152,34 @@ assert.equal(tooLarge.code, 'report_too_large')
 const empty = writeReflectionReport({ run: runReport, markdown: '', status: 'partial', counts: {} })
 assert.equal(empty.code, 'report_empty')
 
-const fixture = await createFixture({ sessionEvents: { 'session-ria': events } })
+const liveEvents = events.map((event, index) => ({ ...event, time: Date.now() - 60000 + index * 1000 }))
+const staleEvents = [{
+  type: 'user/message',
+  time: Date.now() - 3600000,
+  data: { turn: 1, content: [{ type: 'text', text: 'yesterday' }], source: { kind: 'user' } },
+}]
+// A cold log whose mtime predates the window cannot contain a window event.
+// The fixture also serves live in-window events for it, so only the mtime
+// prefilter can keep this candidate out of the status list.
+const logHome = mkdtempSync(join(tmpdir(), 'dsh-ria-loghome-'))
+const staleLogDir = join(logHome, 'sessions', '--workspace--', 'session-stale-log')
+mkdirSync(staleLogDir, { recursive: true })
+const staleLog = join(staleLogDir, 'session.v4.jsonl.zstd')
+writeFileSync(staleLog, zstdCompressSync(Buffer.concat([
+  line({ type: 'session', version: 4, id: 'session-stale-log' }),
+  line({ type: 'user/message', time: Date.now() - 30000, data: { turn: 1, content: [{ type: 'text', text: 'should be filtered' }], source: { kind: 'user' } } }),
+])))
+const oldTime = new Date(Date.now() - 3600000)
+utimesSync(staleLog, oldTime, oldTime)
+const previousDshHome = process.env.DSH_HOME
+process.env.DSH_HOME = logHome
+const fixture = await createFixture({
+  sessionEvents: { 'session-ria': liveEvents, 'session-worker': staleEvents, 'session-stale-log': liveEvents },
+  extraSessions: [{ sessionId: 'session-stale-log', running: false, blank: false, updatedAt: 9, cwd: undefined }],
+})
 try {
   assert.equal(fixture.installed.has('ria_reflect_status'), false)
-  const opened = fixture.service.openReflectionRun({ runId: 'refl-run-1', candidates: ['session-ria'], windowStart: Date.now() - 1000, windowEnd: Date.now() + 60000 })
+  const opened = fixture.service.openReflectionRun({ runId: 'refl-run-1', candidates: ['session-ria', 'session-worker', 'session-stale-log'], windowStart: Date.now() - 120000, windowEnd: Date.now() + 60000 })
   const spawned = await fixture.call('ria_spawn', { cwd: fixture.stateDir, reflectionRunId: opened.runId, title: 'Reflector' })
   assert.equal(spawned.ok, true)
   assert.equal(spawned.reflectionRunId, opened.runId)
@@ -150,11 +195,29 @@ try {
   const status = await call('ria_reflect_status')
   assert.equal(status.runId, opened.runId)
   assert.equal(status.state, 'running')
-  assert.equal(status.candidates.some(item => item.sessionId === reflectId), true)
+  assert.equal(status.candidates.some(item => item.sessionId === 'session-ria'), true)
+  assert.equal(status.candidates.some(item => item.sessionId === 'session-worker'), false)
+  assert.equal(status.candidates.some(item => item.sessionId === 'session-stale-log'), false)
+  assert.equal(status.candidates.some(item => item.sessionId === reflectId), false)
+  assert.equal(status.candidateTotal, opened.candidates.length)
+  assert.equal(status.candidatesTruncated, false)
   assert.equal(status.reportPath, join(fixture.stateDir, 'reflections', 'runs', 'refl-run-1', 'report.partial.md'))
+  const allStatus = await call('ria_reflect_status', { scope: 'all' })
+  assert.equal(allStatus.candidates.some(item => item.sessionId === 'session-worker'), true)
+  assert.equal(allStatus.candidates.some(item => item.sessionId === 'session-stale-log'), true)
+  assert.equal(allStatus.candidates.some(item => item.sessionId === reflectId), true)
+  assert.equal(allStatus.reportPath, join(fixture.stateDir, 'reflections', 'runs', 'refl-run-1', 'report.partial.md'))
 
   const listed = await call('ria_reflect_read_sessions')
+  assert.equal(listed.scope, 'candidates')
   assert.ok(listed.sessions.some(item => item.sessionId === 'session-ria'))
+  assert.equal(listed.sessions.some(item => item.sessionId === 'session-worker'), false)
+  assert.equal(listed.sessions.some(item => item.sessionId === 'session-stale-log'), false)
+  assert.equal(listed.sessions.some(item => item.sessionId === reflectId), false)
+  const allCandidates = await call('ria_reflect_read_sessions', { scope: 'all' })
+  assert.ok(allCandidates.sessions.some(item => item.sessionId === 'session-worker'))
+  assert.ok(allCandidates.sessions.some(item => item.sessionId === 'session-stale-log'))
+  assert.ok(allCandidates.sessions.some(item => item.sessionId === reflectId))
 
   const sessionSummary = await call('ria_reflect_read_session', { sessionId: 'session-ria', mode: 'summary', from: 0, to: 9 })
   assert.equal(sessionSummary.ok, true)
@@ -169,7 +232,10 @@ try {
   assert.ok(sessionRange.messages.some(item => item.role === 'assistant' && item.text === 'first answer'))
   assert.ok(sessionRange.messages.some(item => item.role === 'assistant' && item.text === 'final answer'))
 
-  const denied = await call('ria_reflect_read_session', { sessionId: 'session-worker' })
+  const staleRead = await call('ria_reflect_read_session', { sessionId: 'session-worker' })
+  assert.equal(staleRead.ok, true)
+  assert.equal(staleRead.messages.length, 0)
+  const denied = await call('ria_reflect_read_session', { sessionId: 'session-no-image' })
   assert.equal(denied.code, 'session_not_allowed')
 
   fixture.setRunning(reflectId, true)
@@ -178,6 +244,18 @@ try {
   const tickets = await call('ria_reflect_read_tickets', { scope: 'window' })
   assert.equal(tickets.tickets.some(item => item.ticketId === ticket.ticket.ticketId), true)
   assert.equal(tickets.tickets.find(item => item.ticketId === ticket.ticket.ticketId).goal, 'reflect this')
+  assert.deepEqual(Object.keys(tickets.tickets.find(item => item.ticketId === ticket.ticket.ticketId)).sort(), ['executor', 'goal', 'status', 'ticketId', 'updatedAt', 'waitingOn'])
+  const fullTicket = await call('ria_reflect_read_tickets', { scope: 'window', detail: 'full' })
+  const fullView = fullTicket.tickets.find(item => item.ticketId === ticket.ticket.ticketId)
+  assert.ok(Array.isArray(fullView.checklist))
+  assert.equal(fullTicket.detail, 'full')
+
+  const closedTicket = await fixture.call('ria_ticket', { goal: 'already done', executor: 'self' })
+  await fixture.call('ria_ticket', { ticketId: closedTicket.ticket.ticketId, status: 'working' })
+  await fixture.call('ria_ticket', { ticketId: closedTicket.ticket.ticketId, status: 'done' })
+  const openTickets = await call('ria_reflect_read_tickets', { scope: 'open' })
+  assert.equal(openTickets.tickets.some(item => item.ticketId === closedTicket.ticket.ticketId), false)
+  assert.equal(openTickets.tickets.some(item => item.ticketId === ticket.ticket.ticketId), true)
 
   writeFileSync(join(fixture.stateDir, 'memory.md'), 'remember sk-secret-value\n')
   const memory = await call('ria_reflect_read_context', { kind: 'memory' })
@@ -197,8 +275,11 @@ try {
   assert.equal(fixture.service.reflectionBindings.has(reflectId), false)
 } finally {
   fixture.cleanup()
+  if (previousDshHome === undefined) delete process.env.DSH_HOME
+  else process.env.DSH_HOME = previousDshHome
 }
 
+rmSync(logHome, { recursive: true, force: true })
 rmSync(unitStateDir, { recursive: true, force: true })
 rmSync(home, { recursive: true, force: true })
 console.log('reflection ok')

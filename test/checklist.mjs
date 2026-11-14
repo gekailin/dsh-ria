@@ -123,6 +123,56 @@ try {
   await fixture.call('ria_ticket', { ticketId, status: 'done' })
   await rejectsWith(fixture.call('ria_ticket', { ticketId, check: { index: 0, done: true } }), 'checklist_invalid')
 
+  // Marking done with open checklist items warns and records them in resolution.
+  const unfinished = await fixture.call('ria_ticket', {
+    goal: 'finish with open steps',
+    executor: 'self',
+    checklist: ['done step', { text: 'done too', done: true }, 'still open'],
+  })
+  await fixture.call('ria_ticket', { ticketId: unfinished.ticket.ticketId, status: 'working' })
+  const finished = await fixture.call('ria_ticket', { ticketId: unfinished.ticket.ticketId, status: 'done' })
+  assert.match(finished.warning, /清单还有 2 项未勾选/)
+  const finishedRaw = fixture.service.store.ticket(unfinished.ticket.ticketId)
+  assert.deepEqual(finishedRaw.resolution.checklistPending, {
+    total: 3,
+    done: 1,
+    pending: ['done step', 'still open'],
+  })
+
+  // A checklist sent together with status=done is part of the final state.
+  const late = await fixture.call('ria_ticket', {
+    goal: 'add a step while finishing',
+    executor: 'self',
+    checklist: ['first step'],
+  })
+  await fixture.call('ria_ticket', { ticketId: late.ticket.ticketId, status: 'working' })
+  const lateDone = await fixture.call('ria_ticket', {
+    ticketId: late.ticket.ticketId,
+    status: 'done',
+    checklist: ['second open step'],
+  })
+  assert.match(lateDone.warning, /清单还有 2 项未勾选/)
+  assert.deepEqual(fixture.service.store.ticket(late.ticket.ticketId).resolution.checklistPending.pending, ['first step', 'second open step'])
+
+  // A merge keeps the target's checklist and never inherits the source's.
+  const mergeSource = await fixture.call('ria_ticket', {
+    goal: 'merge source',
+    executor: 'self',
+    checklist: ['source step'],
+  })
+  const mergeTarget = await fixture.call('ria_ticket', {
+    goal: 'merge target',
+    executor: 'self',
+    checklist: [{ text: 'target step', done: true }],
+  })
+  const merged = await fixture.call('ria_ticket', {
+    action: 'merge',
+    sourceTicketId: mergeSource.ticket.ticketId,
+    targetTicketId: mergeTarget.ticket.ticketId,
+  })
+  assert.deepEqual(merged.target.checklist, [{ text: 'target step', done: true }])
+  assert.deepEqual(fixture.service.store.ticket(mergeTarget.ticket.ticketId).checklist, [{ text: 'target step', done: true }])
+
   // Archive summaries carry the total, done count, and at most five pending items.
   const wide = await fixture.call('ria_ticket', {
     goal: 'wide checklist',

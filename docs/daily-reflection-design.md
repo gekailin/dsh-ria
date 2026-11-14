@@ -453,10 +453,10 @@ ticketId
 
 | 工具 | 参数 | 返回 | 边界 |
 | --- | --- | --- | --- |
-| `ria_reflect_status` | 无 | `{runId, forDate, window, deadlineAt, remainingMs, candidates, limits, memoryBytes, reportPath, state}` | 只返回绑定 run；不返回其他 run |
-| `ria_reflect_read_tickets` | `{scope:"window" / "open" / "history", status?, executor?, limit?}` | `{tickets, truncated}` | `limit` 1–200，默认 80；每条文本截 500 字；不返回完整对话 |
-| `ria_reflect_read_sessions` | `{scope:"candidates" / "recent", limit?}` | `{sessions:[{sessionId,title,running,blank,lastUsedAt,ticketIds}]}` | `limit` 1–20；只列本 run 候选/最近 worker，不任意全库搜索 |
-| `ria_reflect_read_session` | `{sessionId, mode?: "summary" / "full", from?, to?, refs?, maxMessages?, maxChars?}` | `{mode, messages, lastTurn, window, stats, corruptFrames, truncated, source}` | `mode` 默认 `summary`；`maxMessages` 1–200（summary 默认 50 / full 默认 20）；`maxChars` 1–40000（summary 默认 10000 / full 默认 40000）；`from/to` 为 ISO 时间或原始事件 0-based index；`refs` 1–50，与 `from/to` 互斥；full 必须给 `refs` 或 `from/to` 之一；只允许本 run 候选 sessionId；窗口夹在 run 窗口内；只读；不 resume；详见下方读取契约 |
+| `ria_reflect_status` | `scope?`（candidates 默认 / all） | `{runId, forDate, window, deadlineAt, remainingMs, candidates, candidateTotal, candidatesTruncated, limits, memoryBytes, reportPath, state}` | 只返回绑定 run；默认候选只含窗口内有活动的会话（最多 50），`scope=all` 才给全量候选；`candidateTotal` 是候选总数（含被过滤的），`candidatesTruncated` 只表示列表撞到 50 条上限 |
+| `ria_reflect_read_tickets` | `{scope:"window" / "open" / "history", status?, executor?, detail?, limit?}` | `{detail, tickets, total, truncated}` | 默认 `detail=summary`，每条只给 ticketId/goal/status/waitingOn/executor/updatedAt；`full` 才给 acceptance/blockedReason/attention/resolution/failure/dependsOn/checklist/progress；`limit` 1–200，默认 80；`scope=open` 只含非终态；文本截 500 字；不返回完整对话 |
+| `ria_reflect_read_sessions` | `{scope:"candidates" / "recent" / "all", limit?}` | `{scope, sessions:[{sessionId,title,running,blank,lastUsedAt,ticketIds}], total, truncated}` | `limit` 1–50，默认 50；candidates 只列窗口内有活动的候选，recent 只列最近 7 天 worker，all 才给全量候选；candidates/all 的 `total` 是候选总数（含无活动的），recent 的 `total` 是 7 天窗口内 worker 数；不任意全库搜索 |
+| `ria_reflect_read_session` | `{sessionId, mode?: "summary" / "full", from?, to?, refs?, tailTurns?, maxMessages?, maxChars?}` | `{mode, messages, lastTurn, window, stats, corruptFrames, truncated, source}` | `mode` 默认 `summary`；`tailTurns` 1–50，只用于 summary，不能与 `refs/from/to` 同用，返回仍时间升序；`maxMessages` 1–200（summary 默认 50 / full 默认 20）；`maxChars` 1–40000（summary 默认 10000 / full 默认 40000）；`from/to` 为 ISO 时间或原始事件 0-based index；`refs` 1–50，与 `from/to` 互斥；full 必须给 `refs` 或 `from/to` 之一；只允许本 run 候选 sessionId；窗口夹在 run 窗口内；只读；不 resume；详见下方读取契约 |
 | `ria_reflect_read_context` | `{kind:"memory" / "outbox" / "schedule"}` | `{text, bytes, truncated}` | memory ≤4KB；outbox 只取窗口内/未送达 ≤50 条；schedule 只读反思任务 |
 | `ria_reflect_report` | `{markdown, status:"complete" / "partial", counts, degraded?}` | `{path, bytes, sha256}` | 只写 `runs/<runId>/report.partial.md`；≤30KB；0600；原子写；拒绝路径参数 |
 
@@ -468,6 +468,7 @@ ticketId
 - `from` / `to`：ISO 8601 时间（含时区）或原始事件 0-based index（含 tool/thinking 事件，不是 summary 数组下标）；区间左闭右开；两参数必须同类型，混用返回 `invalid_window`；数字越界夹到 0–len。summary 省略时取 run 窗口两端；full 至少要给 `refs` 或 `from`/`to` 之一，否则返回 `invalid_window`，防止一次展开整段会话。
 - `refs`：1–50 个本会话返回过的 `ref`；与 `from/to` 互斥；未知 ref 或 run 窗口外的 ref 跳过并计入 `truncated`。`full + refs` 是定点升级的主路径。
 - `maxMessages`：summary 限制返回的摘要条目数（折叠后），full 限制返回的原始事件数；`maxChars` 限制所有 `text` 与 `brief.preview` 的合计字符数，先到先停。
+- `tailTurns`：summary 专用，1–50。按 `event.turn` 从窗口内最后一个 turn 往回取 N 个不同 turn，保留这些 turn 的全部事件；返回结果仍按时间升序。窗口 `from/to` 取保留区间的首尾事件下标。没有 turn 信息时退化为“最后 N 个事件”。不能与 `refs` / `from` / `to` 同用，full 模式不支持；与预算同时生效时先保最近内容，再置 `truncated`。
 - `stats`：`{messages, toolCalls, toolResults, thoughts, omittedChars}`。`messages` 为返回的 user/assistant 条数，`toolCalls/toolResults/thoughts` 为窗口内原始事件计数，`omittedChars` 为被折叠、合并或截断的字符估算。
 - `window`：实际生效的 `{from, to}`；`truncated` 表示还有符合条件的内容未返回；`corruptFrames` 只对原始日志读取有意义；`source` 为 `live/events/archive`。
 
@@ -961,7 +962,7 @@ RRULE:FREQ=WEEKLY;BYDAY=MO
 
 **Tier 0：结构化数据（必读，<=20KB 文本）**
 
-- `ria_reflect_read_tickets`：当天窗口内的工单、所有非终态、`recovery.count>0`、窗口内 feedback。
+- `ria_reflect_read_tickets`：当天窗口内的工单、所有非终态、`recovery.count>0`、窗口内 feedback。默认 `detail=summary` 只取 ticketId/goal/status/waitingOn/executor/updatedAt；需要证据细节（blockedReason、attempts、resolution）的工单再单独 `detail=full`，不整表展开。
 - 归档：筛 `closedAt` 在窗口内；最多 50 条。
 - outbox：只取 `status!=delivered` 或 `deliveredAt` 在窗口内；最多 50 条。
 - memory：全文（<=4KB）。
@@ -969,7 +970,7 @@ RRULE:FREQ=WEEKLY;BYDAY=MO
 
 **Tier 1：会话摘要（默认 summary）**
 
-- 每个候选会话调用 `ria_reflect_read_session({mode:"summary", maxMessages:50, maxChars:10000})`；超过 6 个会话时降到 40 条，Ria 自己 80 条。
+- 每个候选会话调用 `ria_reflect_read_session({mode:"summary", tailTurns:10, maxChars:10000})`，从最近 turn 往回读；要更早的证据再给 `from/to`。超过 6 个会话时降到 `tailTurns:8`，Ria 自己用 `tailTurns:16`。`maxMessages` 仍是硬上限（默认 50），预算不够时先保留最近内容并标 `truncated`。
 - summary 只保留用户消息、每个 turn 最后一条 assistant 文本，以及折叠后的 tool/thinking brief；不 resume。
 - 典型 50 条原始事件压到约 24–28 条摘要（user + 最后 assistant + 少量 brief），平均 120 字 ≈ 2.9–3.4k/会话；8 个会话约 23–27k；加 Tier 0 的 20k，总计约 43–47k。
 - 对比旧稿 8 × 45 条 × 150 字 ≈ 54k + 20k = 74k，省 27–31k，留给 Tier 2。若按 8 × 50 条摘要硬算，8 × 50 × 120 ≈ 48k，仍会挤掉 Tier 2；所以 50 是单会话硬上限，预算按典型 24–28 条控制，超了先降条数。
@@ -1249,10 +1250,10 @@ deadline = <ISO 时间>（15 分钟硬顶）
 2. 调 ria_reflect_read_tickets 读窗口内工单与归档；调 ria_reflect_read_context
    读 memory/outbox/schedule。先读结构化数据，再决定读哪些会话。
 3. 按候选优先级选最多 8 个会话；每个先用
-   ria_reflect_read_session({mode:"summary", maxMessages:50, maxChars:10000})
-   读最近 50 条原始事件（超过 6 个会话时 40 条；Ria 自己 80 条）。
-   summary 只保留用户消息和每 turn 最后一条 assistant，tool/thinking 是 brief；
-   只读窗口内内容；不 resume。
+   ria_reflect_read_session({mode:"summary", tailTurns:10, maxChars:10000})
+   从最近 turn 往回读（要看更早内容时改用 from/to）。候选已经过窗口活动过滤，
+   不再需要自己排除整天没动的会话。summary 只保留用户消息和每 turn 最后一条
+   assistant，tool/thinking 是 brief；只读窗口内内容；不 resume。
 4. 只对异常工单定向深读：用 mode:"full" + refs（从 summary 挑）或 from/to 窗口，
    maxChars:40000；最多 3 个会话、每会话 3 个窗口/50 个 ref，整会话最多 4MB 压缩/
    30KB 文本；每条截 2000 字；不整段 full。坏帧跳过并记录。

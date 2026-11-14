@@ -1,6 +1,6 @@
 # 工具与 worker 管理
 
-Ria 通过 run_code SDK 调用 12 个 `ria_*` 工具。工具只在 Ria 的 Agent ctx 上注册，worker 侧不需要安装任何东西。
+Ria 通过 run_code SDK 调用 13 个 `ria_*` 工具（含反思编排 `ria_reflect`）。工具只在 Ria 的 Agent ctx 上注册，worker 侧不需要安装任何东西。
 
 ## 工具
 
@@ -112,9 +112,21 @@ Ria 通过宿主模型注册表（`ctx.get('llm').listProviders()/listModels(pro
 
 Ria 的系统 prompt 要求：每条真实用户消息都要用 `ria_resolve` 给出归宿（answered/work/merge/split/control/blocked），不能让它悄悄消失；需求不明确时先和用户澄清，再下发；不要凭猜测开工；任务要有验收标准；进度按需查询；经验按 case 集总结（需求、错误做法、正确做法），默认只在对话里输出，用户指定路径时才写文件；重启后先 read 再决定是否继续；收到 `[Worker idle]` 时先 read，确认完成才关工单，等用户输入就标 blocked；worker 明确拒绝任务或用户取消/叫停 worker turn 时，标 blocked 并停下来问用户下一步，不自行改派、重发或换方案；防误发提示由 agent system prompt section 提供，任务消息本身不加前缀；派发必须提供 note（一两句话：派给谁、做什么、用户接下来看到什么），Host 会把它显示成 Ria 会话当前轮次末尾的卡片，并同步一条微信文本；缺 note 或空白会直接报错、不投递，也不会结束本轮；成功派发后立即结束本轮，不再 sleep/poll；不给忙碌 worker（有运行中的 turn 或非空 pending 队列）用 queue 模式排队，先后顺序用 dependsOn 表达，steer 只用于同步信息、绝不下发新任务；上游 failed/cancelled 的 [Queue blocked] 要先报告用户再决定，不自行跳过或改写需求；用户要求换 worker 模型时用 ria_model，新建 worker 要指定模型时用 ria_spawn 的 model 参数；只有用户明确要求时才使用 ria_grant，绝不自行放宽 worker 权限；用户没指定 worker 时只从 scope=recent 的近期 worker 里挑，近期没有合适的就先问用户，不遍历全部会话、不凭空挑。
 
+## 反思编排工具（仅 Ria）
+
+ria_reflect 是反思的编排入口，只注册给 Ria。它管理 `reflections/` 下的 run、锁和状态文件，不读取长日志，也不创建 worker。
+
+- `action=status`：返回 {state, run, schedule, settings}。run 是当前 active run 或 state.lastRunId 的摘要；settings 目前是只读占位（enabled=false、cadence=daily、time=23:40、implemented=false），设置页与 settings.reflection 本轮未实现。
+- `action=begin`：参数 forDate?、trigger（manual|schedule，默认 manual）、force?，以及可选的 model/provider/reasoningEffort。默认 forDate 为 Asia/Shanghai 今天；计算左闭右开窗口；做三重幂等（state.lastCompletedDate、`.lock` 的 O_CREAT|O_EXCL、`runs/<runId>/run.json`）。同日已 complete 且非 force 返回 skipped:"completed"；已有 live run 返回 locked:true。成功返回 {runId, forDate, window, reportPath, instruction, spawn, attempt, locked:false}，**不创建 worker**。spawn 建议 `agentPreset=minimal`、`reflectionRunId=runId`、cwd=stateDir。
+- `action=dispatch`：参数 runId、sessionId。只接受刚绑定到该 run 的 starting worker；用 `sessionController.prompt` 以 `mode=queue` 发 instruction，写 workerSessionId/dispatchedAt/deadlineAt=+15min 并把 run 置为 running。prompt 抛错时把 run 标 failed、释放锁并返回 dispatch_failed 与 attempts。
+- `action=finish`：参数 runId、status（complete|partial）、counts?、degraded?。读取 worker 写的 `runs/<runId>/report.partial.md`，校验 front matter（schema=2、runId、status、date、timezone、window、trigger、attempt、workerSessionId、计数、degraded）和八个固定标题；非法或缺失返回 report_invalid/report_missing 并把 run 标 failed、释放锁。合法时原子写正式报告（complete → `<forDate>.md`，partial → `<forDate>.partial.md`；同日重复且已有报告 → `<forDate>.manual-HHMM.md`），再写 state.json、删匹配锁、解绑 worker。只有 complete 推进 lastCompletedDate。
+- `action=abort`：参数 runId、reason、cancelled?。标记 cancelled/aborted，释放匹配的锁，不产生正式报告。
+
+锁的 TTL 为 20 分钟，但过期不等于可抢：worker 仍 running 时仍返回 locked；worker 不存在或已 idle 且没有 partial 报告时才接管，旧 run 标 abandoned。自动重试最多 1 次：同 forDate 的第一次失败后，Ria 可再次 begin 得到 attempt=2；第二次失败后 begin 返回 skipped:"failed"，需用户决定。没有新增后台 timer，deadline 只在 status/begin 等已有事件里评估。反思 worker 创建后只保留 6 个只读 `ria_reflect_*` 工具：绑定安装完成后调用 `agent.ctx.tools.restrict({allow: []})` 移除全部全局工具（真实宿主实测可见工具恰好 6 个，无 shell/写文件/网络/MCP）。
+
 ## 反思读取工具（仅反思 worker）
 
-反思 worker 由编排层用 `ria_spawn({reflectionRunId})` 创建；创建前必须先打开 run 并写入绑定，绑定命中时只给这个 worker 注册下面 6 个工具。Ria 自己的 12 个 `ria_*` 工具、普通 worker 的会话都看不到这些工具；普通 worker 调它们会得到 unknown_tool。它们全部只读，不会 resume 冷会话，也不会写 `ria.json` 或会话日志。
+反思 worker 由编排层用 `ria_spawn({reflectionRunId})` 创建；创建前必须先打开 run 并写入绑定，绑定命中时只给这个 worker 注册下面 6 个工具。Ria 自己的 13 个 `ria_*` 工具、普通 worker 的会话都看不到这些工具；普通 worker 调它们会得到 unknown_tool。它们全部只读，不会 resume 冷会话，也不会写 `ria.json` 或会话日志。
 
 - `ria_reflect_status`：当前 run 的 runId、forDate、window、deadline/remainingMs、候选会话、limits、memoryBytes、reportPath、state。
 - `ria_reflect_read_tickets`：scope=window/open/history，可按 status/executor 过滤；limit 1–200，默认 80；每条 goal/acceptance/blockedReason/checklist 截到 500 字。

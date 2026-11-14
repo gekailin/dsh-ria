@@ -1,9 +1,28 @@
 # Ria 定期反思（Daily Reflection）设计
 
-> 状态：设计稿，未实现
+> 状态：设计稿；编排层已实现（2026-11-14），设置页与自动触发未实现
 > 工单：`ticket_mwdosvus_66255e499a`
-> 日期：2026-11-13（2026-11-13 修订：执行者改为独立 worker）
+> 日期：2026-11-13（2026-11-13 修订：执行者改为独立 worker；2026-11-14 补齐编排层）
 > 范围：只设计 Ria 的定期反思；不改 worker 的日常行为，不改宿主会话存储，不新增后台 timer。
+
+## 实现状态（2026-11-14）
+
+已实现：
+
+- 6 个只读 worker 工具：ria_reflect_status / read_tickets / read_sessions / read_session / read_context / report。
+- Ria 侧 `ria_reflect` 五动作 status / begin / dispatch / finish / abort；状态文件 `reflections/state.json`、`reflections/.lock`、`reflections/runs/<runId>/run.json`；三重幂等、20 分钟锁 TTL 与接管、attempts、自动重试上限 1 次、没有新增后台 timer。
+- 报告 front matter 与八个固定标题校验；正式报告 `<forDate>.md` / `<forDate>.partial.md` / `<forDate>.manual-HHMM.md` 原子写；只有 complete 推进 lastCompletedDate。
+- 安全收缩：反思 worker 绑定后只保留 6 个只读工具；在真实宿主 ToolsService 上 `restrict({allow: []})` 实测可见工具恰好 6 个。
+- `test/reflection-run.mjs` 覆盖同日 skipped、运行中 locked、force 新 run、非法报告、abort、dispatch 失败与重试上限。
+
+本轮明确未实现（不要当成已有能力）：
+
+- `POST /reflection/run`、`GET /reflection/status` 等 HTTP 路由。
+- `settings.reflection`（enabled/cadence/time/model 等）与设置页 UI。
+- schedule 自动触发、"现在启动"按钮。
+- 报告渲染/归档 UI、微信通知全文。
+
+以上未实现项落地前，只能由 Ria 在会话里手动调用 `ria_reflect` 驱动一次反思。
 
 **结论先行**：每次反思由 Ria 启动一个**全新的 worker** 执行。Ria 只做管理者：收 schedule reminder、申请运行锁、派发 instruction、等 worker 结束、审阅报告、写 state、收口 intake。worker 在干净上下文里，通过一组**只读专用工具**读取 Ria 主会话和候选 worker 的 transcript、工单与上下文，把报告写到本次 run 的目录；它不写 memory、不派活、不改代码、不重启。设置页提供“定期反思”开关、每天/每周、时间和“现在启动”；默认关闭。P0 先手动验证“Ria 派 worker”这条链路，P1 接自动 schedule 与设置页，P2 再把读取工具化、把 worker 收紧到只读 preset。
 

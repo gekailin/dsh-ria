@@ -346,17 +346,30 @@ startup 恢复顺序不变：先恢复未收敛工单，再做反思的只读 re
 
 schedule reminder 可能以普通用户消息进入 Ria 的 turn，被 `agent/pre-step` 登记成 intake；设置页“现在启动”用 `host_` 前缀注入，通常不进 intake。现有 intake 只捕获 `source.kind === "user"` 且 `rpcId` 不以 `host_` 开头的消息（`lib/index.js:2144-2145`），所以 schedule 是否被捕获取决于宿主给它的 source；按“可能被捕获”设计，不能让它悬空，也不能为每次反思建一张一年 365 天不断增长的工单。
 
-- **begin 成功后立即定性**：找到本 turn 对应的 intake，调用 `ria_resolve(ticketId, kind="answered", summary="定期反思已受理，报告完成后另行通知")`；`run.json` 记 `intakeTicketId` 与 `intakeDisposition="answered"`。这里的 answered 只表示“提醒已被接收”，不代表反思完成；完成状态在 `run.json/state.json`。
+- **begin 时绑定，不在 finish 时猜**：只从当前 Ria turn 的 intake 中选一条——goal、`origin.text` 或 acceptance 命中 `/反思|反省|reflection/i`，否则 goal 包含 `forDate`；多条取最早一条，没有就记 `intakeTicketId=null`。**不再用“本 turn 只有一个 intake”兜底**：同 turn 里可能还有 README、发布清单等无关消息，猜错会在 finish 时把别人关掉。绑定结果写入 `run.json`，是后续唯一允许关闭的 id。
+- **begin 成功后立即定性**：对绑定 id 调用 `ria_resolve(ticketId, kind="answered", summary="定期反思已受理，报告完成后另行通知")`；`run.json` 记 `intakeTicketId` 与 `intakeDisposition="answered"`。这里的 answered 只表示“提醒已被接收”，不代表反思完成；完成状态在 `run.json/state.json`。若没有绑定，begin 不关任何 intake。
 - **已完成/已有运行**：同样 `answered`，summary 写“今天已反省”或“已有反思在跑”，不 spawn。
 - **begin 前失败且需要用户决定**（非法日期、设置缺失、锁被 stale worker 占住）：`blocked`，`waitingOn=user`，`attention.kind=reflection_blocked`，不 spawn；等用户回答。
 - **批次提醒**：`[SCHEDULE REMINDER BATCH]` 可能在同一 turn 里包含多个到期任务；反思只认 `state.scheduleId` 对应的一条，但 intake 仍按“一条消息一条归宿”收口一次，不拆成多条，也不为其他到期任务建反思。
 - **不能为了反思跳过其他 intake**：同一 turn 的其他用户消息仍按原规则逐条 `ria_resolve`。
-- **finish 时兜底**：若 `intakeTicketId` 非空且仍未定性（例如 Ria 在 begin 后崩溃，或宿主晚登记），`finish` 补一次：
+- **finish 只处理绑定的 id**：只读 `run.intakeTicketId`，绝不重新扫描当前 turn。若该票仍未定性（例如 Ria 在 begin 后崩溃，或宿主晚登记），`finish` 补一次：
   - `complete/partial` → `answered`，summary 带报告路径；
   - `failed/timed_out` → `blocked`，`waitingOn=user`，`attention.kind=reflection_failed`；
   - 已定性则不再调用 `ria_resolve`（每个 intake 只能定性一次）。
+- **关闭前做相关性校验**：绑定票的 goal、`origin.text`、acceptance 必须仍命中反思词或 `forDate`；不匹配时不关闭，返回 `code="intake_unrelated"` 和 warning（`未关闭工单 <id>：它的目标与本次反思不相关。`），warning 同时写进 `run.warnings` 与工具返回值。票不存在返回 `intake_missing` warning；票已被别的路径定性则原样返回状态，不重复 resolve。
 - **未捕获**：若 reminder 的 `source.kind !== "user"`，或 `source.rpcId` 以 `host_` 开头，intake 不会登记，`intakeTicketId=null`；`finish` 只写 state 并回用户，不补造工单。
 - **手动“现在启动”**：宿主注入 `[REFLECTION MANUAL]` 时使用 `host_` 前缀，不进 intake；若实现改成普通用户消息投递，则按上面的 captured 规则 `answered`，不覆盖原报告。
+
+### 3.9 成本统计与 run/state 的归属
+
+报告 front matter 里的 `durationMs`、`compressedBytesRead`、`decompressedBytesRead` 由宿主在 `finish` 时覆盖，模型写的值一律不信任；模板只写 `0` 占位，不要求模型估算。
+
+- `durationMs = closedAt - (dispatchedAt || createdAt)`，单位毫秒；没有 dispatch 时从 run 创建时间算起，结果夹到非负整数。
+- `compressedBytesRead` 只在读归档时累加：按 zstd 帧头扫描，累加每个实际解压帧的压缩字节（坏帧也算，因为确实读进来了）。
+- `decompressedBytesRead`：归档路径累加每个 zstd 帧解压后的原始字节；live/events 路径没有归档文件，按读出事件的 `JSON.stringify` UTF-8 字节计，口径明确写进 `run.stats`。
+- `readCalls`：`ria_reflect_read_session` 成功返回一次加一，供 status/审计看实际读了几次；`run.stats` 随 `run.json` 持久化。
+- 人工不直接改 `reflections/runs/<runId>/run.json` 和 `reflections/state.json`：这两个文件由 begin/dispatch/finish/abort 维护；手改会让锁、`lastCompletedDate`、`activeRunId` 与报告不一致。需要重跑用 `force=true`，需要放弃用 `abort`，需要补跑走 schedule 的一次性任务。
+- finish 时先写 final 报告、再写 run/state、最后结算绑定 intake；intake 的 warning 也会写回 `run.warnings`，因此审计时以 `run.json` 为准，而不是只看工具返回值。
 
 ---
 
@@ -1004,6 +1017,8 @@ front matter 记录：
 - `compressedBytesRead` / `decompressedBytesRead`；
 - `durationMs`；
 - `degraded`（数组：`drop-low-priority`、`read-30`、`no-raw`、`truncate`、`corrupt`）。
+
+其中前三项由宿主在 finish 时按 `run.stats` 与 run 时间戳覆盖，模型只写 0 占位；口径见 §3.9。
 
 连续 3 次超 80k tokens 或 12 分钟，下一周把默认上限下调 20%。
 

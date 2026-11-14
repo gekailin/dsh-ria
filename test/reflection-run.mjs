@@ -2,9 +2,23 @@ import assert from 'node:assert/strict'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createFixture } from './support/ria-fixture.mjs'
-import { REFLECTION_LOCK_TTL_MS, readReflectionState } from '../lib/reflection.mjs'
+import { REFLECTION_LOCK_TTL_MS, parseReflectionFrontMatter, readReflectionState } from '../lib/reflection.mjs'
 
-const fixture = await createFixture({ prefix: 'ria-reflection-run-' })
+const statsEvents = {
+  'session-worker': [
+    {
+      type: 'user/message',
+      time: Date.UTC(2026, 10, 13, 4),
+      data: { turn: 1, content: [{ type: 'text', text: 'stats event' }], source: { kind: 'user' } },
+    },
+    {
+      type: 'assistant/message',
+      time: Date.UTC(2026, 10, 13, 4, 0, 1),
+      data: { turn: 1, step: 1, message: { content: [{ type: 'text', text: 'done' }] } },
+    },
+  ],
+}
+const fixture = await createFixture({ prefix: 'ria-reflection-run-', sessionEvents: statsEvents })
 const { service, stateDir } = fixture
 const call = fixture.call
 const lockFile = join(stateDir, 'reflections', '.lock')
@@ -103,6 +117,12 @@ try {
   assert.equal(fixture.prompts.at(-1).mode, 'queue')
   assert.match(fixture.prompts.at(-1).content[0].text, new RegExp('workerSessionId: ' + worker))
 
+  const readSession = fixture.agentTools.get(worker).get('ria_reflect_read_session')
+  assert.ok(readSession && typeof readSession.execute === 'function', 'the reflection worker must get read_session')
+  const readResult = await readSession.execute({ sessionId: 'session-worker', mode: 'summary' }, { signal: new AbortController().signal })
+  assert.equal(readResult.ok, true, JSON.stringify(readResult))
+  assert.ok(readResult.messages.length >= 2, JSON.stringify(readResult))
+
   const locked = await begin(dateA)
   assert.equal(locked.locked, true)
   assert.equal(locked.runId, started.runId)
@@ -115,7 +135,18 @@ try {
   }))
   const finished = await call('ria_reflect', { action: 'finish', runId: started.runId, status: 'complete' })
   assert.equal(finished.ok, true, JSON.stringify(finished))
-  assert.equal(readFileSync(finished.reportPath, 'utf8').includes('今天没有异常'), true)
+  const finalReport = readFileSync(finished.reportPath, 'utf8')
+  assert.equal(finalReport.includes('今天没有异常'), true)
+  const front = parseReflectionFrontMatter(finalReport)
+  assert.equal(front.ok, true, JSON.stringify(front))
+  const finishedRun = JSON.parse(readFileSync(join(stateDir, 'reflections', 'runs', started.runId, 'run.json'), 'utf8'))
+  assert.equal(Number(front.data.durationMs), finishedRun.closedAt - finishedRun.dispatchedAt)
+  assert.equal(Number(front.data.compressedBytesRead), 0)
+  assert.ok(Number(front.data.decompressedBytesRead) > 0)
+  assert.equal(Number(front.data.decompressedBytesRead), finishedRun.stats.decompressedBytesRead)
+  assert.equal(finishedRun.stats.readCalls, 1)
+  assert.notEqual(Number(front.data.decompressedBytesRead), 20, 'the host must replace the model estimate')
+  assert.notEqual(Number(front.data.durationMs), 1000, 'the host must replace the model estimate')
   assert.equal(readReflectionState(stateDir).lastCompletedDate, dateA)
   assert.equal(existsSync(lockFile), false, 'finish must release the lock')
   assert.equal(existsSync(join(stateDir, 'reflections', 'runs', started.runId, 'report.partial.md')), true, 'the draft stays for audit')
@@ -235,7 +266,100 @@ try {
   const warnedRun = JSON.parse(readFileSync(join(stateDir, 'reflections', 'runs', warned.runId, 'run.json'), 'utf8'))
   assert.deepEqual(warnedRun.warnings, warnedFinish.warnings)
 
-  assert.equal(service.reflections.size >= 7, true)
+  const dateH = '2026-11-20'
+  fixture.service.onSessionEvent({ header: { id: fixture.riaAgent.id } }, { type: 'turn/start', data: { turn: 21 } })
+  const unrelated = fixture.service.store.captureIntake({
+    sessionId: fixture.riaAgent.id,
+    turn: 21,
+    message: {
+      id: 'msg-unrelated-intake',
+      role: 'user',
+      content: [{ type: 'text', text: '把 README 的安装步骤补一下' }],
+      source: { kind: 'user', rpcId: 'rpc-unrelated-intake' },
+    },
+  })
+  assert.equal(unrelated.ticket.status, 'intake')
+  const unrelatedBegin = await begin(dateH)
+  assert.equal(unrelatedBegin.ok, true, JSON.stringify(unrelatedBegin))
+  assert.equal(unrelatedBegin.intake, null)
+  assert.equal(fixture.service.store.ticket(unrelated.ticket.ticketId).status, 'intake')
+  const unrelatedWorker = await spawn(unrelatedBegin.runId, dateH)
+  await call('ria_reflect', { action: 'dispatch', runId: unrelatedBegin.runId, sessionId: unrelatedWorker })
+  writeFileSync(join(stateDir, 'reflections', 'runs', unrelatedBegin.runId, 'report.partial.md'), report({
+    runId: unrelatedBegin.runId,
+    date: dateH,
+    window: unrelatedBegin.window,
+    worker: unrelatedWorker,
+  }))
+  const unrelatedFinish = await call('ria_reflect', { action: 'finish', runId: unrelatedBegin.runId, status: 'complete' })
+  assert.equal(unrelatedFinish.ok, true, JSON.stringify(unrelatedFinish))
+  assert.equal(unrelatedFinish.intake, null)
+  assert.equal(fixture.service.store.ticket(unrelated.ticket.ticketId).status, 'intake', 'finish must not close an unrelated intake')
+
+  const dateI = '2026-11-21'
+  fixture.service.onSessionEvent({ header: { id: fixture.riaAgent.id } }, { type: 'turn/start', data: { turn: 22 } })
+  const unrelatedAgain = fixture.service.store.captureIntake({
+    sessionId: fixture.riaAgent.id,
+    turn: 22,
+    message: {
+      id: 'msg-unrelated-intake-2',
+      role: 'user',
+      content: [{ type: 'text', text: '整理一下发布清单' }],
+      source: { kind: 'user', rpcId: 'rpc-unrelated-intake-2' },
+    },
+  })
+  const warnedBegin = await begin(dateI)
+  assert.equal(warnedBegin.intake, null)
+  const warnedWorker2 = await spawn(warnedBegin.runId, dateI)
+  await call('ria_reflect', { action: 'dispatch', runId: warnedBegin.runId, sessionId: warnedWorker2 })
+  const warnedRun2 = service.reflections.get(warnedBegin.runId)
+  warnedRun2.intakeTicketId = unrelatedAgain.ticket.ticketId
+  writeFileSync(join(stateDir, 'reflections', 'runs', warnedBegin.runId, 'report.partial.md'), report({
+    runId: warnedBegin.runId,
+    date: dateI,
+    window: warnedBegin.window,
+    worker: warnedWorker2,
+  }))
+  const warnedFinish2 = await call('ria_reflect', { action: 'finish', runId: warnedBegin.runId, status: 'complete' })
+  assert.equal(warnedFinish2.ok, true, JSON.stringify(warnedFinish2))
+  assert.equal(warnedFinish2.intake.code, 'intake_unrelated')
+  assert.match(warnedFinish2.warnings.join(' '), /未关闭工单/)
+  assert.equal(fixture.service.store.ticket(unrelatedAgain.ticket.ticketId).status, 'intake', 'an unrelated binding must only warn')
+  const warnedRunFile = JSON.parse(readFileSync(join(stateDir, 'reflections', 'runs', warnedBegin.runId, 'run.json'), 'utf8'))
+  assert.match(warnedRunFile.intakeWarning, /不相关/)
+
+  const dateJ = '2026-11-22'
+  fixture.service.onSessionEvent({ header: { id: fixture.riaAgent.id } }, { type: 'turn/start', data: { turn: 23 } })
+  const lateBegin = await begin(dateJ)
+  assert.equal(lateBegin.intake, null)
+  const lateIntake = fixture.service.store.captureIntake({
+    sessionId: fixture.riaAgent.id,
+    turn: 23,
+    message: {
+      id: 'msg-late-reflection-intake',
+      role: 'user',
+      content: [{ type: 'text', text: '请开始今天的反思' }],
+      source: { kind: 'user', rpcId: 'rpc-late-reflection-intake' },
+    },
+  })
+  assert.equal(lateIntake.ticket.status, 'intake')
+  service.reflections.get(lateBegin.runId).intakeTicketId = lateIntake.ticket.ticketId
+  const lateWorker = await spawn(lateBegin.runId, dateJ)
+  await call('ria_reflect', { action: 'dispatch', runId: lateBegin.runId, sessionId: lateWorker })
+  writeFileSync(join(stateDir, 'reflections', 'runs', lateBegin.runId, 'report.partial.md'), report({
+    runId: lateBegin.runId,
+    date: dateJ,
+    window: lateBegin.window,
+    worker: lateWorker,
+  }))
+  const lateFinish = await call('ria_reflect', { action: 'finish', runId: lateBegin.runId, status: 'complete' })
+  assert.equal(lateFinish.ok, true, JSON.stringify(lateFinish))
+  assert.equal(lateFinish.intake.ticketId, lateIntake.ticket.ticketId)
+  assert.equal(lateFinish.intake.status, 'done')
+  assert.equal(fixture.service.store.ticket(lateIntake.ticket.ticketId).status, 'done', 'finish must close the bound intake')
+  assert.equal(fixture.service.store.ticket(lateIntake.ticket.ticketId).resolution.kind, 'answered')
+
+  assert.equal(service.reflections.size >= 10, true)
   console.log('reflection-run ok')
 } finally {
   fixture.cleanup()

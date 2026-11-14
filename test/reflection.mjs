@@ -109,10 +109,14 @@ const good = Buffer.concat([
   line(events[4]),
 ])
 const file = join(sessionDir, 'session.v4.jsonl.zstd')
-writeFileSync(file, Buffer.concat([zstdCompressSync(good), zstdCompressSync(Buffer.from('{not json\n')), zstdCompressSync(line(events[5]))]))
+const badLine = Buffer.from('{not json\n')
+const frames = [zstdCompressSync(good), zstdCompressSync(badLine), zstdCompressSync(line(events[5]))]
+writeFileSync(file, Buffer.concat(frames))
 const archive = readArchiveSession('session-archive', { dshHome: home })
 assert.equal(archive.corruptFrames, 1)
 assert.equal(archive.events.length, 3)
+assert.equal(archive.compressedBytes, frames.reduce((sum, frame) => sum + frame.length, 0))
+assert.equal(archive.decompressedBytes, good.length + badLine.length + line(events[5]).length)
 const beforeArchive = readFileSync(file)
 assert.deepEqual(readFileSync(file), beforeArchive)
 

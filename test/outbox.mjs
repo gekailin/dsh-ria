@@ -263,28 +263,35 @@ import { createFixture } from './support/ria-fixture.mjs'
     return true
   }
   try {
-    const status = { paused: true, pausedBy: 'channel', pausedAt: '2026-11-12T06:00:00.000Z' }
-    assert.equal(service.notifyWechatAutoPause(status), true)
+    assert.equal(service.wechat.autoPause('QQ 通道消息'), true)
     await service.pumpOutbox('test-auto-pause')
+    const status = {
+      paused: true,
+      pausedBy: 'channel',
+      pausedAt: service.wechat.state.data.pausedAt,
+      pauseReason: 'QQ 通道消息',
+    }
     assert.equal(notices.length, 1)
     assert.equal(notices[0].options.durable, true)
     assert.match(notices[0].text, /Ria 已自动暂停微信/)
-    assert.match(notices[0].text, /非微信通道消息/)
-    const entries = service.outbox.all().filter(entry => entry.kind === 'wechat_pause_notice')
+    assert.match(notices[0].text, /QQ 通道消息/)
+    const entries = service.outbox.all().filter(entry => entry.kind === 'channel_pause_notice')
     assert.equal(entries.length, 1)
+    assert.equal(entries[0].payload.channel, 'wechat')
     assert.equal(entries[0].status, 'delivered')
 
     assert.equal(service.notifyWechatAutoPause(status), true)
     await service.pumpOutbox('test-auto-pause-replay')
     assert.equal(notices.length, 1)
-    assert.equal(service.outbox.all().filter(entry => entry.kind === 'wechat_pause_notice').length, 1)
+    assert.equal(service.outbox.all().filter(entry => entry.kind === 'channel_pause_notice').length, 1)
 
     assert.equal(service.notifyWechatAutoPause({ ...status, pausedBy: 'manual' }), false)
+    service.wechat.setPaused(false, { by: 'channel', reason: 'resume' })
     service.wechat.outbound = undefined
     assert.equal(service.notifyWechatAutoPause({ ...status, pausedAt: '2026-11-12T07:00:00.000Z' }), false)
     await service.pumpOutbox('test-auto-pause-offline')
     assert.equal(notices.length, 1)
-    assert.equal(service.outbox.all().filter(entry => entry.kind === 'wechat_pause_notice').length, 1)
+    assert.equal(service.outbox.all().filter(entry => entry.kind === 'channel_pause_notice').length, 1)
   } finally {
     service.wechat.sendPauseNotice = originalSend
     service.wechat.outbound = originalOutbound
@@ -292,8 +299,8 @@ import { createFixture } from './support/ria-fixture.mjs'
   }
 }
 
-// When only WeChat Claw is connected, the auto-pause notice is queued and
-// delivered there; it names the paused legacy channel and its trigger.
+// A disconnected legacy channel must not borrow WeChat Claw for its own pause
+// notice. Claw's own notice is a separate channel_pause_notice.
 {
   const fixture = await createFixture()
   const service = fixture.service
@@ -309,14 +316,10 @@ import { createFixture } from './support/ria-fixture.mjs'
     return true
   }
   try {
-    const status = { paused: true, pausedBy: 'channel', pausedAt: '2026-11-12T08:06:11.949Z', pauseReason: '微信 Claw 通道消息' }
-    assert.equal(service.notifyWechatAutoPause(status), true)
+    assert.equal(service.wechat.autoPause('微信 Claw 通道消息'), true)
     await service.pumpOutbox('test-auto-pause-claw')
-    assert.equal(notices.length, 1)
-    assert.match(notices[0].text, /Ria 已自动暂停微信「文件传输助手」推送/)
-    assert.match(notices[0].text, /微信 Claw 通道消息/)
-    const entry = service.outbox.all().find(item => item.kind === 'wechat_pause_notice')
-    assert.equal(entry.status, 'delivered')
+    assert.equal(notices.length, 0)
+    assert.equal(service.outbox.all().filter(item => item.kind === 'channel_pause_notice').length, 0)
   } finally {
     service.wechatClaw.outbound = originalOutbound
     service.wechatClaw.peer = originalPeer

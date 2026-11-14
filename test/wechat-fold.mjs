@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Outbox } from '../lib/outbox.mjs'
+import { Outbox, WECHAT_ASSISTANT_NOTE_KIND } from '../lib/outbox.mjs'
 import { createFixture } from './support/ria-fixture.mjs'
 
 // The queue itself folds only old WeChat notifications, leaves unrelated and
@@ -18,9 +18,10 @@ import { createFixture } from './support/ria-fixture.mjs'
     const oldPause = box.enqueue({ kind: 'wechat_pause_notice', dedupeKey: 'old-pause', payload: { text: 'paused' } }).entry
     const oldSummary = box.enqueue({ kind: 'wechat_fold_notice', dedupeKey: 'old-summary', payload: { count: 1, text: 'folded' } }).entry
     const oldCard = box.enqueue({ kind: 'dispatch_note', dedupeKey: 'old-card', payload: { note: 'card' } }).entry
+    const oldAssistant = box.enqueue({ kind: WECHAT_ASSISTANT_NOTE_KIND, dedupeKey: 'old-assistant', payload: { text: 'a real reply' } }).entry
     clock = 1_010_000
     const newDispatch = box.enqueue({ kind: 'wechat_dispatch_note', dedupeKey: 'new-dispatch', payload: { note: 'new' } }).entry
-    for (const entry of [oldDispatch, oldApproval, oldPause, oldSummary, oldCard]) entry.createdAt = 900_000
+    for (const entry of [oldDispatch, oldApproval, oldPause, oldSummary, oldCard, oldAssistant]) entry.createdAt = 900_000
 
     const folded = box.foldOlderWechat(1_000_000, 1_020_000)
     assert.equal(folded, 3)
@@ -31,6 +32,7 @@ import { createFixture } from './support/ria-fixture.mjs'
     }
     assert.equal(box.entry(oldSummary.id).status, 'pending', 'a fold summary must not be folded')
     assert.equal(box.entry(oldCard.id).status, 'pending', 'non-WeChat entries must not be folded')
+    assert.equal(box.entry(oldAssistant.id).status, 'pending', 'an assistant fallback carries real content and must not be folded')
     assert.equal(box.entry(newDispatch.id).status, 'pending', 'notifications after the cutoff must not be folded')
     assert.deepEqual(box.outboxStats(), { folded: 3, lastFoldedAt: 1_020_000 })
     assert.equal(box.summary().folded, 3)
@@ -40,6 +42,18 @@ import { createFixture } from './support/ria-fixture.mjs'
     const reloaded = new Outbox(file, { now: () => clock })
     assert.deepEqual(reloaded.outboxStats(), { folded: 3, lastFoldedAt: 1_020_000 })
     assert.equal(reloaded.summary().folded, 3)
+
+    // A fresh inbound token re-arms failed assistant fallbacks without spending
+    // their retry budget; unrelated and delivered entries stay untouched.
+    reloaded.markFailed(oldAssistant.id, new Error('sendmessage ret=-2'), 1_030_000)
+    assert.equal(reloaded.entry(oldAssistant.id).status, 'pending')
+    assert.equal(reloaded.entry(oldAssistant.id).attempts, 1)
+    assert.equal(reloaded.retryWhere(entry => entry.kind === WECHAT_ASSISTANT_NOTE_KIND, 1_040_000), 1)
+    assert.equal(reloaded.entry(oldAssistant.id).status, 'pending')
+    assert.equal(reloaded.entry(oldAssistant.id).attempts, 0)
+    assert.equal(reloaded.entry(oldAssistant.id).due, 1_040_000)
+    assert.equal(reloaded.retryWhere(entry => entry.kind === 'wechat_dispatch_note', 1_050_000), 1, 'the pending dispatch note is re-armed too')
+    assert.equal(reloaded.entry(oldAssistant.id).due, 1_040_000, 'an unrelated retry must not move the assistant entry')
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

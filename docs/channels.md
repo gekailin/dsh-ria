@@ -61,6 +61,15 @@ Ria 入口标题右侧有一个“连接”chip。点开后是一个通道面板
 - `enabled: false` 时不会发出任何 typing 请求。`GET /channels/wechat-claw/status` 额外返回 `wechatClawTyping: { enabled, refreshMs, maxMs, ticketCache, active }`。
 - 未在真实账号验证「正在输入」是否真的显示；协议来自 `Tencent/openclaw-weixin` 的 `getconfig`/`sendtyping` 调用。
 
+### 回复补发与可观测性
+
+- `sendmessage` 返回 `ret != 0` 时，错误会带上 `ret` 和 `errmsg`，不再只有裸 `ret`。出站单条按 4000 字符、最多 8 段发送，长报告不会因为超过 iLink 单条约 5000 字符的上限而整条丢失。
+- 每条 assistant 正文的转发结果记在 `lastAssistantForward`：`{ at, reason, chars, preview, eventSeq?, images?, imagesFailed?, error?, errorCode?, ret?, errmsg?, deliveredChunks?, totalChunks?, fallbackQueued?, fallbackError? }`。`reason` 取 `delivered`、`paused`、`no_outbound`、`no_text`、`extract_failed`、`send_failed` 之一。
+- `GET /channels/wechat-claw/status` 返回 `lastAssistantForward`，`GET /plugins/dsh-ria/api/state` 的 `wechatClawAssistant` 与之同源。插件自己的持久日志在 `<stateDir>/wechat-claw/assistant.log.jsonl`（0600，超过 2 MB 轮转为 `.1`），不依赖 dsh-web.log。
+- 正文没有送达（暂停、无 outbound、发送或图片提取失败）时，会以 durable `wechat_assistant_note` 入 outbox，由微信 Claw 通道补发，消息前缀「（补发）」。legacy 微信通道不发，避免重复。
+- 补发保持 pending 直到成功：暂停或没有 peer 时标记 deferred，不消耗重试次数；下一次 Claw 入站刷新 `context_token` 后，会把这些补发重新置为待投递并立即重试。恢复推送时的通知折叠不会折叠补发内容。
+- 补发正文超过 24000 字符会截断，并附「补发内容已截断，完整内容见 Ria 会话」。
+
 限制与行为：
 
 - 语音、文件、视频仍不处理：会回复一句“目前只能接收文本消息。”，不会交给 Ria。

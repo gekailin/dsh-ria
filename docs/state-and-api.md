@@ -24,7 +24,7 @@ DSH_HOME/state/ria/
 前缀：/plugins/dsh-ria/api
 
 - POST /ensure：创建或打开全局唯一的 Ria。
-- GET /state：riaSessionId、tickets、pendingDeliveries、grants、settings、workerIdleNotifications（enabled/throttleMs）。
+- GET /state：riaSessionId、tickets、pendingDeliveries、grants、settings、workerIdleNotifications（enabled/throttleMs）、wechatClawAssistant（最近一条 assistant 正文的转发结果，未产生过为 null）。
 - GET/POST /settings：读取或设置 {dispatchGuard:boolean, wechatAutoPause:boolean}（GET 还返回 progressCards）；POST 可只传其中一个，传了非布尔值或一个都没传返回 400。
 - GET /dispatch-notes?sessionId&turn：读取 Ria 的派发 note；sessionId 必须是当前 Ria，turn 可选且必须是非负整数；返回 {notes}。
 - GET /board?limit=60&before=<createdAt>：只读任务看板数据。limit 默认 60、范围 1–200，before 是上一页最旧一张的 createdAt；服务端合并热存与归档日志后按 createdAt 升序取最后 limit 张。返回 {ok, generatedAt, riaSessionId, counts:{total,active,terminal,blocked}, page:{limit,before,returned,total,hasMore,nextBefore}, lanes, tickets}；tickets 含 ticketId/goal/status/waitingOn/blockedReason/attention/dependsOn/dependentCount/checklist/progress/executor/executorTitle/executorCwd/executorArchived/executorMissing/archived/laneId/laneLabel/createdAt/updatedAt/closedAt/readyAt/queueState/queueText。executor 为 `self` 或当前 Ria 时归入「Ria · 管家」；worker session 缺失或已归档只降级标道，不返回错误；归档工单带 archived=true。limit 非法或 before 不是时间戳时返回 400。

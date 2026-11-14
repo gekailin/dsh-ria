@@ -214,6 +214,27 @@ try {
   assert.equal(abandoned.status, 'abandoned')
   await call('ria_reflect', { action: 'abort', runId: takeover.runId, reason: 'test cleanup' })
 
+  const dateG = '2026-11-19'
+  const warned = await begin(dateG)
+  assert.equal(warned.ok, true)
+  const warnedWorker = await spawn(warned.runId, dateG)
+  await call('ria_reflect', { action: 'dispatch', runId: warned.runId, sessionId: warnedWorker })
+  const warnedBody = report({
+    runId: warned.runId,
+    date: dateG,
+    window: warned.window,
+    worker: warnedWorker,
+  })
+    .replace('## 教训\n- 无\n', '## 教训\n- 无\n## 对 dsh-ria 的迭代建议\n- 问题：测试证据 ticket_mwtest。建议改法：lib/reflection.mjs:1205。影响面：无。优先级：P2。\n')
+    .replace('## memory 候选\n- 无\n', '## memory 候选\n- **bad** [target: team:ops]：非法 target 降级。\n')
+  writeFileSync(join(stateDir, 'reflections', 'runs', warned.runId, 'report.partial.md'), warnedBody)
+  const warnedFinish = await call('ria_reflect', { action: 'finish', runId: warned.runId, status: 'complete' })
+  assert.equal(warnedFinish.ok, true, JSON.stringify(warnedFinish))
+  assert.equal(warnedFinish.warnings.length, 1)
+  assert.match(warnedFinish.warnings[0], /memory candidate bad: invalid target "team:ops"/)
+  const warnedRun = JSON.parse(readFileSync(join(stateDir, 'reflections', 'runs', warned.runId, 'run.json'), 'utf8'))
+  assert.deepEqual(warnedRun.warnings, warnedFinish.warnings)
+
   assert.equal(service.reflections.size >= 7, true)
   console.log('reflection-run ok')
 } finally {

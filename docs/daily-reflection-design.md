@@ -11,7 +11,7 @@
 
 - 6 个只读 worker 工具：ria_reflect_status / read_tickets / read_sessions / read_session / read_context / report。
 - Ria 侧 `ria_reflect` 五动作 status / begin / dispatch / finish / abort；状态文件 `reflections/state.json`、`reflections/.lock`、`reflections/runs/<runId>/run.json`；三重幂等、20 分钟锁 TTL 与接管、attempts、自动重试上限 1 次、没有新增后台 timer。
-- 报告 front matter 与八个固定标题校验；正式报告 `<forDate>.md` / `<forDate>.partial.md` / `<forDate>.manual-HHMM.md` 原子写；只有 complete 推进 lastCompletedDate。
+- 报告 front matter 与八个固定标题校验；可选「对 dsh-ria 的迭代建议」存在时要求非空、最多 5 条；memory 候选支持 `[target: global|worker:<sessionId>]`，非法 target 降级 global 并记 warning；正式报告 `<forDate>.md` / `<forDate>.partial.md` / `<forDate>.manual-HHMM.md` 原子写；只有 complete 推进 lastCompletedDate。
 - 安全收缩：反思 worker 绑定后只保留 6 个只读工具；在真实宿主 ToolsService 上 `restrict({allow: []})` 实测可见工具恰好 6 个。
 - `test/reflection-run.mjs` 覆盖同日 skipped、运行中 locked、force 新 run、非法报告、abort、dispatch 失败与重试上限。
 
@@ -564,8 +564,12 @@ degraded: []
 ## 教训（最多 5 条）
 - L-2026-11-13-01：触发条件=目标会话有多个同名 worker；做法=先 ria_status scope=sessions 确认 sessionId，再 ria_request；验证状态=已对账；证据=t-123/s-abc/T42。
 
+## 对 dsh-ria 的迭代建议（最多 5 条）
+- 问题：ria_request 在票 blocked 时仍会先把消息投给 executor，迁移失败后才报错（证据：t-123/e42）。建议改法：`lib/index.js:3350` 在 addDelivery 前增加 blocked 预检。影响面：只影响 Ria 的派发路径，不改变 worker 行为，兼容旧票。优先级：P1。
+
 ## memory 候选
-- M-2026-11-13-01：建议追加“派工前先确认 sessionId，不按标题猜”。理由=今天两次派错；冲突=无；置信度=高；验证状态=已对账；证据=t-123/t-125；动作=提议。
+- **M-2026-11-13-01** [target: global]：派工前先确认 sessionId，不按标题猜。理由=今天两次派错；冲突=无；置信度=高；验证状态=已对账；证据=t-123/t-125；动作=提议。
+- **M-2026-11-13-02** [target: worker:session-abc]：长日志先读 summary，再按 ref 定点读 full。本 run 只提议，不写 memory、不投递。
 
 ## 明日关注（最多 3 条）
 - t-456：明天先看迁移工单的测试结果（证据：t-456）。
@@ -585,7 +589,8 @@ degraded: []
 - “做对了什么”最多 3 条，避免自我表扬挤掉问题。
 - 每条错漏必须有证据；没有证据的移到“观察”。
 - “教训”必须写成“触发条件 → 做法”，不能写“今天学到了很多”；每条带 `验证状态` 和证据指针。最多 5 条是成本上限，不是配额；没有值得写的就写“无”。
-- “memory 候选”必须带冲突检查、验证状态和动作（提议/拒绝/自动），不能只写一句“记住这个”。
+- “对 dsh-ria 的迭代建议”最多 5 条，每条固定写问题（现象 + 证据 ref/工单号）、建议改法（具体文件/模块/行）、影响面（谁受影响、是否破坏兼容）和优先级 P0/P1/P2。只写窗口内真实错漏或真实摩擦，禁止“加强测试”“优化体验”这类泛泛建议；没有就写“无”。旧报告没有这一节仍可通过校验。
+- “memory 候选”格式为 `- **<key>** [target: global|worker:<sessionId>]：<rule>`，target 缺省 global，最多 3 条。worker 条目只是给 Ria 之后转交对应 worker 的建议；本 run 不写 memory、不投递。非法 target 降级为 global 并记 warning。冲突检查、验证状态和动作（提议/拒绝/自动）仍需写清。
 - 不把 `status`、`updatedAt`、`closedAt` 等易变值抄进“明日关注”或教训；只引用 `ticketId`。
 - 周报把标题改成“本周反省”，`明日关注` 改成 `下周关注`，其余字段不变。
 
@@ -914,7 +919,7 @@ RRULE:FREQ=WEEKLY;BYDAY=MO
 
 ### 7.5 提议的落地流程
 
-1. 报告的“memory 候选”给每条编号 `M-YYYY-MM-DD-NN`，写清楚“建议追加的原文”“为什么稳定”“冲突检查”“置信度”。
+1. 报告的“memory 候选”给每条编号 `M-YYYY-MM-DD-NN`，写清楚 `[target: global|worker:<sessionId>]`（缺省 global）、“建议追加的原文”“为什么稳定”“冲突检查”“置信度”。worker 条目由 Ria 之后转交对应 worker，反思 run 本身不写 memory、不投递。
 2. 用户说“采纳 M-2026-11-13-01” → Ria 用 `ria_memory` 追加原文，日报标记 `adopted`。
 3. 用户说“都采纳” → 只采纳没有冲突、不是路由/操作流程的条目；有冲突的逐条再问。
 4. 用户说“拒绝” → 日报标记 `rejected`，不写 memory；同一候选 30 天内不再提。
@@ -1241,13 +1246,20 @@ deadline = <ISO 时间>（15 分钟硬顶）
    ticketId+closedAt，或 scheduleId+occurrence_at；没有证据的放“观察”。
    不抄 status/updatedAt/closedAt 等易变值；证据只引 ticketId（必要时 sessionId+turn）。
 6. 每条结论标“已对账/未验证”；未验证只能进“观察”，不能进“教训”或 memory 候选。
-   “教训”最多 5 条，“memory 候选”最多 3 条；没有就写“无”，不要凑数。
+   “教训”最多 5 条；新增“对 dsh-ria 的迭代建议”最多 5 条，每条固定写
+   问题（现象 + 证据 ref/工单号）、建议改法（具体文件/模块/行）、影响面、
+   优先级 P0/P1/P2；只写窗口内真实错漏或摩擦，没有就写“无”。
+   “memory 候选”最多 3 条，格式
+   `- **<key>** [target: global|worker:<sessionId>]：<rule>`，target 缺省 global；
+   没有就写“无”，不要凑数。worker 条目只是给 Ria 之后的建议，本 run 不写
+   memory、不投递。
 7. 按模板写 markdown，调 ria_reflect_report({markdown, status, counts, degraded})。
    只写本次 run 的 report.partial.md；不要尝试写其他路径。
 8. 预算：10 分钟软顶/15 分钟硬顶、90k 字符、8 会话；超了按降级顺序，
    报告写 skipped。不要为了读完而超时。
 9. memory 只写候选（M-...），不调用 ria_memory；与现有 memory 或 manager prompt
-   冲突的，标“需用户确认”。
+   冲突的，标“需用户确认”。非法 target 在 finish 时会降级成 global 并记 warning，
+   不要反复重试。
 10. 最终回复一行：完成/部分完成/失败 + 报告路径 + P0/P1/P2 计数 + memory 候选数。
     不要贴全文。
 

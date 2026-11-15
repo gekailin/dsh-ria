@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import assert from 'node:assert/strict'
-import { RiaStore, apply } from '../lib/index.js'
+import { RiaStore, STYLE_SETTINGS_DEFAULTS, apply } from '../lib/index.js'
 
 // Every relative host import must be shipped, not only available in the checkout.
 const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
@@ -240,12 +240,13 @@ const REFLECTION_DEFAULTS = {
 }
 
 function expectedSettings(patch = {}) {
-  const { reflection, reflectionStatus, ...rest } = patch
+  const { reflection, reflectionStatus, style, ...rest } = patch
   return {
     dispatchGuard: true,
     progressCards: false,
     wechatAutoPause: true,
     wechatClawImage: { inbound: true, outbound: true },
+    style: { ...STYLE_SETTINGS_DEFAULTS, ...(style || {}), effectiveText: (style && style.effectiveText) || '' },
     reflection: { ...REFLECTION_DEFAULTS, ...(reflection || {}) },
     reflectionStatus: {
       lastCompletedDate: null,
@@ -738,8 +739,11 @@ const httpState = await request('GET', '/plugins/dsh-ria/api/state')
 assert.equal(httpState.status, 200)
 assert.equal(httpState.body.grants.length, 1)
 assert.equal(httpState.body.grants[0].grantId, grant.grant.grantId)
-const { reflectionStatus: ignoredStateStatus, ...stateSettings } = expectedSettings()
-assert.deepEqual(httpState.body.settings, stateSettings)
+const { reflectionStatus: ignoredStateStatus, style: responseStyle, ...stateSettings } = expectedSettings()
+assert.deepEqual(httpState.body.settings, {
+  ...stateSettings,
+  style: { enabled: responseStyle.enabled, preset: responseStyle.preset, custom: responseStyle.custom },
+})
 const closedTask = await call('ria_ticket', { ticketId: ticket.ticket.ticketId, status: 'done' })
 assert.equal(closedTask.ticket.status, 'done')
 assert.equal(permissions.sandboxOverride, 'workspace-write')

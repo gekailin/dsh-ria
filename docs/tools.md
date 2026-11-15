@@ -69,6 +69,12 @@ Ria 通过宿主模型注册表（`ctx.get('llm').listProviders()/listModels(pro
 
 预检与 `ria_model` 相同：会话必须存在、是顶层会话（subagent 一律拒绝）、未归档、cwd 仍可用，失败码为 `session_missing`、`not_top_level`、`session_archived`、`workspace_missing`，且失败不产生任何副作用。标题只包含空白或不可见字符时返回 `title_invalid`；宿主返回 `session/title-invalid` 时同样映射成 `title_invalid`，并带上宿主的原始 message。成功返回 `{ ok: true, sessionId, title }`；能从会话投影读到旧标题时附 `previous`，读不到就省略。允许改 Ria 自己，因为用户在设置里也能看到并修改自己的会话名。
 
+## 说话风格
+
+设置页的「说话风格」是默认关闭的总开关，只影响 Ria 写给用户的自然语言，不改变工具调用、术语和必报项。配置存在 ria.json 的 settings.style：`enabled`、`preset`（concise 简洁 / warm 温和 / formal 严谨 / playful 轻松）、`custom`（最多 300 字）。没有单独的 default 档；关闭就是现在的默认行为。
+
+开启后，Host 在 manager prompt 的 `## Identity` 之后、`## User memory` 之前插入 `## Voice`：所选预设的行为描述、同一内容的正面/反面示例、三条固定边界（只作用于自然语言；不改变工具/术语/必报项/note ≤500 字/安全规则；内容契约优先），以及非空 custom 的最后覆盖要求。关闭时整段不注入，prompt 与未引入该功能时逐字节一致。`GET /settings` 的 `style.effectiveText` 返回 Host 实际渲染的完整文本，关闭时为空字符串；前端不复制文案，只显示开关、预设和输入框。
+
 ## 等待用户拍板（attention）
 
 `blocked + waitingOn=user` 的工单可以带 `attention`，把“在等什么问题、有哪些选项、什么时候问的”结构化存进 ria.json。`ria_status` 的任意工单响应都会返回 `attentionOverview`：`waitingOnUser`/`waitingOnApproval` 分别是等用户与等审批的工单数，`items` 逐条给出问题；只有老 `blockedReason` 的历史工单仍然可读，并标 `legacy=true`。工单离开 blocked、关闭或被 reopen 时会清空 attention。

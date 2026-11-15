@@ -204,6 +204,16 @@ ticket 是 Ria 的管理单位；一个 ticket 只对应一个 executor。完整
 - `ria_model` 复用 ria_request 的预检（存在、顶层、非归档、cwd 可用），额外允许 Ria 自己；subagent 会话仍拒绝。成功返回 `{selected, previous?}`，不写卡片、不 concludeTurn。
 - `ria_status` 的 sessions/recent 从会话 summary 的 `projections.values.modelSelection.next || lastUsed` 读取模型；拿不到字段就省略，保证输出是 lossless JSON。
 
+### 说话风格
+
+设置页有一个默认关闭的说话风格总开关，只改变 Ria 回复的自然语言语感，不改工具、术语、必报项和安全规则。配置在 ria.json 的 settings.style：enabled、preset（concise/warm/formal/playful）、custom（≤300 字）。
+
+- 预设文案、三条边界和 custom 覆盖要求全部由 Host 的 manager prompt 渲染，服务端是唯一来源；client 只发开关、preset、custom 三个字段，不复制 prompt 文本。
+- enabled=false 时 voicePrompt 返回空字符串，manager prompt 与未引入该功能时逐字节一致，不出现 `## Voice`。
+- enabled=true 时在 `## Identity` 之后、`## User memory` 之前插入 `## Voice`；custom 非空时作为最后一段追加，冲突时以内容契约为先。
+- GET /settings 返回 `style.effectiveText`（关闭时为空串）；POST 的 style 可以只传部分字段，非法值整包 400 且不落盘，未知字段忽略。
+- 前端在设置卡里用总开关、2×2 预设卡片、300 字计数 textarea 和「保存补充」按钮；关闭时控件灰化且不可交互。
+
 ### 近期 worker
 
 “近期用过”只按 Host 成功接受过的 ria_request 计算；只建/改 ticket 不算。用户手工会话不计入。
@@ -581,7 +591,7 @@ ria.json 和 memory.md 都不存 transcript。
 - 早期实现是 Host 侧由 Session.append 写一个合成的完整 turn（turn 1/step 1）。该 turn 的 assistant/message 会成为 surface 的首个节点，排在真实 turn 的 system/message 之前，DSH session-format v4 校验要求 system/message 是 protected first surface head，因此重启 resume 报 corrupt（`system/message requires a protected first surface head`），已移除。
 - 带 ticketId 的派发 note 由 Host 记录到 ria.json（最多保留 100 条），插件 client 在 `conversation.chat.turnTail` slot 渲染为当前轮次末尾的卡片，标题「任务已派发」/「消息已转交」。卡片不属于 turn process，不会被完成后折叠；不进入模型上下文；通过 GET /api/dispatch-notes?sessionId&turn 读取。早期用 command/run + command/done，卡片被 ChatNodeSeat 当作 process member 折叠，真实 UI 不可见，已移除。
 - 微信 chip 在 Ria 入口标题右侧，点击打开微信弹层。
-- 设置页注册 settings.section：id=ria-settings、order=25、label=Ria；外层是独立的白色卡片（#ffffff、浅灰边框、固定深色文字），不依赖 DSH 主题变量，背景图下仍可读。卡片内有两个开关：“任务转交提示”和“自动暂停微信推送”，默认都打开，POST /settings 持久化。说明文字明确：前者只影响后续 system prompt，不改 worker 历史、工具或预设；后者关闭后非微信消息不再自动暂停。
+- 设置页注册 settings.section：id=ria-settings、order=25、label=Ria；外层是独立的白色卡片（#ffffff、浅灰边框、固定深色文字），不依赖 DSH 主题变量，背景图下仍可读。卡片内有“任务转交提示”“自动暂停推送”“说话风格”“定期反思”四段，均走 POST /settings 持久化。任务转交提示只影响后续 system prompt，不改 worker 历史、工具或预设；自动暂停关闭后非微信消息不再自动暂停；说话风格默认关闭、关闭时零注入；定期反思默认关闭，开启后维护「Ria: 定期反思」计划。
 
 ## 14. 安全
 

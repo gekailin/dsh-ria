@@ -196,14 +196,14 @@ try {
 
 
 // The board UI is a pure layout plus a thin renderer. These assertions pin the
-// masonry order, the fixed-height contract, the filter semantics, the brief
-// fallback, and the click behavior that the spec calls out explicitly.
+// narrower masonry card, the shared 160x58 ticket card, the 2D topic canvas,
+// the modal-only filter, the brief fallback, and the click behavior.
 {
   const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
-  const start = source.indexOf('/* topic-board:start */')
+  const start = source.indexOf('/* board-layout:start */')
   const end = source.indexOf('/* topic-board:end */')
-  assert.ok(start >= 0 && end > start, 'client topic board markers')
-  const api = new Function(source.slice(start, end) + '\nreturn { topicWaterfall, topicBoardLayout, topicCardHeight, topicFilterMatches, topicBriefText, topicMatchesQuery, TOPIC_CARD_WIDTH, TOPIC_PROJECT_GAP, TOPIC_FILTERS };')()
+  assert.ok(start >= 0 && end > start, 'client board markers')
+  const api = new Function(source.slice(start, end) + '\nreturn { boardLayout, boardCanOpenSession, topicWaterfall, topicBoardLayout, topicTicketLayout, topicCardHeight, topicTicketMatchesFilter, topicBriefText, topicMatchesQuery, TOPIC_CARD_WIDTH, TOPIC_CARD_GAP, TOPIC_PROJECT_GAP, TOPIC_FILTERS, TOPIC_MODAL_PER_COLUMN };')()
   const card = (topicId, lastUpdatedAt, counts, extra = {}) => ({
     topicId,
     title: topicId,
@@ -227,6 +227,8 @@ try {
   const p2 = flow.positions.get('t2')
   const p3 = flow.positions.get('t3')
   const p4 = flow.positions.get('t4')
+  assert.equal(api.TOPIC_CARD_WIDTH, 240)
+  assert.equal(api.TOPIC_MODAL_PER_COLUMN, 4)
   assert.equal(p1.column, 0)
   assert.equal(p2.column, 1)
   assert.equal(p3.column, 2)
@@ -234,14 +236,19 @@ try {
   assert.equal(p2.y, 0)
   assert.equal(p3.y, 0)
   assert.equal(p4.column, 0, 'fourth card returns to the shortest column')
-  assert.equal(p4.y, p1.height + 14)
-  assert.equal(flow.width, api.TOPIC_CARD_WIDTH * 3 + 14 * 2)
+  assert.equal(p4.y, p1.height + api.TOPIC_CARD_GAP)
+  assert.equal(flow.width, 240 * 3 + 14 * 2, 'three 240px cards plus two gaps')
 
   const short = api.topicWaterfall([card('only', 1, idleCounts)], 3)
   assert.equal(short.columns, 1, 'a one-topic project does not reserve three columns')
 
+  const empty = card('plain', 1, idleCounts)
   const busy = card('busy', 1, { total: 9, open: 5, working: 4, blocked: 2, done: 0 })
-  assert.equal(api.topicCardHeight(busy) - api.topicCardHeight(card('plain', 1, idleCounts)), 2 * 22 + 18 + 3 * 22 + 18)
+  assert.equal(api.topicCardHeight(empty), 177)
+  assert.equal(api.topicCardHeight(busy), 535)
+  assert.equal(api.topicCardHeight(busy) - api.topicCardHeight(empty), 358)
+  const onePending = card('one', 1, { total: 1, open: 1, working: 0, blocked: 0, done: 0 })
+  assert.equal(api.topicCardHeight(onePending), 177 + 58)
 
   const projects = api.topicBoardLayout([
     { projectId: 'p1', title: 'P1', topics: [card('a', 2, idleCounts)] },
@@ -253,13 +260,38 @@ try {
   assert.equal(projects.projects[0].positions.get('a').x, 18)
   assert.equal(projects.projects[0].positions.get('a').y, 48 + 18)
 
+  const tickets = [1, 2, 3, 4, 5].map(index => ({
+    ticketId: 'ticket_' + index,
+    goal: 'goal ' + index,
+    status: index === 1 ? 'done' : index === 2 ? 'working' : 'open',
+    createdAt: index,
+    dependsOn: index === 5 ? ['ticket_1'] : [],
+  }))
+  const canvas = api.topicTicketLayout(tickets)
+  assert.equal(canvas.positions.size, 5, 'every ticket gets one node')
+  assert.equal(canvas.edges.length, 1, 'one same-topic dependency edge')
+  assert.equal(canvas.edges[0].from, 'ticket_1')
+  assert.equal(canvas.edges[0].to, 'ticket_5')
+  assert.equal(canvas.bands.length, 1, 'one lane for the whole topic')
+  assert.equal(canvas.positions.get('ticket_1').column, 0)
+  assert.equal(canvas.positions.get('ticket_4').column, 0, 'four tickets fill the first column')
+  assert.equal(canvas.positions.get('ticket_5').column, 1, 'fifth ticket wraps to a new column')
+  assert.ok(canvas.height > 58 * 2, 'canvas has two rows')
+
   assert.deepEqual(api.TOPIC_FILTERS.map(item => item.label), ['全部', '进行中', '卡住', '空闲'])
-  assert.equal(api.topicFilterMatches(busy, 'all'), true)
-  assert.equal(api.topicFilterMatches(busy, 'working'), true)
-  assert.equal(api.topicFilterMatches(busy, 'blocked'), true)
-  assert.equal(api.topicFilterMatches(busy, 'idle'), false)
-  assert.equal(api.topicFilterMatches(card('done', 1, { total: 2, open: 0, working: 0, blocked: 0, done: 2 }), 'idle'), true)
-  assert.equal(api.topicFilterMatches(card('blocked', 1, { total: 1, open: 1, working: 0, blocked: 1, done: 0 }), 'idle'), false)
+  assert.equal(api.topicTicketMatchesFilter({ status: 'open' }, 'all'), true)
+  assert.equal(api.topicTicketMatchesFilter({ status: 'working' }, 'working'), true)
+  assert.equal(api.topicTicketMatchesFilter({ status: 'blocked' }, 'blocked'), true)
+  assert.equal(api.topicTicketMatchesFilter({ status: 'done' }, 'idle'), true)
+  assert.equal(api.topicTicketMatchesFilter({ status: 'failed' }, 'idle'), true)
+  assert.equal(api.topicTicketMatchesFilter({ status: 'open' }, 'idle'), false)
+  assert.equal(api.topicTicketMatchesFilter({ status: 'working' }, 'blocked'), false)
+
+  assert.equal(api.boardCanOpenSession({ executor: 'session-worker' }), true)
+  assert.equal(api.boardCanOpenSession({ executor: 'self' }), false)
+  assert.equal(api.boardCanOpenSession({ executor: 'session-worker', executorMissing: true }), false)
+  assert.equal(api.boardCanOpenSession({ executor: 'session-worker', executorArchived: true }), false)
+  assert.equal(api.boardCanOpenSession({}), false)
 
   const briefed = card('briefed', 1, idleCounts, { brief: '  The written brief  ' })
   assert.equal(api.topicBriefText(briefed), 'The written brief')
@@ -274,17 +306,34 @@ try {
   assert.equal(api.topicMatchesQuery(briefed, 'written brief'), true)
   assert.equal(api.topicMatchesQuery(briefed, 'missing'), false)
 
-  assert.match(source, /React\.createElement\(TopicBoardOverlay, \{\s*open: boardOpen,\s*ctx: ctx,/)
+  const modalStart = source.indexOf('function TopicModal(props)')
+  const overlayStart = source.indexOf('function TopicBoardOverlay(props)')
+  const applyStart = source.indexOf('function apply(ctx)')
+  assert.ok(modalStart > 0 && overlayStart > modalStart && applyStart > overlayStart, 'topic UI slices')
+  const modal = source.slice(modalStart, overlayStart)
+  const overlay = source.slice(overlayStart, applyStart)
+
+  assert.equal((source.match(/React\.createElement\(TicketCard, \{/g) || []).length, 2, 'the topic card and the modal share TicketCard')
   assert.match(source, /"data-ria-topic-card": topic\.topicId,\s*"data-ria-topic-open": "1",\s*onClick: open,/, 'clicking the card opens its topic page')
   assert.match(source, /data-ria-topic-more/)
   assert.match(source, /onClick: openMore/)
   assert.match(source, /function openMore\(event\) \{\s*event\.stopPropagation\(\);\s*open\(\);/)
-  assert.match(source, /data-ria-topic-ticket/)
-  assert.match(source, /onClick: copy/)
+  assert.match(source, /data-ria-ticket-card/)
   assert.match(source, /props\.onOpenSession\(ticket\.executor\)/)
   assert.match(source, /"↗ 在 " \+ \(edge\.topicTitle \|\| "未分类"\)/)
-  assert.match(source, /React\.createElement\(TopicTicketRow, \{\s*ticket: ticket,\s*compact: false,/)
+  assert.match(source, /"等拍板"/)
+  assert.doesNotMatch(source, /TopicTicketRow|TOPIC_ROW_HEIGHT|data-ria-topic-ticket|compact: true/)
   assert.doesNotMatch(source, /data-ria-topic-expand/)
+
+  assert.match(modal, /TOPIC_FILTERS\.map\(function \(item\)/)
+  assert.match(modal, /data-ria-topic-filter/)
+  assert.match(modal, /muted: !topicTicketMatchesFilter\(ticket, filter\)/)
+  assert.match(modal, /layout\.edges\.map\(function \(edge\)/)
+  assert.match(modal, /onOpenTopic: function \(edge\)/)
+  assert.match(modal, /topicTicketLayout\(tickets\)/)
+  assert.match(modal, /width: "min\(1120px, 94vw\)"/)
+  assert.match(overlay, /placeholder: "搜索主题、简报或工单"/)
+  assert.doesNotMatch(overlay, /TOPIC_FILTERS\.map|setFilter|topicFilterMatches|dimmed/)
 }
 
 console.log('topic-board ok')

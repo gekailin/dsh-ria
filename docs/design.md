@@ -594,9 +594,9 @@ ria.json 和 memory.md 都不存 transcript。
 - sidebar.panellist 注册 Ria，order 100，label "Ria"。
 - 点击后瞬时 launcher -> ensure -> openSession。
 - DSH 的正常会话界面要求 Session 属于一个 Workspace。ensure 在 stateDir 创建/复用标题为 Ria 的专用 Workspace，并用 workspaceId 创建 Session；旧 Ria 通过 attachSession 补挂。工作区列表会多这一项，这是输入框可用的必要条件。
-- 不做常驻看板；任务看板是侧栏入口打开的全屏只读 overlay。横轴是项目，项目内每个主题一张卡：主题按 lastUpdatedAt 倒序，依次放进当前最矮的列（最多 3 列）。卡头显示标题、更新于、done/total 与 brief；卡内只有三段：待执行（最多 2 条，blocked 带红点和「等拍板」标签）、执行中（最多 3 条）、已完成（只显示计数）。被折叠的「还有 N 条」与计数行点击后直接打开主题页，不在卡内展开。
-- 点主题卡打开主题弹窗：该主题全部工单按 updatedAt 倒序，已完成灰显；主题内依赖在左侧 gutter 画连线，跨主题依赖在行内标「↗ 在 <主题名>」。工单行点击复制 ticketId 并 toast；悬停显示 goal/状态/执行者/更新时间/清单进度/卡点；点执行者打开对应 worker 会话，executor=self 显示 Ria 且不跳。
-- 看板保留搜索与筛选（全部/进行中/卡住/空闲）：筛选只降低非匹配卡的透明度，不改变位置与卡片数量；搜索会过滤主题并重算瀑布。顶部计数给项目/主题/活跃/阻塞，底部提示操作方式。
+- 不做常驻看板；任务看板是侧栏入口打开的全屏只读 overlay。横轴是项目，项目内每个主题一张 240px 卡：主题按 lastUpdatedAt 倒序，依次放进当前最矮的列（最多 3 列）。卡头显示标题、更新于、done/total 与 brief；卡内只有三段：待执行（最多 2 条，blocked 带红点和「等拍板」标签）、执行中（最多 3 条）、已完成（只显示计数）。三段里的工单条目和主题弹窗共用同一个 160×58 工单卡（状态圆点、状态、goal、清单进度、执行者）；被折叠的「还有 N 条」与计数行点击后直接打开主题页，不在卡内展开。
+- 点主题卡打开主题弹窗：全部工单（含已完成，已完成灰显）画在同一张 2D 画布上，按创建时间从左到右、每列 4 张向下填充，同一主题共享一条虚线主题带。主题内依赖把下游卡右移一列并用三次贝塞尔曲线连接，跨主题依赖不参与布局、只在卡下显示可点击的「↗ 在 <主题名>」胶囊。工单卡点击复制 ticketId 并 toast；悬停显示 goal/状态/执行者/更新时间/清单进度/卡点；点执行者打开对应 worker 会话，executor=self 显示 Ria 且不跳。
+- 看板头只保留搜索和项目/主题/活跃/阻塞计数；筛选（全部/进行中/卡住/空闲）移进主题弹窗头，只降低非匹配工单卡的透明度，不重排、不改变画布尺寸；看板搜索仍会过滤主题并重算瀑布。底部提示操作方式。
 - 新建 Ria 第一次打开（会话还没有任何 turn）时，输入框上方显示一张欢迎卡片：提示选模型、设置权限（建议 danger-full-access + 审批策略）、直接说目标。
 - 欢迎卡片是 client 侧渲染：注册在 `conversation.input.dock`（id=ria-welcome，order 5），只在当前会话等于 Ria 且 `blank` 时显示，发出第一条消息后自动消失；不写 session 日志、不占 turn、不调用模型、不进入模型上下文。
 - 早期实现是 Host 侧由 Session.append 写一个合成的完整 turn（turn 1/step 1）。该 turn 的 assistant/message 会成为 surface 的首个节点，排在真实 turn 的 system/message 之前，DSH session-format v4 校验要求 system/message 是 protected first surface head，因此重启 resume 报 corrupt（`system/message requires a protected first surface head`），已移除。
@@ -673,7 +673,7 @@ Phase 29：ticket checklist。schema v3→v4，旧文件原样读入、无 check
 
 Phase 30：任务看板重做与归档日志改名。看板改为单画布：按 createdAt 排序、每 3 张工单一列、依赖列右移；纵轴按 workspace 分成水平项目带，带顶留标签条并在横向滚动时 sticky，带高按实际行数自适应，带内独立换行、上游行中位数只在同带内生效，卡片不跨带，跨带依赖只画箭头；卡片 160×58 只显示 goal 摘要、状态·执行者与清单进度，悬停高亮整条上下游链并显示完整信息浮层（含依赖数、清单、排队原因、时间）。`GET /board` 增加 limit（默认 60，1–200）/before 分页与 page 元数据、dependentCount、archived，合并热存与归档日志；客户端默认加载最新一页并停在最右，向左滚动按 before 加载更早。归档日志新写入 `tickets.log.jsonl` / `tickets-YYYY-MM.jsonl`，启动时幂等迁移旧 `tasks.*`，读取端兼容并去重。
 
-Phase 31：主题看板与 schema v5。ria.json 新增 topics/links，一个工单最多一个 primary；旧 v4 原样加载并在首次写入前备份。新增 ria_topic（create/update/link/unlink/merge/archive/list）与 test/topic-board.mjs。GET /board 增加 projects[]→topics[]→tickets[] 投影与每主题 counts/brief/lastUpdatedAt，GET /board/topic?topicId= 返回主题全部工单与主题内/跨主题依赖边；无 primary 的工单进入每项目合成的未分类桶。看板改为横轴项目、项目内主题瀑布最多 3 列、卡内待执行/执行中/已完成三段、折叠项点击打开主题页、行点击复制与执行者跳转，筛选只灰化不重排。
+Phase 31：主题看板与 schema v5。ria.json 新增 topics/links，一个工单最多一个 primary；旧 v4 原样加载并在首次写入前备份。新增 ria_topic（create/update/link/unlink/merge/archive/list）与 test/topic-board.mjs。GET /board 增加 projects[]→topics[]→tickets[] 投影与每主题 counts/brief/lastUpdatedAt，GET /board/topic?topicId= 返回主题全部工单与主题内/跨主题依赖边；无 primary 的工单进入每项目合成的未分类桶。看板改为横轴项目、项目内主题瀑布最多 3 列、卡内待执行/执行中/已完成三段、折叠项点击打开主题页、行点击复制与执行者跳转，筛选只灰化不重排。视觉迭代：主题卡 300→240px，卡内条目与弹窗共用 160×58 工单卡；主题弹窗改为 2D 画布（每列 4 张、依赖右移、跨主题胶囊跳转），筛选从看板头移入弹窗头、只淡化不重排。
 
 Phase 28：会话改名工具。新增 `ria_title({ sessionId, title })`，走宿主 `sessionController.rename`，只改会话名，不发消息、不建 ticket、不唤醒 worker；预检复用 `sessionProblem`（存在、顶层、未归档、cwd 可用），允许改 Ria 自己，subagent 一律拒绝；空标题或宿主 `session/title-invalid` 映射为 `title_invalid` 并保留宿主原始 message；成功返回 accepted title 与已知 previous。`ria_spawn` 的 title 设置复用同一 helper，返回值语义不变（失败仍只写 `titleError`）。
 

@@ -203,3 +203,16 @@ C 已选定：光影和灯笼最突出，R 换成 icon 后左文右图的品牌�
 - 验证：最终 diff bbox x1023–1149、y114–246；文字区 changed=0；领口 y≥246 changed=0；贝壳区 changed=0；保护区内 changed=0。脸部裁切 6× 检查无重影、无右眼缺失、无耳饰断裂。
 - 仍存差异（诚实）：仍不是 avatar 的复刻——脸比 avatar 宽/短，眼睛仍比 avatar 大一点，眉毛比 avatar 深，下唇没有 avatar 那么薄；左侧脸颊仍有一条原图发丝压着，轮廓不是完全干净的鹅蛋。优先保原图身份和表情，没有继续往 avatar 拉。
 - 文件：`F4-face-shape.png`（1376×768，RGB PNG，1098533 字节，sha256 faba685f…）；`F4-compare.png`（2725×900，avatar / hero / F3 / F4 四栏同高脸部裁切）；`F4-outline.png`（1800×1000，左为 F4 脸缘 + 按脸高缩放的 avatar 轮廓，右为归一化轮廓；手工描点，示意）。`docs/hero.jpg`、README.md、lib/、test/ 均未改。
+## hero 转 PNG（去掉 JPEG 压缩痕迹，2026-11-15）
+
+- 需求：不改画面内容（人物、构图、文字、配色都不动），只把 `docs/hero.jpg` 转成 PNG，压掉 JPEG 的 8×8 块效应与振铃，同时保住文字锐度；目标尺寸 1376×768。
+- 路线：本机没有可用的超分/修复模型（`torch`、`realesrgan`、`cv2` 均未安装，也没有本地模型权重），因此没有用 Real-ESRGAN/SwinIR。改用传统 YCbCr 非局部均值（NLM）：
+  - 亮度 Y：`skimage.restoration.denoise_nl_means`，h=0.03，patch_size=5，patch_distance=6，fast_mode=True。
+  - 色度 Cb/Cr：同一 NLM，h=0.10；JPEG 色度块/色带先压重一点。
+  - 边缘保护：对 Y 求梯度，lo=0.012 / hi=0.075 的 smoothstep 后做 Gaussian 0.8；边缘处回贴原图，平坦区用 NLM。
+  - 文字保护：x<650 且 Y<0.42 的深色笔画，膨胀 1px、Gaussian 0.6 后从原图硬回贴；笔画核心逐像素 diff=0。
+- 尺寸：保持 1376×768，RGB PNG；未做 2×。没有超分模型时，单纯插值放大不会增加信息、也不会比 1× 更好地去掉 8×8 块，体积还会翻倍；如果之后要用 Real-ESRGAN/SwinIR 跑 2×，可以单独出 `hero@2x.png`。
+- 验收：`hero-png-ab.png`（2580×1910）：文字区、人物脸部、背景渐变/玻璃与云三处 200% nearest 同位置对照；左侧原 JPG，右侧新 PNG。
+- 量化：按 8px 块边界 excess 统计，天空 0.00252→0.00116、文字区 0.00166→0.00078、脸部 0.00272→0.00162（约降 40–54%）；文字笔画核心 diff=0。文字区梯度 -4.7%、脸部 -5.8%、天空 -14.7%（天空以降噪为主，强边缘回贴原图）。
+- 体积：318214 字节 JPG → 903568 字节 PNG（约 2.84×）。PNG 变大是格式本身；PNG 不再有 JPEG 量化/色度损失。
+- 文件：`docs/hero.png`；`README.md:4` 引用改为 `docs/hero.png`；`docs/hero.jpg` 已 `git rm`（历史保留）。未 push、未重启、未同步安装副本。

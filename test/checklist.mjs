@@ -40,11 +40,11 @@ try {
   }, null, 2)
   writeFileSync(join(migrationDir, 'ria.json'), v3)
   const store = new RiaStore(migrationDir)
-  assert.equal(store.data.schemaVersion, 4)
+  assert.equal(store.data.schemaVersion, 5)
   assert.equal(store.data.tickets.length, 1)
   assert.deepEqual(store.data.tickets[0].checklist, [])
   assert.equal(readFileSync(join(migrationDir, 'ria.json.v3.bak'), 'utf8'), v3)
-  assert.equal(JSON.parse(readFileSync(join(migrationDir, 'ria.json'), 'utf8')).schemaVersion, 4)
+  assert.equal(JSON.parse(readFileSync(join(migrationDir, 'ria.json'), 'utf8')).schemaVersion, 5)
 } finally {
   rmSync(migrationDir, { recursive: true, force: true })
 }

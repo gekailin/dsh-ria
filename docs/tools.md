@@ -1,6 +1,6 @@
 # 工具与 worker 管理
 
-Ria 通过 run_code SDK 调用 14 个 `ria_*` 工具（含反思编排 `ria_reflect` 和文件发送 `ria_send_file`）。工具只在 Ria 的 Agent ctx 上注册，worker 侧不需要安装任何东西。
+Ria 通过 run_code SDK 调用 15 个 `ria_*` 工具（含反思编排 `ria_reflect`、文件发送 `ria_send_file` 和主题管理 `ria_topic`）。工具只在 Ria 的 Agent ctx 上注册，worker 侧不需要安装任何东西。
 
 ## 工具
 
@@ -13,6 +13,7 @@ Ria 通过 run_code SDK 调用 14 个 `ria_*` 工具（含反思编排 `ria_refl
 | ria_model | 改一个已存在顶层会话（默认 worker；明确要求时也可改 Ria 自己）的模型。只改模型选择，不发消息、不建工单、不唤醒会话。改前按 ria_request 的预检检查会话存在、非 subagent、未归档、cwd 可用，另加 model_not_found。model 必填；模型名在多个 provider 下都存在时必须显式给 provider。成功返回 selected {provider, model, reasoningEffort?} 与已知的 previous；ria_status scope=sessions/recent 会立即反映新模型。 |
 | ria_title | 改一个已存在顶层会话（含 Ria 自己，不含 subagent）的会话名。只改名，不发消息、不建工单、不唤醒 worker、不改其它状态。预检同 ria_model（存在、非 subagent、未归档、cwd 可用）；空标题或宿主判定标题非法返回 title_invalid，宿主原始 message 原样附回。成功返回 {ok:true, sessionId, title} 与已知的 previous。 |
 | ria_request | 把工单的消息发给一个或多个 worker。ticketId 与 note 均必填；mode=queue 或 steer；content 支持 text/image/file；attachments 支持最多 20 个图片绝对路径（png/jpeg/webp/gif），与 content 一起作为 text + image parts 投递，交给宿主 attachment 服务统一校验和存储。目标 executor 必须等于 ticket.executor。Host 先把 note 和微信镜像写入副作用 outbox，有活跃 turn 时立即记录到 ria.json，由插件 client 在 Ria 会话当前轮次末尾显示成可见卡片，不进入模型上下文；没有活跃 turn 时留待下一次 turn/start、startup 或 30 秒 tick 补投。同时把 note 作为“📌 任务已派发：<note>”推送到微信；发送失败由 outbox 退避重试，不阻断派发。缺 note、空白或超长会直接报错且不投递。附件预检失败码：attachment_missing、attachment_invalid、model_no_image；预检失败不投递、不写 recentWorkers、不动工单。Host 不加消息前缀；防误发提示由 agent system prompt section 提供。mode=queue 时若目标正在跑 turn 或已有非空 pending 队列，直接返回 worker_busy 且不投递；依赖工单必须带当前 queueToken，未就绪、token 缺失/过期或已派发都返回 ticket_not_ready。mode=steer 仍可插进运行中的 turn，但只用于同步信息，不得用来下发新任务。 |
+| ria_topic | 管理看板主题与工单归属。action=create/update/link/unlink/merge/archive/list。主题字段 topicId、title、level（1/2）、parentId、brief；工单经 links 关联，role=primary 或 related，一个工单最多一个 primary（再设 primary 会自动把旧 primary 降为 related）。merge 把源主题的链接改指目标并标 mergedInto；archive 只在该主题没有未完成工单时允许，否则返回 topic_unfinished。只维护主题，不派发、不唤醒 worker、不改工单状态。 |
 | ria_send_file | 把本机一个文件发到最近活跃的手机通道（微信 Claw、QQ 或微信「文件传输助手」）。path 必须是绝对路径，realpath 解析后须是普通文件、非空、扩展名在 allowlist 内且不超过通道上限；note 可选、最多 500 字。通道暂停时 durable 排队并返回 queued=true；没有回复目标返回 no_target；成功或失败都记 lastFileSend。只发文件，不建工单、不唤醒 worker、不改任务状态。 |
 | ria_read | 读某个 Session 的近期消息。live 用 snapshotEvents，冷会话用持久化 events，不 resume。返回值还带 queue：与 ria_queue list 相同的 pending 视图，冷会话为 null。 |
 | ria_queue | 列出或撤回一个顶层 worker 尚未执行的消息。action=list 返回 running 与 queue（id、placement=queued/steering/context、可选 rpcId、preview）；冷会话 queue=null。action=remove 接受 itemId 或 rpcId（rpcId 来自 ria_request 的 requestId；两者都给时 itemId 优先），不可恢复，只删 pending，不停止当前 turn、不改工单、不影响 recentWorkers。失败码 queue_item_not_found、queue_remove_failed；预检同 ria_request。 |
@@ -51,6 +52,22 @@ Ria 通过 run_code SDK 调用 14 个 `ria_*` 工具（含反思编排 `ria_refl
 `ria_status` 的单工单、`scope=tickets` 每项与看板卡片都带 `progress`（`已完成/总数`），看板只多这一行文本，不改布局。归档摘要 `tickets.log.jsonl` 的 `checklist` 记录 `{ total, done, pending }`，`pending` 最多列 5 条未勾项文本。终态工单的清单视为最终结果，`check` 返回 `checklist_invalid`；要改先 reopen 或新建工单。
 
 工单以 `status=done` 收敛时，如果清单还有未勾项，host 不会静默丢弃：返回结果带 `warning`（说明还有几项没勾、列出前几条），工单的 `resolution.checklistPending` 记录 `{ total, done, pending }`，`pending` 最多 5 条文本，后续查 `ria_status` 或归档仍能看到。合并工单不继承源工单的 checklist：目标保留自己原有的清单，源清单只留在源工单的历史里。
+
+## 主题与看板（ria_topic）
+
+看板按“项目 → 主题 → 工单”组织。项目直接复用现有 workspace（以及 Ria、未分配、路径回退），主题是项目内的一级分组；工单通过 links 挂到一个或多个主题上，卡片只统计 role=primary 的归属，related 只在主题页里出现。没有 primary 的工单进入所属项目的「未分类」桶，这个桶是看板即时合成的，不写进 ria.json。
+
+`ria_topic` 的 action：
+
+- `create`：title 必填，可带 brief、level（1/2，默认 1）、parentId。返回新建的 topic。
+- `update`：改 title、brief、level 或 parentId。parentId 不能指向自己或形成环；已归档/已合并的主题拒绝更新。
+- `link`：topicId + ticketId，role 默认 primary。工单不存在返回 ticket_missing；同一个票再设 primary 会把旧的 primary 自动降为 related。
+- `unlink`：删除主题与该工单的链接，不影响工单本身。
+- `merge`：sourceTopicId + targetTopicId，把源主题的 links 改指目标并给源主题写 mergedInto + archivedAt；同一张票在目标里已有链接时合并为一条，保留最新 primary。
+- `archive`：仅当主题链接到的所有工单都已终态时允许；还有未完成工单返回 topic_unfinished，message 会列出前几个 ticketId。
+- `list`：默认隐藏已归档/已合并主题，includeArchived=true 全部返回；每项带 counts（total/open/working/blocked/done）。
+
+主题与链接存 ria.json 的 `topics`、`links`，schema v5 起存在；旧 v4 文件原样加载，缺字段视为空数组，首次写入前备份 `ria.json.v4.bak`。看板的主题卡最多显示待执行 2 条、执行中 3 条，已完成只显示计数；被折叠的「还有 N 条」点击后打开主题页，不在卡内展开。主题页列出该主题全部工单（updatedAt 倒序），主题内依赖画连线，跨主题依赖标出「↗ 在 <主题名>」。
 
 ## 排队消息（ria_queue）
 
@@ -180,7 +197,7 @@ ria_reflect 是反思的编排入口，只注册给 Ria。它管理 `reflections
 
 ## 反思读取工具（仅反思 worker）
 
-反思 worker 由编排层用 `ria_spawn({reflectionRunId})` 创建；创建前必须先打开 run 并写入绑定，绑定命中时只给这个 worker 注册下面 6 个工具。Ria 自己的 14 个 `ria_*` 工具、普通 worker 的会话都看不到这些工具；普通 worker 调它们会得到 unknown_tool。它们全部只读，不会 resume 冷会话，也不会写 `ria.json` 或会话日志。
+反思 worker 由编排层用 `ria_spawn({reflectionRunId})` 创建；创建前必须先打开 run 并写入绑定，绑定命中时只给这个 worker 注册下面 6 个工具。Ria 自己的 15 个 `ria_*` 工具、普通 worker 的会话都看不到这些工具；普通 worker 调它们会得到 unknown_tool。它们全部只读，不会 resume 冷会话，也不会写 `ria.json` 或会话日志。
 
 - `ria_reflect_status`：当前 run 的 runId、forDate、window、deadline/remainingMs、候选会话、limits、memoryBytes、reportPath、state。默认 `scope=candidates` 只列**本 run 窗口内有事件**的会话（最多 50 条）；`scope=all` 返回不按窗口过滤的全部候选。两者都给 `candidateTotal`（run 候选总数，含被窗口过滤掉的）与 `candidatesTruncated`（列表是否撞到 50 条上限）；不再是全部顶层会话的静态名单。
 - `ria_reflect_read_tickets`：scope=window/open/history，可按 status/executor 过滤；limit 1–200，默认 80。默认 `detail=summary`，每条只返回 ticketId/goal/status/waitingOn/executor/updatedAt（goal 截 500 字）；`detail=full` 才给 acceptance、blockedReason、attention、resolution、failure、dependsOn、checklist、progress 等完整字段。`scope=open` 只返回非终态工单，done/cancelled/failed 不会混进来。

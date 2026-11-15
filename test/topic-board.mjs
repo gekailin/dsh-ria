@@ -1,0 +1,290 @@
+import assert from 'node:assert/strict'
+import { EventEmitter } from 'node:events'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { createFixture } from './support/ria-fixture.mjs'
+import { linkTopic, mergeTopicLinks, normalizeLink, normalizeLinks, normalizeTopic, normalizeTopics } from '../lib/topics.mjs'
+
+// Topic records are tolerant on load: missing optional fields are fine, bad
+// records are dropped, and only the first primary link of a ticket survives.
+{
+  const topic = normalizeTopic({ topicId: 'topic_a', title: '  Release  ' })
+  assert.equal(topic.title, 'Release')
+  assert.equal(topic.level, 1)
+  assert.equal(topic.brief, '')
+  assert.equal(topic.parentId, null)
+  assert.ok(topic.createdAt > 0)
+  assert.equal(normalizeTopic({ topicId: '', title: 'x' }), undefined)
+  assert.equal(normalizeTopic({ topicId: 't', title: '' }), undefined)
+  assert.deepEqual(normalizeTopics([{ topicId: 'topic_a', title: 'A' }, { topicId: 'topic_a', title: 'dup' }, null]).map(item => item.title), ['A'])
+
+  const link = normalizeLink({ topicId: 'topic_a', ticketId: 'ticket_1' })
+  assert.equal(link.role, 'related')
+  const links = normalizeLinks([
+    { topicId: 'topic_a', ticketId: 'ticket_1', role: 'primary' },
+    { topicId: 'topic_b', ticketId: 'ticket_1', role: 'primary' },
+    { topicId: 'topic_a', ticketId: 'ticket_1', role: 'related' },
+    { topicId: 'topic_b', ticketId: 'ticket_2', role: 'related' },
+  ])
+  assert.equal(links.length, 3)
+  assert.equal(links.find(item => item.topicId === 'topic_a' && item.ticketId === 'ticket_1').role, 'primary')
+  assert.equal(links.find(item => item.topicId === 'topic_b' && item.ticketId === 'ticket_1').role, 'related')
+
+  const promoted = linkTopic(links, 'topic_b', 'ticket_1', 'primary', 100)
+  assert.equal(promoted.demoted, 'topic_a')
+  assert.equal(promoted.links.find(item => item.topicId === 'topic_b' && item.ticketId === 'ticket_1').role, 'primary')
+  assert.equal(promoted.links.find(item => item.topicId === 'topic_a' && item.ticketId === 'ticket_1').role, 'related')
+
+  const merged = mergeTopicLinks(promoted.links, 'topic_b', 'topic_c', 200)
+  assert.ok(merged.links.every(item => item.topicId !== 'topic_b'))
+  assert.equal(merged.links.filter(item => item.topicId === 'topic_c' && item.ticketId === 'ticket_1').length, 1)
+}
+
+const fixture = await createFixture()
+const stateDir = fixture.stateDir
+
+function get(path) {
+  const route = fixture.routes.find(item => item.path === '/plugins/dsh-ria/api')
+  assert.ok(route, 'API route registered')
+  const req = new EventEmitter()
+  req.method = 'GET'
+  req.url = path
+  req.headers = { host: '127.0.0.1:3080' }
+  const res = {
+    statusCode: 0,
+    headers: {},
+    setHeader(name, value) { this.headers[name] = value },
+    end(body) { this.body = body; this.done(body) },
+  }
+  const done = new Promise(resolve => { res.done = resolve })
+  route.handler(req, res)
+  return done.then(body => ({ status: res.statusCode, body: JSON.parse(body) }))
+}
+
+try {
+  const t1 = (await fixture.call('ria_ticket', { goal: 'write the draft', executor: 'session-worker' })).ticket
+  const t2 = (await fixture.call('ria_ticket', { goal: 'edit the draft', executor: 'session-worker', dependsOn: [t1.ticketId] })).ticket
+  const t3 = (await fixture.call('ria_ticket', { goal: 'collect references', executor: 'session-worker' })).ticket
+  const t4 = (await fixture.call('ria_ticket', { goal: 'assemble the appendix', executor: 'session-worker', dependsOn: [t3.ticketId] })).ticket
+  const t5 = (await fixture.call('ria_ticket', { goal: 'loose idea without a topic', executor: 'self' })).ticket
+  assert.equal(fixture.service.store.transitionTicket(t3.ticketId, 'working', { executor: 'session-worker' }).ok, true)
+  const done = fixture.service.store.transitionTicket(t3.ticketId, 'done', { resolution: { kind: 'answered', summary: 'done' } })
+  assert.equal(done.ok, true)
+
+  const topicA = await fixture.call('ria_topic', { action: 'create', title: 'Draft', brief: 'First topic' })
+  assert.equal(topicA.ok, true)
+  assert.ok(topicA.topic.topicId.startsWith('topic_'))
+  const topicB = await fixture.call('ria_topic', { action: 'create', title: 'Appendix', level: 2 })
+  assert.equal(topicB.ok, true)
+
+  const linkedA = await fixture.call('ria_topic', { action: 'link', topicId: topicA.topic.topicId, ticketId: t1.ticketId })
+  assert.equal(linkedA.ok, true)
+  assert.equal(linkedA.role, 'primary')
+  const linkedB2 = await fixture.call('ria_topic', { action: 'link', topicId: topicB.topic.topicId, ticketId: t2.ticketId })
+  assert.equal(linkedB2.ok, true)
+  const linkedB3 = await fixture.call('ria_topic', { action: 'link', topicId: topicB.topic.topicId, ticketId: t3.ticketId })
+  assert.equal(linkedB3.ok, true)
+  const linkedB4 = await fixture.call('ria_topic', { action: 'link', topicId: topicB.topic.topicId, ticketId: t4.ticketId })
+  assert.equal(linkedB4.ok, true)
+
+  const update = await fixture.call('ria_topic', { action: 'update', topicId: topicA.topic.topicId, brief: 'Updated brief' })
+  assert.equal(update.topic.brief, 'Updated brief')
+  const missing = await fixture.call('ria_topic', { action: 'update', topicId: 'topic_nope', brief: 'x' })
+  assert.equal(missing.ok, false)
+  assert.equal(missing.code, 'topic_missing')
+
+  const boardResponse = await get('/plugins/dsh-ria/api/board')
+  assert.equal(boardResponse.status, 200)
+  const board = boardResponse.body
+  assert.equal(board.ok, true)
+  const project = board.projects.find(item => item.topics.some(topic => topic.topicId === topicA.topic.topicId))
+  assert.ok(project, 'topic project exists')
+  assert.ok(project.title && (project.projectId.startsWith('workspace:') || project.projectId.startsWith('path:')))
+  const cardA = project.topics.find(topic => topic.topicId === topicA.topic.topicId)
+  const cardB = project.topics.find(topic => topic.topicId === topicB.topic.topicId)
+  assert.ok(cardA && cardB, 'both topic cards are on the board')
+  assert.equal(cardA.counts.total, 1)
+  assert.equal(cardA.tickets.length, 1)
+  assert.equal(cardA.tickets[0].ticketId, t1.ticketId)
+  assert.equal(cardB.counts.total, 3)
+  assert.deepEqual(cardB.counts, { total: 3, open: 2, working: 0, blocked: 0, done: 1 })
+  assert.deepEqual(cardB.tickets.map(ticket => ticket.ticketId).sort(), [t2.ticketId, t4.ticketId].sort())
+  assert.equal(cardB.done, 1)
+  assert.equal(cardB.brief, '')
+  const riaProject = board.projects.find(item => item.kind === 'ria')
+  assert.ok(riaProject, 'Ria project exists')
+  const unclassified = riaProject.topics.find(topic => topic.unclassified)
+  assert.ok(unclassified, 'unclassified bucket exists')
+  assert.equal(unclassified.title, '未分类')
+  assert.equal(unclassified.topicId, 'unclassified:ria')
+  assert.equal(unclassified.tickets[0].ticketId, t5.ticketId)
+
+  const topicPage = await get('/plugins/dsh-ria/api/board/topic?topicId=' + encodeURIComponent(topicB.topic.topicId))
+  assert.equal(topicPage.status, 200)
+  assert.equal(topicPage.body.topic.title, 'Appendix')
+  assert.equal(topicPage.body.counts.total, 3)
+  assert.deepEqual(topicPage.body.edges.inside, [{ from: t3.ticketId, to: t4.ticketId }])
+  assert.equal(topicPage.body.edges.outside.length, 1)
+  assert.equal(topicPage.body.edges.outside[0].ticketId, t2.ticketId)
+  assert.equal(topicPage.body.edges.outside[0].dependsOn, t1.ticketId)
+  assert.equal(topicPage.body.edges.outside[0].topicId, topicA.topic.topicId)
+  assert.equal(topicPage.body.edges.outside[0].topicTitle, 'Draft')
+  assert.deepEqual(topicPage.body.tickets.map(ticket => ticket.ticketId).sort(), [t2.ticketId, t3.ticketId, t4.ticketId].sort())
+
+  const missingTopic = await get('/plugins/dsh-ria/api/board/topic?topicId=topic_nope')
+  assert.equal(missingTopic.status, 404)
+  assert.equal(missingTopic.body.code, 'topic_missing')
+
+  const unfinished = await fixture.call('ria_topic', { action: 'archive', topicId: topicB.topic.topicId })
+  assert.equal(unfinished.ok, false)
+  assert.equal(unfinished.code, 'topic_unfinished')
+  const empty = await fixture.call('ria_topic', { action: 'create', title: 'Empty topic' })
+  const archivedEmpty = await fixture.call('ria_topic', { action: 'archive', topicId: empty.topic.topicId })
+  assert.equal(archivedEmpty.ok, true)
+  assert.ok(archivedEmpty.topic.archivedAt > 0)
+
+  const merged = await fixture.call('ria_topic', { action: 'merge', sourceTopicId: topicA.topic.topicId, targetTopicId: topicB.topic.topicId })
+  assert.equal(merged.ok, true)
+  assert.equal(merged.moved >= 1, true)
+  const source = fixture.service.store.topic(topicA.topic.topicId)
+  assert.equal(source.mergedInto, topicB.topic.topicId)
+  assert.equal(fixture.service.store.primaryTopicFor(t1.ticketId), topicB.topic.topicId)
+
+  const list = await fixture.call('ria_topic', { action: 'list' })
+  assert.equal(list.ok, true)
+  assert.equal(list.topics.some(topic => topic.topicId === topicA.topic.topicId), false)
+  assert.equal(list.topics.find(topic => topic.topicId === topicB.topic.topicId).counts.total, 4)
+  const all = await fixture.call('ria_topic', { action: 'list', includeArchived: true })
+  assert.equal(all.topics.some(topic => topic.topicId === topicA.topic.topicId), true)
+  assert.equal(all.topics.find(topic => topic.topicId === topicB.topic.topicId).counts.done, 1)
+  assert.equal(all.topics.find(topic => topic.topicId === topicB.topic.topicId).counts.open, 3)
+} finally {
+  fixture.cleanup()
+}
+
+// A v4 file loads untouched and gets an exact .v4.bak before the first save.
+{
+  const legacyDir = mkdtempSync(join(tmpdir(), 'dsh-ria-topic-legacy-'))
+  const raw = JSON.stringify({
+    schemaVersion: 4,
+    version: 4,
+    riaSessionId: 'session-ria',
+    riaPreset: 'ptc',
+    tickets: [],
+    createdAt: 1,
+    settings: {},
+  }, null, 2) + '\n'
+  writeFileSync(join(legacyDir, 'ria.json'), raw)
+  const legacy = await createFixture({ stateDir: legacyDir })
+  try {
+    assert.equal(readFileSync(join(legacyDir, 'ria.json.v4.bak'), 'utf8'), raw)
+    const migrated = JSON.parse(readFileSync(join(legacyDir, 'ria.json'), 'utf8'))
+    assert.equal(migrated.schemaVersion, 5)
+    assert.deepEqual(migrated.topics, [])
+    assert.deepEqual(migrated.links, [])
+    const created = await legacy.call('ria_topic', { action: 'create', title: 'Migrated topic' })
+    assert.equal(created.ok, true)
+    const saved = JSON.parse(readFileSync(join(legacyDir, 'ria.json'), 'utf8'))
+    assert.equal(saved.schemaVersion, 5)
+    assert.equal(saved.topics.length, 1)
+  } finally {
+    legacy.cleanup({ keepState: true })
+    rmSync(legacyDir, { recursive: true, force: true })
+  }
+}
+
+
+// The board UI is a pure layout plus a thin renderer. These assertions pin the
+// masonry order, the fixed-height contract, the filter semantics, the brief
+// fallback, and the click behavior that the spec calls out explicitly.
+{
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const start = source.indexOf('/* topic-board:start */')
+  const end = source.indexOf('/* topic-board:end */')
+  assert.ok(start >= 0 && end > start, 'client topic board markers')
+  const api = new Function(source.slice(start, end) + '\nreturn { topicWaterfall, topicBoardLayout, topicCardHeight, topicFilterMatches, topicBriefText, topicMatchesQuery, TOPIC_CARD_WIDTH, TOPIC_PROJECT_GAP, TOPIC_FILTERS };')()
+  const card = (topicId, lastUpdatedAt, counts, extra = {}) => ({
+    topicId,
+    title: topicId,
+    lastUpdatedAt,
+    counts,
+    tickets: extra.tickets || [],
+    working: extra.working || [],
+    brief: extra.brief || '',
+  })
+  const idleCounts = { total: 0, open: 0, working: 0, blocked: 0, done: 0 }
+  const topics = [
+    card('t1', 30, idleCounts),
+    card('t2', 20, idleCounts),
+    card('t3', 10, idleCounts),
+    card('t4', 5, idleCounts),
+  ]
+  const flow = api.topicWaterfall(topics, 3)
+  assert.equal(flow.columns, 3)
+  assert.deepEqual(flow.topics.map(topic => topic.topicId), ['t1', 't2', 't3', 't4'])
+  const p1 = flow.positions.get('t1')
+  const p2 = flow.positions.get('t2')
+  const p3 = flow.positions.get('t3')
+  const p4 = flow.positions.get('t4')
+  assert.equal(p1.column, 0)
+  assert.equal(p2.column, 1)
+  assert.equal(p3.column, 2)
+  assert.equal(p1.y, 0)
+  assert.equal(p2.y, 0)
+  assert.equal(p3.y, 0)
+  assert.equal(p4.column, 0, 'fourth card returns to the shortest column')
+  assert.equal(p4.y, p1.height + 14)
+  assert.equal(flow.width, api.TOPIC_CARD_WIDTH * 3 + 14 * 2)
+
+  const short = api.topicWaterfall([card('only', 1, idleCounts)], 3)
+  assert.equal(short.columns, 1, 'a one-topic project does not reserve three columns')
+
+  const busy = card('busy', 1, { total: 9, open: 5, working: 4, blocked: 2, done: 0 })
+  assert.equal(api.topicCardHeight(busy) - api.topicCardHeight(card('plain', 1, idleCounts)), 2 * 22 + 18 + 3 * 22 + 18)
+
+  const projects = api.topicBoardLayout([
+    { projectId: 'p1', title: 'P1', topics: [card('a', 2, idleCounts)] },
+    { projectId: 'p2', title: 'P2', topics: [card('b', 1, idleCounts)] },
+  ])
+  assert.equal(projects.projects[0].x, 0)
+  assert.equal(projects.projects[1].x, projects.projects[0].width + api.TOPIC_PROJECT_GAP)
+  assert.equal(projects.width, projects.projects[0].width + api.TOPIC_PROJECT_GAP + projects.projects[1].width)
+  assert.equal(projects.projects[0].positions.get('a').x, 18)
+  assert.equal(projects.projects[0].positions.get('a').y, 48 + 18)
+
+  assert.deepEqual(api.TOPIC_FILTERS.map(item => item.label), ['全部', '进行中', '卡住', '空闲'])
+  assert.equal(api.topicFilterMatches(busy, 'all'), true)
+  assert.equal(api.topicFilterMatches(busy, 'working'), true)
+  assert.equal(api.topicFilterMatches(busy, 'blocked'), true)
+  assert.equal(api.topicFilterMatches(busy, 'idle'), false)
+  assert.equal(api.topicFilterMatches(card('done', 1, { total: 2, open: 0, working: 0, blocked: 0, done: 2 }), 'idle'), true)
+  assert.equal(api.topicFilterMatches(card('blocked', 1, { total: 1, open: 1, working: 0, blocked: 1, done: 0 }), 'idle'), false)
+
+  const briefed = card('briefed', 1, idleCounts, { brief: '  The written brief  ' })
+  assert.equal(api.topicBriefText(briefed), 'The written brief')
+  const longGoal = '这是一个很长很长的目标'.repeat(6)
+  const fallback = card('fallback', 1, { total: 1, open: 1, working: 0, blocked: 0, done: 0 }, {
+    tickets: [{ ticketId: 'ticket_old', goal: 'older goal', status: 'open', updatedAt: 1 }, { ticketId: 'ticket_new', goal: longGoal, status: 'blocked', updatedAt: 9 }],
+  })
+  const fallbackText = api.topicBriefText(fallback)
+  assert.match(fallbackText, /^.*… · 卡住$/)
+  assert.equal(fallbackText.length <= 46, true)
+  assert.equal(api.topicBriefText(card('empty', 1, idleCounts)), '还没有关联工单')
+  assert.equal(api.topicMatchesQuery(briefed, 'written brief'), true)
+  assert.equal(api.topicMatchesQuery(briefed, 'missing'), false)
+
+  assert.match(source, /React\.createElement\(TopicBoardOverlay, \{\s*open: boardOpen,\s*ctx: ctx,/)
+  assert.match(source, /"data-ria-topic-card": topic\.topicId,\s*"data-ria-topic-open": "1",\s*onClick: open,/, 'clicking the card opens its topic page')
+  assert.match(source, /data-ria-topic-more/)
+  assert.match(source, /onClick: openMore/)
+  assert.match(source, /function openMore\(event\) \{\s*event\.stopPropagation\(\);\s*open\(\);/)
+  assert.match(source, /data-ria-topic-ticket/)
+  assert.match(source, /onClick: copy/)
+  assert.match(source, /props\.onOpenSession\(ticket\.executor\)/)
+  assert.match(source, /"↗ 在 " \+ \(edge\.topicTitle \|\| "未分类"\)/)
+  assert.match(source, /React\.createElement\(TopicTicketRow, \{\s*ticket: ticket,\s*compact: false,/)
+  assert.doesNotMatch(source, /data-ria-topic-expand/)
+}
+
+console.log('topic-board ok')

@@ -10,7 +10,7 @@ Ria 入口标题右侧有一个“连接”chip。点开后默认打开上次使
 - 微信发来的文本原样作为普通用户消息进入 Ria，不加前缀，也不直接进 worker。
 - Ria 的每条 assistant 文本回复都会同步回微信，统一以 🌊 前缀标记；暂停推送时除外。
 - 带 note 的派发/转述成功后，note 也会作为一条普通微信文本推送（见 [派发 note 卡片与微信确认](operations.md#派发-note-卡片与微信确认)），发往当前活跃的微信侧通道（「文件传输助手」或微信 Claw），并受目标通道当时的暂停状态约束；一个通道暂停时会自动落到另一个可用通道。
-- 入站支持文本和图片：微信「文件传输助手」和微信 Claw 发来的图片都会下载原图、落盘并作为带附件（图片）的普通用户消息进入 Ria，原文字（如有）保留；下载/校验失败时仍投递文字并附失败原因。出站支持文本、本机图片；「文件传输助手」还支持长回复转 .md。assistant 回复里的 Markdown 图片若指向本机存在的图片文件，会作为微信图片发出。详见下文“图片”一节。
+- 入站支持文本、图片；微信 Claw 还支持文件。图片会下载原图、落盘并作为带附件（图片）的普通用户消息进入 Ria；Claw 文件会下载解密、落盘，并在消息里给出文件名、大小和绝对路径。原文字（如有）保留；下载/校验失败时仍投递文字并附失败原因。出站支持文本、本机图片；微信 Claw 和「文件传输助手」还支持用 `ria_send_file` 发送本机文件，「文件传输助手」的长回复还会自动转 .md。assistant 回复里的 Markdown 图片若指向本机存在的图片文件，会作为微信图片发出。详见下文“图片”“文件”两节。
 - 出站长回复或复杂 Markdown 时，默认改发完整的 .md 文件；短消息和简单文本保持原样。
 - DSH 重启后如有 creds 会自动重连；待发文本超过 10 条时只补发最后 10 条，并先提示跳过了多少条。
 - chip 只在宽侧边栏显示；折叠侧边栏不插入。
@@ -122,3 +122,40 @@ Ria 入口标题右侧有一个“连接”chip。点开后默认打开上次使
 - 出站密钥编码：`image_item.media.aes_key` 必须是 `base64(<32 位 hex 字符串>)`（44 字符），不是 `base64(<16 字节裸密钥>)`（24 字符）。后者能发出、返回 `ret=0`，但客户端解不开：缩略图是黑的，点开提示“图片已过期或被清理”。2026-11-14 真实账号实测，与 `Tencent/openclaw-weixin` 的 `src/messaging/send.ts` 一致；入站解码两种形式都接受。
 - 出站失败：单张图失败只回退一条可见文本“图片 <name> 发送失败，请在 Ria 会话中查看原图”，不吞整条回复；围栏代码块不发送；暂停时图片和文本一样不发。
 - 协议来源：腾讯公开的 `Tencent/openclaw-weixin` 客户端实现（`docs/protocol.md`、`src/api/types.ts`、`src/messaging/send.ts`、`src/cdn/upload.ts`、`src/media/media-download.ts`）。
+
+## 文件
+
+文件能力分入站和出站两部分。入站只有微信 Claw 实现；出站三个通道都可以通过 `ria_send_file` 发送本机文件。
+
+### 入站（仅微信 Claw）
+
+- `getupdates` 的 `item_list` 里出现 `type=4` 的 `file_item` 时，下载 `media` 指向的 CDN 文件，按 `aes_key` 做 AES-128-ECB + PKCS#7 解密，再按文件头/扩展名校验。
+- 保存到 `DSH_HOME/state/ria/wechat-claw-inbound-files/`，文件名带时间戳、消息 id 和清洗后的原名；目录 0700、文件 0600，不覆盖已有文件，保留 30 天或最多 500 个。
+- Ria 收到的是普通用户消息：原文字（纯文件用“（用户发来一个文件）”占位）加 `📎 文件：<name>（<size>）` 和 `路径：<absolute path>`。宿主目前没有可直接构造的 file part，所以用这三项文本引用，后续 `ria_request`、`ria_read` 或其它工具可以直接使用绝对路径。
+- 上限默认 20 MB，可配置：
+
+  ~~~yaml
+  - id: ria
+    config:
+      channels:
+        wechat-claw:
+          files:
+            enabled: true
+            maxBytes: 20971520
+  ~~~
+
+  上限最高 100 MB；`enabled: false` 时纯文件只回“目前文件接收已关闭。”。
+- 扩展名 allowlist：pdf、doc/docx、xls/xlsx、ppt/pptx、zip/gz/tar/7z/rar、txt、md、csv、json、html、xml、yml/yaml、log、png/jpg/jpeg/gif/webp、svg。其它类型回“不支持的文件类型：<ext>”，不落盘。
+- 下载失败、解密失败、超限或类型不支持都不会丢整条消息：Ria 仍收到原文字并追加 `[文件接收失败：<原因>]`。
+- 微信「文件传输助手」和 QQ 的入站文件尚未实现，收到文件只会回文本提示。
+
+### 出站（三个通道）
+
+在 Ria 会话里调用 `ria_send_file({ path, note? })`。`path` 必须是绝对路径，经 `realpath` 解析后必须是普通文件、非空、扩展名在 allowlist 内，且不超过该通道上限（默认 20 MB）。
+
+- 通道选择：最近一次给 Ria 发过消息、且有可回复目标的通道，优先级按入站时间；没有目标返回 `no_target`。
+- 暂停推送：不发送，把 `channel_file_send` 放进 outbox，返回 `queued=true`；恢复后自动重试。暂停、没有 peer 时 deferred 不消耗重试次数；超过 24 小时仍未连接会转 failed。
+- 微信 Claw：`getuploadurl` 的 `media_type=3` 上传到 CDN，再发 `type=4` 的 `file_item`；AES 加密、字段和 `aes_key` 编码见 [channels.md](channels.md#文件)。
+- 微信「文件传输助手」：走网页版 `sendFile`（appmsg 文件消息）。
+- QQ 机器人：走官方 SDK 的 `sendFile`，仅在 C2C/群聊已有回复目标时发送。
+- 失败不会静默：通道状态的 `lastFileSend` 记录 `delivered`、`name`、`bytes`、`path`，失败时还有 `code`/`error`，Claw 另带 `ret`/`errmsg`。`note` 会在文件送达后作为一条 `📎 <note>` 文本发送，失败只写 `noteError`，不影响文件已送达。

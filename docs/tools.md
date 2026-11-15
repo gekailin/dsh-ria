@@ -1,6 +1,6 @@
 # 工具与 worker 管理
 
-Ria 通过 run_code SDK 调用 13 个 `ria_*` 工具（含反思编排 `ria_reflect`）。工具只在 Ria 的 Agent ctx 上注册，worker 侧不需要安装任何东西。
+Ria 通过 run_code SDK 调用 14 个 `ria_*` 工具（含反思编排 `ria_reflect` 和文件发送 `ria_send_file`）。工具只在 Ria 的 Agent ctx 上注册，worker 侧不需要安装任何东西。
 
 ## 工具
 
@@ -13,6 +13,7 @@ Ria 通过 run_code SDK 调用 13 个 `ria_*` 工具（含反思编排 `ria_refl
 | ria_model | 改一个已存在顶层会话（默认 worker；明确要求时也可改 Ria 自己）的模型。只改模型选择，不发消息、不建工单、不唤醒会话。改前按 ria_request 的预检检查会话存在、非 subagent、未归档、cwd 可用，另加 model_not_found。model 必填；模型名在多个 provider 下都存在时必须显式给 provider。成功返回 selected {provider, model, reasoningEffort?} 与已知的 previous；ria_status scope=sessions/recent 会立即反映新模型。 |
 | ria_title | 改一个已存在顶层会话（含 Ria 自己，不含 subagent）的会话名。只改名，不发消息、不建工单、不唤醒 worker、不改其它状态。预检同 ria_model（存在、非 subagent、未归档、cwd 可用）；空标题或宿主判定标题非法返回 title_invalid，宿主原始 message 原样附回。成功返回 {ok:true, sessionId, title} 与已知的 previous。 |
 | ria_request | 把工单的消息发给一个或多个 worker。ticketId 与 note 均必填；mode=queue 或 steer；content 支持 text/image/file；attachments 支持最多 20 个图片绝对路径（png/jpeg/webp/gif），与 content 一起作为 text + image parts 投递，交给宿主 attachment 服务统一校验和存储。目标 executor 必须等于 ticket.executor。Host 先把 note 和微信镜像写入副作用 outbox，有活跃 turn 时立即记录到 ria.json，由插件 client 在 Ria 会话当前轮次末尾显示成可见卡片，不进入模型上下文；没有活跃 turn 时留待下一次 turn/start、startup 或 30 秒 tick 补投。同时把 note 作为“📌 任务已派发：<note>”推送到微信；发送失败由 outbox 退避重试，不阻断派发。缺 note、空白或超长会直接报错且不投递。附件预检失败码：attachment_missing、attachment_invalid、model_no_image；预检失败不投递、不写 recentWorkers、不动工单。Host 不加消息前缀；防误发提示由 agent system prompt section 提供。mode=queue 时若目标正在跑 turn 或已有非空 pending 队列，直接返回 worker_busy 且不投递；依赖工单必须带当前 queueToken，未就绪、token 缺失/过期或已派发都返回 ticket_not_ready。mode=steer 仍可插进运行中的 turn，但只用于同步信息，不得用来下发新任务。 |
+| ria_send_file | 把本机一个文件发到最近活跃的手机通道（微信 Claw、QQ 或微信「文件传输助手」）。path 必须是绝对路径，realpath 解析后须是普通文件、非空、扩展名在 allowlist 内且不超过通道上限；note 可选、最多 500 字。通道暂停时 durable 排队并返回 queued=true；没有回复目标返回 no_target；成功或失败都记 lastFileSend。只发文件，不建工单、不唤醒 worker、不改任务状态。 |
 | ria_read | 读某个 Session 的近期消息。live 用 snapshotEvents，冷会话用持久化 events，不 resume。返回值还带 queue：与 ria_queue list 相同的 pending 视图，冷会话为 null。 |
 | ria_queue | 列出或撤回一个顶层 worker 尚未执行的消息。action=list 返回 running 与 queue（id、placement=queued/steering/context、可选 rpcId、preview）；冷会话 queue=null。action=remove 接受 itemId 或 rpcId（rpcId 来自 ria_request 的 requestId；两者都给时 itemId 优先），不可恢复，只删 pending，不停止当前 turn、不改工单、不影响 recentWorkers。失败码 queue_item_not_found、queue_remove_failed；预检同 ria_request。 |
 | ria_approval | 列出正在等待审批的 worker（仅限有 active 工单的 executor）。每项带 approvalId、workerSessionId、ticketId、toolName、callId/reason、createdAt、expiresAt、expiresInMs。捕获审批时会把对应工单标成 blocked+waitingOn=approval、写 kind=approval 的 attention，并排一张 approval_note 卡片与一条微信提醒。只读：不批准、不拒绝、不替 UI answerer 作答。 |
@@ -116,6 +117,51 @@ Ria 通过宿主模型注册表（`ctx.get('llm').listProviders()/listModels(pro
 - 恢复失败会标记 `restore_failed`，60 秒后重试；审计里能看到失败原因。
 - 不改 worker 的 tools、prompt 或 preset。
 
+## 发送文件
+
+`ria_send_file` 只负责把本机一个文件发到用户手机上的聊天通道，不建工单、不派发、不唤醒 worker、不改任务状态。入站文件的落盘与投递见 [wechat.md](wechat.md#文件) 和 [channels.md](channels.md#文件)。
+
+参数：
+
+- `path`：必填，绝对路径。工具先做 `realpath`，再按解析后的真实路径检查，符号链接只要最终指向普通文件就发送。
+- `note`：可选，最多 500 字。文件发送成功后，会以 `📎 <note>` 作为一条普通文本随后发出（微信 Claw/QQ/文件传输助手都走各自的 sendNote）；说明发送失败只写 `noteError`，不影响文件已送达。
+
+校验顺序与错误码：
+
+| 错误码 | 条件 |
+|---|---|
+| `path_required` | `path` 缺失或空 |
+| `path_not_absolute` | 不是绝对路径 |
+| `file_not_found` | `realpath` 或 `stat` 失败 |
+| `file_not_regular` | 解析后不是普通文件（目录、设备、管道等） |
+| `file_empty` | 大小为 0 |
+| `file_unsupported` | 扩展名不在 allowlist；message 会列出允许的类型 |
+| `no_target` | 三个通道都没有可回复目标 |
+| `file_send_disabled` | 选中通道的 `channels.<id>.files.enabled=false` |
+| `file_too_large` | 超过该通道 `maxBytes` |
+| `file_read_failed` | 读取文件失败 |
+| `file_queue_failed` | 暂停时写 outbox 失败 |
+| `file_send_failed` | 通道发送失败；返回值带 `lastFileSend` 与通道原始错误 |
+
+扩展名 allowlist：pdf、doc/docx、xls/xlsx、ppt/pptx、zip/gz/tar/7z/rar、txt、md、csv、json、html、xml、yml/yaml、log、png/jpg/jpeg/gif/webp、svg。
+
+通道与上限：
+
+- 候选是微信 Claw、QQ 机器人、微信「文件传输助手」；按各通道最近一次入站消息的 `lastInboundAt` 降序选第一个有可回复目标的通道，时间相同时按上面的顺序。没有在任一通道给 Ria 发过消息时返回 `no_target`，不会广播到多个通道。
+- 每个通道的上限默认 20 MB，可用 `channels.<id>.files.maxBytes` 调整；微信 Claw 的入站上限同类配置上限为 100 MB。
+- 微信 Claw 出站：`getuploadurl`（`media_type=3`）→ CDN AES-128-ECB 密文 → `sendmessage` 的 `type=4 file_item`；AES key 编码和字段见 [channels.md](channels.md#文件)。
+- QQ 机器人出站：官方 SDK 的 `sendFile`，使用最近入站消息的 C2C/群聊回复目标。
+- 微信「文件传输助手」出站：网页版 `sendFile` 的 appmsg 文件消息。
+
+暂停与重试：
+
+- 选中通道暂停时，不读文件进内存、不调 CDN，直接把 `{channel,path,name,bytes,note}` 作为 `channel_file_send` 写进 outbox，返回 `{ok:true,queued:true,channel,name,bytes,path,entryId,message}`；恢复推送后自动发送。
+- 投递时通道未连接或没有 peer 返回 `{deferred:true}`，不消耗 `attempts`；暂停同理。超过 24 小时仍未连上时会抛错并进入 outbox 的失败退避，不会无限挂着。
+- 暂停、没有目标、排队成功都不算已送达。模型不能对用户说“已发送”，只能按返回的 `queued=true` 说已排队、恢复后发送。
+- 成功和失败都写通道状态里的 `lastFileSend`：成功 `{at,delivered:true,name,bytes,path}`；失败再加 `code`、`error`，微信 Claw 另有 `ret`、`errmsg`。`GET /channels/<id>/status` 和 `/api/state` 可见。
+
+边界：只发本机文件，不接受 URL 或 base64；一次只发一个文件；图片仍可用 `ria_request` 的 `attachments` 转给 worker，但那是给 worker 的附件，不是发给用户手机。
+
 ## 管理者 prompt 的行为约束
 
 Ria 的系统 prompt 要求：每条真实用户消息都要用 `ria_resolve` 给出归宿（answered/work/merge/split/control/blocked），不能让它悄悄消失；需求不明确时先和用户澄清，再下发；不要凭猜测开工；任务要有验收标准；进度按需查询；经验按 case 集总结（需求、错误做法、正确做法），默认只在对话里输出，用户指定路径时才写文件；重启后先 read 再决定是否继续；收到 `[Worker idle]` 时先 read，确认完成才关工单，等用户输入就标 blocked；worker 明确拒绝任务或用户取消/叫停 worker turn 时，标 blocked 并停下来问用户下一步，不自行改派、重发或换方案；防误发提示由 agent system prompt section 提供，任务消息本身不加前缀；派发必须提供 note（一两句话：派给谁、做什么、用户接下来看到什么），Host 会把它显示成 Ria 会话当前轮次末尾的卡片，并同步一条微信文本；缺 note 或空白会直接报错、不投递，也不会结束本轮；成功派发后立即结束本轮，不再 sleep/poll；不给忙碌 worker（有运行中的 turn 或非空 pending 队列）用 queue 模式排队，先后顺序用 dependsOn 表达，steer 只用于同步信息、绝不下发新任务；上游 failed/cancelled 的 [Queue blocked] 要先报告用户再决定，不自行跳过或改写需求；用户要求换 worker 模型时用 ria_model，新建 worker 要指定模型时用 ria_spawn 的 model 参数；只有用户明确要求时才使用 ria_grant，绝不自行放宽 worker 权限；用户没指定 worker 时只从 scope=recent 的近期 worker 里挑，近期没有合适的就先问用户，不遍历全部会话、不凭空挑。
@@ -134,7 +180,7 @@ ria_reflect 是反思的编排入口，只注册给 Ria。它管理 `reflections
 
 ## 反思读取工具（仅反思 worker）
 
-反思 worker 由编排层用 `ria_spawn({reflectionRunId})` 创建；创建前必须先打开 run 并写入绑定，绑定命中时只给这个 worker 注册下面 6 个工具。Ria 自己的 13 个 `ria_*` 工具、普通 worker 的会话都看不到这些工具；普通 worker 调它们会得到 unknown_tool。它们全部只读，不会 resume 冷会话，也不会写 `ria.json` 或会话日志。
+反思 worker 由编排层用 `ria_spawn({reflectionRunId})` 创建；创建前必须先打开 run 并写入绑定，绑定命中时只给这个 worker 注册下面 6 个工具。Ria 自己的 14 个 `ria_*` 工具、普通 worker 的会话都看不到这些工具；普通 worker 调它们会得到 unknown_tool。它们全部只读，不会 resume 冷会话，也不会写 `ria.json` 或会话日志。
 
 - `ria_reflect_status`：当前 run 的 runId、forDate、window、deadline/remainingMs、候选会话、limits、memoryBytes、reportPath、state。默认 `scope=candidates` 只列**本 run 窗口内有事件**的会话（最多 50 条）；`scope=all` 返回不按窗口过滤的全部候选。两者都给 `candidateTotal`（run 候选总数，含被窗口过滤掉的）与 `candidatesTruncated`（列表是否撞到 50 条上限）；不再是全部顶层会话的静态名单。
 - `ria_reflect_read_tickets`：scope=window/open/history，可按 status/executor 过滤；limit 1–200，默认 80。默认 `detail=summary`，每条只返回 ticketId/goal/status/waitingOn/executor/updatedAt（goal 截 500 字）；`detail=full` 才给 acceptance、blockedReason、attention、resolution、failure、dependsOn、checklist、progress 等完整字段。`scope=open` 只返回非终态工单，done/cancelled/failed 不会混进来。

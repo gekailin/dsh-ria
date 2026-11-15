@@ -4,13 +4,13 @@ Ria 入口标题右侧有一个“连接”chip。点开后是一个通道面板
 
 | 通道 | id | 扫码后得到 | 入站 | 出站 |
 |---|---|---|---|---|
-| 微信 Claw | `wechat-claw` | bot_token、账号、baseUrl | 文本、图片 | 文本、本机图片 |
-| QQ 机器人 | `qq-bot` | AppID、AppSecret、openid | 文本 | 文本 |
-| 微信「文件传输助手」网页版 | `wechat` | Cookie / sid / skey | 文本、图片 | 文本、.md 文件、本机图片 |
+| 微信 Claw | `wechat-claw` | bot_token、账号、baseUrl | 文本、图片、文件 | 文本、本机图片、本机文件 |
+| QQ 机器人 | `qq-bot` | AppID、AppSecret、openid | 文本 | 文本、本机文件 |
+| 微信「文件传输助手」网页版 | `wechat` | Cookie / sid / skey | 文本、图片 | 文本、.md 文件、本机图片、本机文件 |
 
 三个通道都运行在 DSH 进程内，不启动 bridge 进程，不额外占端口（QQ 使用出站 WebSocket）。扫码只需要在面板里做一次，凭据保存在本机，DSH 重启后自动重连。
 
-微信「文件传输助手」的细节、长回复转 .md 的规则见 [wechat.md](wechat.md)；图片两条微信通道都支持，差异见下文与 [wechat.md](wechat.md#图片)。本文说明三个通道共用的面板、微信 Claw 与 QQ 机器人的协议和限制。
+微信「文件传输助手」的细节、长回复转 .md 的规则见 [wechat.md](wechat.md)；图片和文件的通道差异见下文与 [wechat.md](wechat.md#图片)。本文说明三个通道共用的面板、微信 Claw 与 QQ 机器人的协议和限制。
 
 ## 微信 Claw
 
@@ -37,6 +37,39 @@ Ria 入口标题右侧有一个“连接”chip。点开后是一个通道面板
 - 出站失败：单张图片发送失败只回退成一条可见文本“图片 <name> 发送失败，请在 Ria 会话中查看原图”，不影响已发出的文本和其他图片；围栏代码块里的示例不发送；暂停推送时图片和文本一样不发送。
 - 旧配置里的 `inbound: false` / `outbound: false` 不再生效：服务启动时归一到 true，接口也不接受关闭。图片消息始终下载、落盘并转给 Ria，回复里的本地图片始终上传发送。
 - 协议来源：腾讯公开的 `Tencent/openclaw-weixin` 客户端实现（`docs/protocol.md`、`src/api/types.ts`、`src/messaging/send.ts`、`src/cdn/upload.ts`、`src/media/media-download.ts`）；CDN 下载不带 bot token，上传成功以响应头 `x-encrypted-param` 为准。
+
+### 文件
+
+微信 Claw 的文件消息使用 iLink 的 `type=4` `file_item`：
+
+~~~json
+{
+  "type": 4,
+  "file_item": {
+    "media": {
+      "encrypt_query_param": "...",
+      "aes_key": "base64(32 位 hex 字符串)",
+      "encrypt_type": 1,
+      "full_url": "https://..."
+    },
+    "file_name": "方案.pdf",
+    "md5": "...",
+    "len": "12345"
+  }
+}
+~~~
+
+`len` 是明文字节数的十进制字符串。下载地址优先 `media.full_url`，没有时用 `<cdn_base>/download?encrypted_query_param=<encodeURIComponent(encrypt_query_param)>`；密钥 `aes_key` 先 base64 解码成 32 个 hex 字符，再解成 16 字节，AES-128-ECB + PKCS#7 解密。CDN 下载不带 bot token。
+
+- 入站落盘：`DSH_HOME/state/ria/wechat-claw-inbound-files/YYYYMMDD-HHMMSS-<msgid>-<清洗后的文件名>`，目录 0700、文件 0600；重名追加 `-2`，最多尝试 1000 次。文件名只保留 basename，控制字符、路径分隔符和 Windows 非法字符替换为 `_`，去掉前导点与尾部点/空格，最长 120 字符。保留最近 30 天、最多 500 个。
+- 投递形式：文件不会变成宿主的 file part，而是以明确的文本引用进入 Ria 消息：`📎 文件：<name>（<size>）` 加一行 `   路径：<absolute path>`。原文字保留；纯文件用“（用户发来一个文件）”占位。Ria 可以直接把路径作为后续参数或 `ria_read` 的目标。
+- 预检顺序：先按扩展名和 `len` 判断；下载上限按 `aesEcbPaddedSize(maxBytes)` 放宽给 AES 填充，解密后再按明文大小检查。下载、解密、超限或扩展名不支持都不丢整条消息，仍投原文字并追加 `[文件接收失败：<原因>]`，日志记 `[claw inbound] file <id> rejected (<code>): <reason>`。
+- 允许的扩展名：pdf、doc/docx、xls/xlsx、ppt/pptx、zip/gz/tar/7z/rar、txt、md、csv、json、html、xml、yml/yaml、log、png/jpg/jpeg/gif/webp、svg。其它类型（如 exe、sh）回“不支持的文件类型：<ext>”，不落盘。
+- 上限默认 20 MB，配置在 `channels.wechat-claw.files.maxBytes`（上限 100 MB）；`channels.wechat-claw.files.enabled=false` 时只回“目前文件接收已关闭。”，不投给 Ria。QQ 和微信「文件传输助手」的入站仍只处理文本/图片。
+- 出站：assistant 要发文件时调用 `ria_send_file({ path, note? })`，详见 [tools.md](tools.md#发送文件)。Host 先 `POST /ilink/bot/getuploadurl`，body 含 `filekey`（16 字节随机 hex）、`media_type: 3`、`to_user_id`、`rawsize`、`rawfilemd5`（md5 hex）、`filesize`（AES 填充后大小）、`no_need_thumb: true`、`aeskey`（16 字节随机 hex）；地址优先响应里的 `upload_full_url`，否则 `<cdn_base>/upload?encrypted_query_param=<param>&filekey=<filekey>`。把 AES-128-ECB 密文 POST 上去，成功后取响应头 `x-encrypted-param`；4xx 不重试，其它错误最多 3 次。
+- 发送消息时用 `type=4` 的 `file_item`：`media.encrypt_query_param` 来自 `x-encrypted-param`，`media.aes_key` 是 `base64(32 位 hex 字符串)`（不是裸密钥的 base64），`media.encrypt_type=1`，`file_name` 和 `len`（十进制字符串）填原文件信息。caption 另发一条文本，不塞进 file_item。
+- 暂停推送时 `ria_send_file` 不进 CDN、不发送，而是以 `channel_file_send` 入 outbox 并返回 `queued=true`；恢复后自动重试，暂停/没有可回复目标时 deferred 不消耗 `attempts`。成功或失败都会在通道状态里留下 `lastFileSend`（delivered、name、bytes、path、code/error/ret/errmsg），失败不会静默吞掉。
+- 协议来源：`Tencent/openclaw-weixin` 的 `docs/protocol.md`、`src/api/types.ts`、`src/messaging/send.ts`、`src/cdn/upload.ts`、`src/media/media-download.ts`；未在真实账号验证文件是否能在手机端正常打开。
 
 ### 正在输入
 
@@ -72,10 +105,10 @@ Ria 入口标题右侧有一个“连接”chip。点开后是一个通道面板
 
 限制与行为：
 
-- 语音、文件、视频仍不处理：会回复一句“目前只能接收文本消息。”，不会交给 Ria。
+- 语音、视频仍不处理：会回复一句“目前只能接收文本消息。”，不会交给 Ria。文件按上一节的「文件」处理。
 - 一个账号同一时间只能有一个 Claw 会话；退出登录后重新扫码可以换账号。
 - token 失效或长轮询持续失败时，状态卡会显示错误；重新扫码即可。失败后按 2 秒、30 秒退避重试，不会立刻断开。
-- 不读取历史消息，不支持群管理、@ 判断、引用回复，也不支持语音、文件、视频。
+- 不读取历史消息，不支持群管理、@ 判断、引用回复，也不支持语音、视频；文件见「文件」一节。
 
 默认接口地址是 `https://ilinkai.weixin.qq.com`。开发和测试时可以用 `WX_CLAW_BASE` 指向本地假服务，用 `WX_CLAW_QR_POLL_MS` 调快轮询。
 
@@ -135,6 +168,8 @@ DSH_HOME/state/ria/
     creds.json       # bot_token、accountId、baseUrl、userId，0600
     state.json       # 暂停状态
     cursor.json      # getupdates 游标
+  wechat-claw-inbound/        # 入站图片，0700
+  wechat-claw-inbound-files/  # 入站文件，0700
   qq-bot/
     creds.json       # appId、appSecret、userOpenid，0600
     state.json       # 暂停状态
@@ -210,7 +245,7 @@ DSH_HOME/state/ria/
 
 ## 限制
 
-- 微信 Claw 支持文本和图片，仍不支持文件、语音和视频；QQ 机器人只支持文本。微信 Claw 入站的非图片/非文本 item 只回提示，出站可发文本、本机图片、派发/审批/暂停提示；QQ 不发这些 note。需要发文件时用微信「文件传输助手」通道，或直接在 Ria 会话里操作。
+- 微信 Claw 支持文本、图片、文件；QQ 机器人支持文本和出站文件；微信「文件传输助手」支持文本、图片和出站文件。QQ 和「文件传输助手」的入站文件仍未实现，入站遇到文件只会回文本提示。微信 Claw 入站的非文本/图片/文件 item 只回提示；QQ 不发派发/审批/暂停这类 note。
 - 三个通道都没有在真实账号上完成一次完整的扫码收发验证；协议用本地 mock 服务覆盖，见 [testing.md](testing.md)。真实扫码、平台权限和消息窗口仍需要在目标环境确认。
 - 不保存聊天历史，也不做跨通道去重；同一条平台消息如果被重复投递，依靠各通道的 message id 去重。
 - QQ 群消息必须 @ 机器人；这是产品行为，不是可配置项。

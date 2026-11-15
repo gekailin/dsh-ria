@@ -12,6 +12,17 @@ Ria 入口标题右侧有一个“连接”chip。点开后是一个通道面板
 
 微信「文件传输助手」的细节、长回复转 .md 的规则见 [wechat.md](wechat.md)；图片和文件的通道差异见下文与 [wechat.md](wechat.md#图片)。本文说明三个通道共用的面板、微信 Claw 与 QQ 机器人的协议和限制。
 
+## 入站消息如何交给 Ria
+
+三个通道的手机入站消息走同一条投递路径，不再固定排到 Ria 的下一轮：
+
+- Ria 当前有运行中的 turn（`turn/start` 到 `turn/end` 之间）时，消息用 `mode="steer"` 注入这一轮。Ria 会在当前步骤结束后看到它，可以把它当补充信息，回复可能比空闲时晚。
+- Ria 空闲时，仍用 `mode="queue"` 起一个新 turn。
+- 如果 steer 抛错（例如 turn 刚好结束），宿主会自动退回一次 `mode="queue"`，并复用同一个 `requestId`；宿主按 requestId 去重，不会因为“steer 已部分入队、随后报错”而投递两次。两次都失败才走原有的“消息未能交给 Ria”通知。
+- 每次尝试记一行日志：`[<channel> inbound] mode=steer|queue reason=ria_busy|ria_idle|steer_failed requestId=...`。
+
+这个取舍只影响“这句话什么时候进入 Ria 的上下文”，不改变图片/文件的下载与落盘、失败提示、暂停、typing、未送达通知和 outbox，也不改变 `ria_request` / `ria_resolve` 的 worker 派发模式。需要 Ria 立刻作为独立新任务处理时，最好等它空闲后再发；在长任务中插话时，steer 更像补充说明，而不是抢占当前任务。
+
 ## 微信 Claw
 
 “微信 Claw”直接对接腾讯 iLink 的机器人接入接口，不需要安装 OpenClaw，也不依赖本机上的 QBotClaw。

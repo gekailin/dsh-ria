@@ -13,6 +13,7 @@
 - 两个新通道都没有在真实账号上完成扫码收发：微信 Claw 只覆盖到 iLink 的 get_bot_qrcode/get_qrcode_status/getupdates/sendmessage，QQ 只覆盖 create_bind_task/poll_bind_result 与 AES-GCM 解密，消息网关用 mock SDK 替换；平台权限、消息窗口和真实 WebSocket 仍需在目标环境确认。
 - QQ 群消息必须 @ 机器人；QQ 机器人还需要开放平台的消息权限，否则网关已连接也可能收不到消息。
 - 多通道同时登录时，DSH 重启后各自恢复暂停状态；在第一条新入站消息把其他通道自动暂停之前，可能短暂重复推送。
+- 手机渠道入站在 Ria 有运行中 turn 时用 steer 插入当前轮，因此长任务期间发来的话可能被当成补充信息、回复延后；steer 失败会回退一次 queue。忙碌判定用插件自己的 `currentRiaTurn`（`turn/start` 置位、`turn/end` 清除），不额外轮询宿主状态。
 - 审批可见性会主动把工单标成 blocked+approval、排卡片/微信提醒并支持 TTL 与重启对账，但仍不代批、不自动批准；临时权限需要用户明确指令，Ria 不能自行判断后提权。
 - worker 自动唤醒由 `agent/status` 的 `idle` 触发，能读到最后一轮 `turn/end` 的 reason（含 `aborted(user)`），但“明确拒绝”只能由 Ria 读消息判断；提示措辞不假设完成，需要 Ria 再 read。
 - 不做 needs_input/failed 的独立事件级唤醒；需要时用官方 schedule 或用户回来问。

@@ -18,6 +18,8 @@ reflection-settings-ui 测试覆盖：客户端反思设置的上海日期、星
 
 voice-style 测试覆盖：settings.style 只保留 enabled/preset/custom 三个字段、非法 preset 回退 concise、custom 按码点截到 300、enabled 非 true 视为关闭；关闭时 manager prompt 与基线逐字节一致且不出现 `## Voice`，开启时四档各自包含行为描述/正例/反例、三条边界、`## Voice` 在 `## User memory` 之前、custom 在边界之后；GET /settings 返回 effectiveText，POST 六类非法 style 整包 400 且不落盘，部分字段浅合并、reflection+style 同时提交、关闭后 effectiveText 为空；客户端源码断言四档 id 与中文名、300 字计数、显式「保存补充」按钮和关闭灰化。
 
+inbound-delivery 测试覆盖：微信「文件传输助手」、微信 Claw、QQ 三个通道在 Ria 空闲时用 queue、忙碌时用 steer、steer 抛错后用同一 requestId 回退一次 queue 且只成功投递一次；同时断言 requestId 前缀不变、prompt 始终带 signal、忙碌探测异常按空闲处理。
+
 channel-pause-notices 测试覆盖：文件传输助手、微信 Claw、QQ 三个通道自动暂停时各在自己的通道发一条 `channel_pause_notice`，文案点名本通道与触发来源；重复触发、手动暂停、未连接或无 peer 时不重发、不入队；Claw/QQ 在暂停态仍能绕过暂停发出（`prefix=false`），QQ 无目标时 durable 返回 `{deferred:true}`；同一 `stateDir` 重启重放同一 `pausedAt` 不重复。
 
 ## 本地开发与隔离验证

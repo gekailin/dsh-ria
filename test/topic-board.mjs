@@ -203,7 +203,7 @@ try {
   const start = source.indexOf('/* board-layout:start */')
   const end = source.indexOf('/* topic-board:end */')
   assert.ok(start >= 0 && end > start, 'client board markers')
-  const api = new Function(source.slice(start, end) + '\nreturn { boardLayout, boardCanOpenSession, topicWaterfall, topicBoardLayout, topicTicketLayout, topicCardHeight, topicTicketMatchesFilter, topicBriefText, topicMatchesQuery, TOPIC_CARD_WIDTH, TOPIC_CARD_GAP, TOPIC_PROJECT_GAP, TOPIC_FILTERS, TOPIC_MODAL_PER_COLUMN };')()
+  const api = new Function(source.slice(start, end) + '\nreturn { boardLayout, boardCanOpenSession, topicWaterfall, topicBoardLayout, topicTicketLayout, topicCardHeight, topicSectionOmitted, topicTicketMatchesFilter, topicBriefText, topicMatchesQuery, TOPIC_CARD_WIDTH, TOPIC_CARD_GAP, TOPIC_PROJECT_GAP, TOPIC_TICKET_INSET, TOPIC_FILTERS, TOPIC_MODAL_PER_COLUMN };')()
   const card = (topicId, lastUpdatedAt, counts, extra = {}) => ({
     topicId,
     title: topicId,
@@ -227,7 +227,8 @@ try {
   const p2 = flow.positions.get('t2')
   const p3 = flow.positions.get('t3')
   const p4 = flow.positions.get('t4')
-  assert.equal(api.TOPIC_CARD_WIDTH, 240)
+  assert.equal(api.TOPIC_CARD_WIDTH, 200)
+  assert.equal(api.TOPIC_TICKET_INSET, 4, '160px ticket leaves 20px margins inside a 200px card')
   assert.equal(api.TOPIC_MODAL_PER_COLUMN, 4)
   assert.equal(p1.column, 0)
   assert.equal(p2.column, 1)
@@ -237,7 +238,7 @@ try {
   assert.equal(p3.y, 0)
   assert.equal(p4.column, 0, 'fourth card returns to the shortest column')
   assert.equal(p4.y, p1.height + api.TOPIC_CARD_GAP)
-  assert.equal(flow.width, 240 * 3 + 14 * 2, 'three 240px cards plus two gaps')
+  assert.equal(flow.width, 200 * 3 + 14 * 2, 'three 200px cards plus two gaps')
 
   const short = api.topicWaterfall([card('only', 1, idleCounts)], 3)
   assert.equal(short.columns, 1, 'a one-topic project does not reserve three columns')
@@ -249,6 +250,15 @@ try {
   assert.equal(api.topicCardHeight(busy) - api.topicCardHeight(empty), 358)
   const onePending = card('one', 1, { total: 1, open: 1, working: 0, blocked: 0, done: 0 })
   assert.equal(api.topicCardHeight(onePending), 177 + 58)
+  const threePending = card('three', 1, { total: 3, open: 3, working: 0, blocked: 0, done: 0 })
+  assert.equal(api.topicCardHeight(threePending), 177 + 58 * 2 + 8 + 4 + 18)
+  const fiveWorking = card('five', 1, { total: 5, open: 0, working: 5, blocked: 0, done: 0 })
+  assert.equal(api.topicCardHeight(fiveWorking), 177 + 58 * 3 + 8 * 2 + 4 + 18)
+
+  assert.equal(api.topicSectionOmitted(2, 2), false, 'exactly the limit is not omitted')
+  assert.equal(api.topicSectionOmitted(3, 2), true, 'one over the limit is omitted')
+  assert.equal(api.topicSectionOmitted(3, 3), false, 'exactly the working limit is not omitted')
+  assert.equal(api.topicSectionOmitted(5, 3), true, 'more than the working limit is omitted')
 
   const projects = api.topicBoardLayout([
     { projectId: 'p1', title: 'P1', topics: [card('a', 2, idleCounts)] },
@@ -315,9 +325,14 @@ try {
 
   assert.equal((source.match(/React\.createElement\(TicketCard, \{/g) || []).length, 2, 'the topic card and the modal share TicketCard')
   assert.match(source, /"data-ria-topic-card": topic\.topicId,\s*"data-ria-topic-open": "1",\s*onClick: open,/, 'clicking the card opens its topic page')
-  assert.match(source, /data-ria-topic-more/)
-  assert.match(source, /onClick: openMore/)
-  assert.match(source, /function openMore\(event\) \{\s*event\.stopPropagation\(\);\s*open\(\);/)
+  const topicCard = source.slice(source.indexOf('function TopicCard(props)'), modalStart)
+  assert.match(topicCard, /"data-ria-topic-ellipsis": String\(count\)/)
+  assert.match(topicCard, /onClick: openOmitted/)
+  assert.match(topicCard, /function openOmitted\(event\) \{\s*event\.stopPropagation\(\);\s*open\(\);/)
+  assert.match(topicCard, /ellipsisRow\(pendingOmitted, counts\.open\)/)
+  assert.match(topicCard, /ellipsisRow\(workingOmitted, counts\.working\)/)
+  assert.equal((topicCard.match(/"……"/g) || []).length, 1, 'one ellipsis row serves both sections')
+  assert.doesNotMatch(topicCard, /还有 |data-ria-topic-more|openMore/)
   assert.match(source, /data-ria-ticket-card/)
   assert.match(source, /props\.onOpenSession\(ticket\.executor\)/)
   assert.match(source, /"↗ 在 " \+ \(edge\.topicTitle \|\| "未分类"\)/)

@@ -67,7 +67,7 @@ Ria 通过 run_code SDK 调用 15 个 `ria_*` 工具（含反思编排 `ria_refl
 - `archive`：仅当主题链接到的所有工单都已终态时允许；还有未完成工单返回 topic_unfinished，message 会列出前几个 ticketId。
 - `list`：默认隐藏已归档/已合并主题，includeArchived=true 全部返回；每项带 counts（total/open/working/blocked/done）。
 
-主题与链接存 ria.json 的 `topics`、`links`，schema v5 起存在；旧 v4 文件原样加载，缺字段视为空数组，首次写入前备份 `ria.json.v4.bak`。看板的主题卡最多显示待执行 2 条、执行中 3 条，已完成只显示计数；被折叠的「还有 N 条」点击后打开主题页，不在卡内展开。主题页列出该主题全部工单（updatedAt 倒序），主题内依赖画连线，跨主题依赖标出「↗ 在 <主题名>」。
+主题与链接存 ria.json 的 `topics`、`links`，schema v5 起存在；旧 v4 文件原样加载，缺字段视为空数组，首次写入前备份 `ria.json.v4.bak`。看板的主题卡最多显示待执行 2 条、执行中 3 条，超出时末尾显示「……」；已完成只显示计数。点「……」打开主题页，不在卡内展开。主题页列出该主题全部工单（updatedAt 倒序），主题内依赖画连线，跨主题依赖标出「↗ 在 <主题名>」。
 
 ## 排队消息（ria_queue）
 

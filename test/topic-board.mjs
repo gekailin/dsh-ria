@@ -256,7 +256,7 @@ try {
   const start = source.indexOf('/* board-layout:start */')
   const end = source.indexOf('/* topic-board:end */')
   assert.ok(start >= 0 && end > start, 'client board markers')
-  const api = new Function(source.slice(start, end) + '\nreturn { boardLayout, boardCanOpenSession, topicWaterfall, topicBoardLayout, topicTicketLayout, topicCardHeight, topicSectionOmitted, topicTicketMatchesFilter, topicBriefText, topicMatchesQuery, TOPIC_CARD_WIDTH, TOPIC_CARD_GAP, TOPIC_PROJECT_GAP, TOPIC_TICKET_INSET, TOPIC_FILTERS, TOPIC_MODAL_PER_COLUMN };')()
+  const api = new Function(source.slice(start, end) + '\nreturn { boardLayout, boardCanOpenSession, topicWaterfall, topicBoardLayout, topicTicketLayout, topicCardHeight, topicSectionOmitted, topicTicketMatchesFilter, topicFilterOutside, topicFilterBubbleState, topicFilterScrollTop, topicBriefText, topicMatchesQuery, TOPIC_CARD_WIDTH, TOPIC_CARD_GAP, TOPIC_PROJECT_GAP, TOPIC_TICKET_INSET, TOPIC_FILTERS, TOPIC_MODAL_PER_COLUMN, TOPIC_FILTER_BUBBLE_MARGIN };')()
   const card = (topicId, lastUpdatedAt, counts, extra = {}) => ({
     topicId,
     title: topicId,
@@ -328,18 +328,78 @@ try {
     goal: 'goal ' + index,
     status: index === 1 ? 'done' : index === 2 ? 'working' : 'open',
     createdAt: index,
-    dependsOn: index === 5 ? ['ticket_1'] : [],
+    dependsOn: [],
   }))
   const canvas = api.topicTicketLayout(tickets)
   assert.equal(canvas.positions.size, 5, 'every ticket gets one node')
-  assert.equal(canvas.edges.length, 1, 'one same-topic dependency edge')
-  assert.equal(canvas.edges[0].from, 'ticket_1')
-  assert.equal(canvas.edges[0].to, 'ticket_5')
+  assert.equal(canvas.edges.length, 0, 'no dependency edges in the time-order case')
   assert.equal(canvas.bands.length, 1, 'one lane for the whole topic')
-  assert.equal(canvas.positions.get('ticket_1').column, 0)
-  assert.equal(canvas.positions.get('ticket_4').column, 0, 'four tickets fill the first column')
-  assert.equal(canvas.positions.get('ticket_5').column, 1, 'fifth ticket wraps to a new column')
-  assert.ok(canvas.height > 58 * 2, 'canvas has two rows')
+  assert.equal(canvas.positions.get('ticket_5').column, 0, 'the newest ticket starts the first column')
+  assert.equal(canvas.positions.get('ticket_5').row, 0, 'the newest ticket is the top card')
+  assert.equal(canvas.positions.get('ticket_4').row, 1, 'rows run newest to oldest')
+  assert.equal(canvas.positions.get('ticket_3').row, 2)
+  assert.equal(canvas.positions.get('ticket_2').row, 3, 'four tickets fill the first column')
+  assert.equal(canvas.positions.get('ticket_1').column, 1, 'the fifth newest wraps to the next column')
+  assert.equal(canvas.positions.get('ticket_1').row, 0, 'the wrapped ticket is at the top of the new column')
+  assert.ok(canvas.height > 58 * 2, 'canvas has four rows')
+  const columnCounts = layout => {
+    const counts = new Map()
+    layout.positions.forEach(position => counts.set(position.column, (counts.get(position.column) || 0) + 1))
+    return counts
+  }
+  columnCounts(canvas).forEach((count, column) => {
+    assert.ok(count <= api.TOPIC_MODAL_PER_COLUMN, 'column ' + column + ' holds at most four cards')
+  })
+
+  const crowded = api.topicTicketLayout(Array.from({ length: 9 }, (_, index) => ({
+    ticketId: 'dense_' + index,
+    createdAt: index,
+    dependsOn: index === 8 ? ['dense_0'] : [],
+  })))
+  const crowdedCounts = columnCounts(crowded)
+  crowdedCounts.forEach((count, column) => {
+    assert.ok(count <= api.TOPIC_MODAL_PER_COLUMN, 'a dependency shift does not overflow column ' + column)
+  })
+  assert.ok(crowded.positions.get('dense_8').column > crowded.positions.get('dense_0').column, 'the dependent card still moves right')
+
+  const sameStamp = api.topicTicketLayout([
+    { ticketId: 'ticket_b', createdAt: 5, dependsOn: [] },
+    { ticketId: 'ticket_a', createdAt: 5, dependsOn: [] },
+  ])
+  assert.equal(sameStamp.positions.get('ticket_a').row, 0, 'equal createdAt falls back to ticketId')
+  assert.equal(sameStamp.positions.get('ticket_b').row, 1, 'the tie order is stable')
+  assert.equal(sameStamp.positions.get('ticket_a').column, 0)
+
+  const shifted = api.topicTicketLayout([
+    { ticketId: 'ticket_old', createdAt: 1, dependsOn: [] },
+    { ticketId: 'ticket_new', createdAt: 2, dependsOn: ['ticket_old'] },
+  ])
+  assert.equal(shifted.positions.get('ticket_old').column, 0)
+  assert.equal(shifted.positions.get('ticket_new').column, 1, 'a downstream ticket still moves one column right')
+  assert.equal(shifted.edges.length, 1)
+  assert.equal(shifted.edges[0].from, 'ticket_old')
+  assert.equal(shifted.edges[0].to, 'ticket_new')
+  assert.ok(shifted.edges[0].d.includes('C '), 'the dependency is a cubic curve')
+
+  const topCard = { ticketId: 'top', rect: { top: -100, bottom: -42 } }
+  const hiddenBottom = { ticketId: 'bottom-far', rect: { top: 700, bottom: 758 } }
+  const nearBottom = { ticketId: 'bottom-near', rect: { top: 680, bottom: 738 } }
+  const visible = { ticketId: 'visible', rect: { top: 100, bottom: 158 } }
+  const partialTop = { ticketId: 'partial-top', rect: { top: -20, bottom: 38 } }
+  const partialBottom = { ticketId: 'partial-bottom', rect: { top: 580, bottom: 638 } }
+  const viewport = { top: 0, bottom: 600 }
+  const outside = api.topicFilterOutside([topCard, visible, hiddenBottom, nearBottom, partialTop, partialBottom], viewport)
+  assert.equal(outside.top, 1, 'only the fully hidden top card counts')
+  assert.equal(outside.bottom, 2, 'both fully hidden bottom cards count')
+  assert.equal(outside.topTargetId, 'top')
+  assert.equal(outside.bottomTargetId, 'bottom-near', 'the nearest bottom card is the target')
+  assert.equal(api.topicFilterBubbleState([topCard, visible], viewport, 'working').top, 1)
+  assert.equal(api.topicFilterBubbleState([visible], viewport, 'working'), null, 'nothing hidden means no bubble')
+  assert.equal(api.topicFilterBubbleState([topCard], viewport, 'all'), null, 'the all filter never shows bubbles')
+  assert.equal(api.TOPIC_FILTER_BUBBLE_MARGIN, 16)
+  assert.equal(api.topicFilterScrollTop(topCard, viewport, 500, 'top'), 384)
+  assert.equal(api.topicFilterScrollTop(nearBottom, viewport, 500, 'bottom'), 654)
+  assert.equal(api.topicFilterScrollTop({ ticketId: 'above', rect: { top: -100, bottom: -42 } }, viewport, 0, 'top'), 0, 'the scroll target never goes negative')
 
   assert.deepEqual(api.TOPIC_FILTERS.map(item => item.label), ['全部', '进行中', '卡住', '空闲'])
   assert.equal(api.topicTicketMatchesFilter({ status: 'open' }, 'all'), true)
@@ -396,6 +456,14 @@ try {
   assert.match(modal, /layout\.edges\.map\(function \(edge\)/)
   assert.match(modal, /onOpenTopic: function \(edge\)/)
   assert.match(modal, /topicTicketLayout\(tickets\)/)
+  assert.match(modal, /ref: scrollRef/)
+  assert.match(modal, /data-ria-filter-bubble/)
+  assert.match(modal, /revealFiltered\(direction\)/)
+  assert.match(modal, /behavior: "smooth"/)
+  assert.match(modal, /highlighted: highlightId === ticket\.ticketId/)
+  assert.match(modal, /filterBubbleNode\("top", filterBubbles && filterBubbles\.top\)/)
+  assert.match(modal, /filterBubbleNode\("bottom", filterBubbles && filterBubbles\.bottom\)/)
+  assert.match(modal, /pointerEvents: "auto"/)
   assert.match(modal, /width: "min\(1120px, 94vw\)"/)
   assert.match(overlay, /placeholder: "搜索主题、简报或工单"/)
   assert.doesNotMatch(overlay, /TOPIC_FILTERS\.map|setFilter|topicFilterMatches|dimmed/)

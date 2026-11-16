@@ -12,7 +12,7 @@ queue-wake-recovery 测试覆盖：ready 事件回调丢失后仍由工单提交
 
 queue-wake-delivery 测试覆盖：fixture 的 `sessionController.prompt` 和宿主一样要求 signal；无活跃 turn 的冷路径直接投递并写 `readyNotifiedAt`；wake 已在 pending 时开启 turn，turn/start 泵不投递、turn/end 泵投递一次；turn 运行中上游关闭后由 turn/end 泵投递；prompt 失败写 lastError、attempts 递增，第 6 次转 failed 后仍出现在 `ria_status` 的 outbox 摘要中。
 
-topic-board 测试覆盖：lib/topics.mjs 的 topic/link 归一化、primary 唯一且第二个 primary 自动降级、同票同主题改 role、merge 后链接改指目标并保留最新 primary；fixture 全流程 create/update/link/unlink/board projects（项目与未分类桶）/topic 详情（主题内与跨主题依赖边、404）/archive 未完成票拒绝/空主题归档/merge/list；v4 文件原样加载、首次写入生成 `ria.json.v4.bak` 且内容等于原文件、迁移后 schemaVersion=5；客户端瀑布按 lastUpdatedAt 倒序放入最矮列、最多 3 列、项目横向布局与 padding、卡片高度三段公式、筛选全部/进行中/卡住/空闲语义、brief 优先与回退截断、主题搜索，以及源码断言（200px 主题卡、160px 工单卡左右各 20px、待执行 2 条/执行中 3 条上限、超出时「……」只打开主题页、执行者跳转、跨主题「↗ 在」标签、无就地展开标记）。
+topic-board 测试覆盖：lib/topics.mjs 的 topic/link 归一化、primary 唯一且第二个 primary 自动降级、同票同主题改 role、merge 后链接改指目标并保留最新 primary；fixture 全流程 create/update/link/unlink/board projects（项目与未分类桶）/topic 详情（主题内与跨主题依赖边、404）/archive 未完成票拒绝/空主题归档/merge/list；v4 文件原样加载、首次写入生成 `ria.json.v4.bak` 且内容等于原文件、迁移后 schemaVersion=5；客户端瀑布按 lastUpdatedAt 倒序放入最矮列、最多 3 列、项目横向布局与 padding、卡片高度三段公式、筛选全部/进行中/卡住/空闲语义、brief 优先与回退截断、主题搜索，以及源码断言（200px 主题卡、160px 工单卡左右各 20px、待执行 2 条/执行中 3 条上限、超出时「……」只打开主题页、执行者跳转、跨主题「↗ 在」标签、无就地展开标记）。主题弹窗还覆盖时间逆序（最新在第 1 列顶部、第 5 张换列到第 2 列顶部、同 createdAt 按 ticketId 稳定）、依赖右移与曲线端点、每列最多 4 张（依赖右移后目标列已满时继续向右找空位）、筛选气泡的上方/下方计数（完全在区外才算、部分露出不计、N=0 与「全部」不显示）、最近目标选择和滚动偏移，以及源码断言（scrollRef、气泡按钮、平滑滚动、1 秒高亮、筛选淡化）。
 
 reflection-settings-ui 测试覆盖：客户端反思设置的上海日期、星期与状态文案、cadence 摘要、高级字段空值省略与显式清空发送 null；并用源码断言确认「定期反思」段、开关/频率/星期/时间/高级字段、运行按钮与状态行、当天已完成确认、`POST /reflection/run`、10 秒 `GET /reflection/status` 轮询和卸载清理都已接入。
 

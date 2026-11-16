@@ -693,6 +693,8 @@ Phase 32：memory 容量预算与 archive。core 改为 Unicode code point 计�
 
 Phase 33：主题摘要自动归纳。GET /board 的主题卡 brief 优先保留人工值（`summaryAuto=false`）；为空时由 `lib/topics.mjs` 的 `topicSummaryInfo` 从该主题 primary 工单里取 `updatedAt` 最新的一张，生成「「goal 最多 60 字」状态词 · 待执行 N · 执行中 M · 已完成 K」，计数为 0 的段省略，goal 超出 60 个 code point 补 `…`；未分类桶为「N 张待分类 · 最近：「goal」」/「暂无工单」，自动生成时 `summaryAuto=true`。manager prompt 新增规则：派发、收口或标 blocked 后，主题进展句变化时用 `ria_topic {action:"update", brief}` 写最多 120 字符，没变不写，同主题 10 分钟内不重复写，没挂主题不写。
 
+Phase 34：反思会话命名与路径统一。worker 标题改为 `反思 YYYY-MM-DD`（YYYY-MM-DD 为被反思日，Asia/Shanghai 口径）；同日第 2 次及以后为 `反思 YYYY-MM-DD（第N次）`，N 从 2 起，手动触发同样适用；ordinal 由 `reflectionRunOrdinal` 扫描同日 run.json 得到并写入 run/title。runId 统一为 `refl-YYYYMMDD-<6hex>`（YYYYMMDD 取 forDate）；路径集中到 `reflectionPaths`：正式报告 `reflections/YYYY-MM-DD.md`、partial `reflections/YYYY-MM-DD.partial.md`、同日重跑 `reflections/YYYY-MM-DD.manual-HHMM.md`、中间稿 `reflections/runs/<runId>/report.partial.md`、元数据 `runs/<runId>/run.json`/`state.json`/`.lock`。对外只引用 finish 返回的 reportPath；begin 的 reportPath 是计划路径，worker status 的 reportPath/draftPath 是草稿。`test/reflection-naming.mjs` 覆盖标题、路径、ordinal 与 manual/partial。
+
 Phase 28：会话改名工具。新增 `ria_title({ sessionId, title })`，走宿主 `sessionController.rename`，只改会话名，不发消息、不建 ticket、不唤醒 worker；预检复用 `sessionProblem`（存在、顶层、未归档、cwd 可用），允许改 Ria 自己，subagent 一律拒绝；空标题或宿主 `session/title-invalid` 映射为 `title_invalid` 并保留宿主原始 message；成功返回 accepted title 与已知 previous。`ria_spawn` 的 title 设置复用同一 helper，返回值语义不变（失败仍只写 `titleError`）。
 
 ## 16. 验收

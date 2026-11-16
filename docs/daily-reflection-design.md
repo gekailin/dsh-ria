@@ -2,7 +2,7 @@
 
 > 状态：设计稿；服务端、调度、API 与设置页 UI 已实现（2026-11-14）
 > 工单：`ticket_mwdosvus_66255e499a`
-> 日期：2026-11-13（2026-11-13 修订：执行者改为独立 worker；2026-11-14 补齐编排层）
+> 日期：2026-11-13（2026-11-13 修订：执行者改为独立 worker；2026-11-14 补齐编排层；2026-11-16 统一会话命名与报告路径）
 > 范围：只设计 Ria 的定期反思；不改 worker 的日常行为，不改宿主会话存储，不新增后台 timer。
 
 ## 实现状态（2026-11-14）
@@ -11,7 +11,8 @@
 
 - 6 个只读 worker 工具：ria_reflect_status / read_tickets / read_sessions / read_session / read_context / report。
 - Ria 侧 `ria_reflect` 五动作 status / begin / dispatch / finish / abort；状态文件 `reflections/state.json`、`reflections/.lock`、`reflections/runs/<runId>/run.json`；三重幂等、20 分钟锁 TTL 与接管、attempts、自动重试上限 1 次、没有新增后台 timer。
-- 报告 front matter 与八个固定标题校验；可选「对 dsh-ria 的迭代建议」存在时要求非空、最多 5 条；memory 候选支持 `[target: global|worker:<sessionId>]`，非法 target 降级 global 并记 warning；正式报告 `<forDate>.md` / `<forDate>.partial.md` / `<forDate>.manual-HHMM.md` 原子写；只有 complete 推进 lastCompletedDate。
+- 报告 front matter 与八个固定标题校验；可选「对 dsh-ria 的迭代建议」存在时要求非空、最多 5 条；memory 候选支持 `[target: global|worker:<sessionId>]`，非法 target 降级 global 并记 warning；正式报告 `reflections/<forDate>.md` / `reflections/<forDate>.partial.md` / `reflections/<forDate>.manual-HHMM.md` 原子写；只有 complete 推进 lastCompletedDate。
+- 会话命名与路径已统一：worker 标题 `反思 YYYY-MM-DD`，同日第 N 次带 `（第N次）`；runId 为 `refl-YYYYMMDD-<6hex>`；对外只引用 finish 返回的 reportPath。`test/reflection-naming.mjs` 覆盖标题、路径、同日 ordinal 与 manual/partial。
 - 安全收缩：反思 worker 绑定后只保留 6 个只读工具；在真实宿主 ToolsService 上 `restrict({allow: []})` 实测可见工具恰好 6 个。
 - `settings.reflection`（enabled/cadence/time/weekday/model/provider/reasoningEffort）默认值、旧档迁移与未知字段保留；`GET /settings` 返回 reflection 与 reflectionStatus，`POST /settings` 对 reflection 整包校验，非法请求 400 且不部分写入。反思设置里的模型字段会覆盖 `ria_reflect begin` 的 spawn 参数。
 - `GET /reflection/status` 返回 lastCompletedDate/lastStatus/lastError/activeRunId/workerSessionId/scheduleId；`POST /reflection/run` 注入 `[REFLECTION MANUAL]` 提醒并返回 202，已有运行中的反思返回 409。
@@ -132,7 +133,7 @@ Ria: ria_reflect begin(forDate, trigger, force?)
         |  - 生成 runId、窗口、报告路径、instruction
         |  - 获取 .lock，写 runs/<runId>/run.json
         v
-Ria: ria_spawn(title="Ria 反省 YYYY-MM-DD", cwd=~/.dsh/state/ria,
+Ria: ria_spawn(title="反思 YYYY-MM-DD", cwd=~/.dsh/state/ria,
                agentPreset="ria-reflection", model=...,
                reflectionRunId=runId)
         |
@@ -155,9 +156,10 @@ Ria: ria_reflect finish(runId)
         |  - 读 partial、校验 front matter、审阅
         |  - complete -> reflections/YYYY-MM-DD.md
         |  - partial  -> reflections/YYYY-MM-DD.partial.md
+        |  - 目标已存在 -> reflections/YYYY-MM-DD.manual-HHMM.md
         |  - 写 state.json、释放锁、收口 intake
         v
-Ria 回用户一行摘要 + 报告路径
+Ria 回用户一行摘要 + finish 返回的 reportPath（唯一权威路径）
 ~~~
 
 ### 2.3 Ria 侧编排
@@ -167,7 +169,7 @@ Ria 回用户一行摘要 + 报告路径
 | 动作 | 参数 | 返回 | 作用 |
 | --- | --- | --- | --- |
 | `status` | 无 | `{state, run, schedule, settings}` | 不读文件即可判断今天是否完成、有没有在跑、schedule 是否还在 |
-| `begin` | `{forDate, trigger, force?, model?, provider?, reasoningEffort?}` | `{runId, forDate, window, reportPath, instruction, spawn, attempt, locked}` | 幂等检查、加锁、生成 run 上下文；不创建 worker |
+| `begin` | `{forDate, trigger, force?, model?, provider?, reasoningEffort?}` | `{runId, forDate, ordinal, title, window, reportPath, plannedReportPath, instruction, spawn, attempt, locked}` | 幂等检查、加锁、生成 run 上下文；不创建 worker |
 | `dispatch` | `{runId, sessionId}` | `{ok, deliveredAt, deadlineAt}` | 把 instruction 发给已创建的 worker；绑定 sessionId |
 | `finish` | `{runId, status, counts, degraded?}` | `{ok, reportPath, lastCompletedDate, intake}` | 校验报告、原子落盘、写 state、释放锁、收口 intake |
 | `abort` | `{runId, reason, cancelled?}` | `{ok, status}` | spawn/dispatch 失败或用户取消时释放锁；不产生正式报告 |
@@ -177,10 +179,10 @@ Ria 回用户一行摘要 + 报告路径
 1. 计算 `forDate` 与窗口（见 3.2）。
 2. 读 `state.json`：若 `lastCompletedDate >= forDate` 且非 `force`，返回 `{locked:false, skipped:"completed"}`，不建 worker。
 3. 检查 `.lock`：若存在且未过期，返回 `{locked:true, activeRun}`；Ria 回“已有反思在跑”，不派第二个。
-4. `O_CREAT|O_EXCL` 创建 `.lock`；生成 `runId = refl-YYYYMMDD-HHMMSS-<6hex>`。
+4. `O_CREAT|O_EXCL` 创建 `.lock`；生成 `runId = refl-YYYYMMDD-<6hex>`（YYYYMMDD 取 forDate，Asia/Shanghai 口径）。
 5. 写 `runs/<runId>/run.json`（见 5.4），状态 `starting`。
 6. 解析 spawn 默认值：
-   - `title`：`Ria 反省 YYYY-MM-DD`（手动重跑加 `-2` 或时间后缀，便于最近列表区分）。
+   - `title`：`反思 YYYY-MM-DD`（YYYY-MM-DD 为 forDate）；同日第 2 次及以后为 `反思 YYYY-MM-DD（第N次）`，N 从 2 起，手动触发同样适用。
    - `cwd`：`~/.dsh/state/ria`（已存在、可进入；报告写到其下的 `reflections/`）。
    - `agentPreset`：`ria-reflection`（专用只读 preset；实现前提见 4.5）。
    - `model/provider/reasoningEffort`：优先 `settings.reflection` 的覆盖值；否则读 Ria 当前会话的模型/推理强度并沿用；解析失败则省略，记录 `modelInherited:false`，由 DSH 默认模型创建。
@@ -456,7 +458,7 @@ ticketId
 
 | 工具 | 参数 | 返回 | 边界 |
 | --- | --- | --- | --- |
-| `ria_reflect_status` | `scope?`（candidates 默认 / all） | `{runId, forDate, window, deadlineAt, remainingMs, candidates, candidateTotal, candidatesTruncated, limits, memoryChars, reportPath, state}` | 只返回绑定 run；默认候选只含窗口内有活动的会话（最多 50），`scope=all` 才给全量候选；`candidateTotal` 是候选总数（含被过滤的），`candidatesTruncated` 只表示列表撞到 50 条上限 |
+| `ria_reflect_status` | `scope?`（candidates 默认 / all） | `{runId, forDate, ordinal, title, window, deadlineAt, remainingMs, candidates, candidateTotal, candidatesTruncated, limits, memoryChars, reportPath, draftPath, state}` | 只返回绑定 run；`reportPath`/`draftPath` 都是草稿 `runs/<runId>/report.partial.md`，不是正式报告；默认候选只含窗口内有活动的会话（最多 50），`scope=all` 才给全量候选；`candidateTotal` 是候选总数（含被过滤的），`candidatesTruncated` 只表示列表撞到 50 条上限 |
 | `ria_reflect_read_tickets` | `{scope:"window" / "open" / "history", status?, executor?, detail?, limit?}` | `{detail, tickets, total, truncated}` | 默认 `detail=summary`，每条只给 ticketId/goal/status/waitingOn/executor/updatedAt；`full` 才给 acceptance/blockedReason/attention/resolution/failure/dependsOn/checklist/progress；`limit` 1–200，默认 80；`scope=open` 只含非终态；文本截 500 字；不返回完整对话 |
 | `ria_reflect_read_sessions` | `{scope:"candidates" / "recent" / "all", limit?}` | `{scope, sessions:[{sessionId,title,running,blank,lastUsedAt,ticketIds}], total, truncated}` | `limit` 1–50，默认 50；candidates 只列窗口内有活动的候选，recent 只列最近 7 天 worker，all 才给全量候选；candidates/all 的 `total` 是候选总数（含无活动的），recent 的 `total` 是 7 天窗口内 worker 数；不任意全库搜索 |
 | `ria_reflect_read_session` | `{sessionId, mode?: "summary" / "full", from?, to?, refs?, tailTurns?, maxMessages?, maxChars?}` | `{mode, messages, lastTurn, window, stats, corruptFrames, truncated, source}` | `mode` 默认 `summary`；`tailTurns` 1–50，只用于 summary，不能与 `refs/from/to` 同用，返回仍时间升序；`maxMessages` 1–200（summary 默认 50 / full 默认 20）；`maxChars` 1–40000（summary 默认 10000 / full 默认 40000）；`from/to` 为 ISO 时间或原始事件 0-based index；`refs` 1–50，与 `from/to` 互斥；full 必须给 `refs` 或 `from/to` 之一；只允许本 run 候选 sessionId；窗口夹在 run 窗口内；只读；不 resume；详见下方读取契约 |
@@ -535,6 +537,8 @@ ticketId
   wiki/                          # P3：长期层
 ~~~
 
+命名与路径的唯一口径：会话标题为 `反思 YYYY-MM-DD`（同日第 2 次起 `反思 YYYY-MM-DD（第N次）`）；runId 为 `refl-YYYYMMDD-<6hex>`；中间稿固定在 `runs/<runId>/report.partial.md`；partial 正式报告为 `reflections/<forDate>.partial.md`；同日重跑写 `reflections/<forDate>.manual-HHMM.md`。**对外只引用 finish 返回的 reportPath**：begin 的 reportPath 是计划路径，worker status 的 reportPath/draftPath 是草稿，都不是最终报告。
+
 不放在仓库 `docs/reflections/`：仓库是 public（`git@github.com:gekailin/dsh-ria.git`），日报会引用用户原话、工单目标、worker 路径，容易带隐私；`docs/` 是跟踪文件，误 commit 成本高。若要可分享版本，另存脱敏摘要且人工确认后再提交。
 
 目录 0700，文件 0600；原子写（临时文件 + rename + fsync 目录），不要边写边覆盖。
@@ -552,7 +556,7 @@ cadence: daily
 windowStart: 2026-11-13T00:00:00+08:00
 windowEnd: 2026-11-13T23:40:00+08:00
 trigger: schedule | startup | manual
-runId: refl-20261113-234012-a1b2c3
+runId: refl-20261113-a1b2c3
 attempt: 1
 workerSessionId: session-...
 status: complete | partial
@@ -565,7 +569,7 @@ durationMs: 412000
 degraded: []
 ---
 
-# 2026-11-13 反省
+# 2026-11-13 反思
 
 ## 一句话
 今天 3 张工单没有闭环，主要问题是我在目标会话不明确时直接派发。
@@ -637,7 +641,7 @@ degraded: []
   "timezone": "Asia/Shanghai",
   "lastCompletedDate": "2026-11-13",
   "lastPartialDate": null,
-  "lastRunId": "refl-20261113-234012-a1b2c3",
+  "lastRunId": "refl-20261113-a1b2c3",
   "lastStatus": "complete",
   "lastAttemptAt": "2026-11-13T15:40:12.000Z",
   "lastError": null,
@@ -652,8 +656,10 @@ degraded: []
 ~~~json
 {
   "schema": 1,
-  "runId": "refl-20261113-234012-a1b2c3",
+  "runId": "refl-20261113-a1b2c3",
   "forDate": "2026-11-13",
+  "ordinal": 1,
+  "title": "反思 2026-11-13",
   "trigger": "schedule",
   "attempt": 1,
   "status": "running",
@@ -663,8 +669,8 @@ degraded: []
   "dispatchedAt": "2026-11-13T15:40:30.000Z",
   "deadlineAt": "2026-11-13T15:55:30.000Z",
   "workerSessionId": "session-...",
-  "reportPartial": "runs/refl-.../report.partial.md",
-  "reportFinal": null,
+  "reportPartial": "runs/refl-20261113-a1b2c3/report.partial.md",
+  "reportFinal": "reflections/2026-11-13.md",
   "attempts": [
     { "attempt": 1, "workerSessionId": "session-...", "error": null }
   ],
@@ -679,13 +685,14 @@ degraded: []
 - `activeRunId` 指向正在跑的 run；没有则为 `null`。
 - 写入顺序：报告 rename 成功 → fsync 目录 → state.json 原子写 → 删除锁。任何一步失败都不推进 `lastCompletedDate`。
 - `run.json` 保留最近 30 个 run 或 180 天，二者先到为准；清理只删 `runs/` 下的旧目录，不删正式报告。
+- `reportFinal` 是计划路径；finish 落盘时若目标已存在会改写到 `reflections/<forDate>.manual-HHMM.md` 并回写 run.json。
 
 ### 5.5 索引与分层（P2/P3）
 
 `index.jsonl` 每天/每周一行，便于看趋势，不存正文：
 
 ~~~json
-{"schema":1,"date":"2026-11-13","runId":"refl-...","status":"complete","ticketsReviewed":14,"sessionsReviewed":5,"findings":{"P0":0,"P1":3,"P2":2},"lessonIds":["L-2026-11-13-01"],"memoryCandidates":["M-2026-11-13-01"],"durationMs":412000}
+{"schema":1,"date":"2026-11-13","runId":"refl-20261113-a1b2c3","status":"complete","ticketsReviewed":14,"sessionsReviewed":5,"findings":{"P0":0,"P1":3,"P2":2},"lessonIds":["L-2026-11-13-01"],"memoryCandidates":["M-2026-11-13-01"],"durationMs":412000}
 ~~~
 
 三层职责分开：
@@ -1088,7 +1095,7 @@ front matter 记录：
 | 3 | 关闭 | `active:false`，schedule 保留；重启后仍是关闭且不触发 |
 | 4 | 改每周/时间 | rrule 更新；下一次 occurrence 正确；重复任务只留一个 |
 | 5 | 23:40 正常触发 | Ria 只 spawn 一个 worker；10 分钟内生成报告；state 推进 |
-| 6 | worker 身份 | title 为 `Ria 反省 YYYY-MM-DD`；cwd 为 `~/.dsh/state/ria`；模型默认沿用 Ria；会话在最近列表可见 |
+| 6 | worker 身份 | title 为 `反思 YYYY-MM-DD`（同日第 N 次带 `（第N次）`）；cwd 为 `~/.dsh/state/ria`；模型默认沿用 Ria；会话在最近列表可见 |
 | 7 | worker 工具边界 | 只有反思工具；没有 `ria_*`；没有 shell/写文件/MCP；`ria_reflect_report` 只能写本次 run |
 | 8 | 同日重复投递 | 第二次 `begin` 返回 `locked/completed`，不产生第二个 worker，不写新文件 |
 | 9 | Ria 忙，00:05 才跑 | forDate 仍是昨天，窗口截止 occurrence_at，不混入今天 |
@@ -1150,7 +1157,7 @@ front matter 记录：
 ### P0：手动验证“Ria 派 worker”（0.5–1 天，无新工具）
 
 - 用户口头或临时脚本触发；Ria 用现有 `ria_status/ria_read` 收集一份不超过 30KB 的证据包。
-- Ria 用 `ria_spawn` 创建普通 worker（title `Ria 反省 YYYY-MM-DD`，cwd `~/.dsh/state/ria`），把证据包和报告模板作为 instruction 发过去。
+- Ria 用 `ria_spawn` 创建普通 worker（title `反思 YYYY-MM-DD`，cwd `~/.dsh/state/ria`），把证据包和报告模板作为 instruction 发过去。
 - worker 只做分析，把报告正文作为最终回复返回；Ria 写入 `reflections/YYYY-MM-DD.md`。
 - 不建 schedule、不改设置页、不做锁/state；人工保证一次只跑一个。
 - 退出标准：连续 3 次手动运行，报告能在 15 分钟内完成，且没有写 `reflections/` 之外的文件。已知限制：worker 仍有普通工具，证据由 Ria 代读，不是最终态。
@@ -1264,7 +1271,7 @@ Dreaming 是离线时用审判模型调取底层原始流水，对照 notes 核�
 ~~~text
 [REFLECTION WORKER] 定期反思
 
-runId = refl-YYYYMMDD-HHMMSS-xxxxxx
+runId = refl-YYYYMMDD-<6hex>
 forDate = YYYY-MM-DD
 windowStart = forDate 00:00:00 +08:00
 windowEnd = <occurrence_at，或 forDate 23:59:59.999>

@@ -75,7 +75,7 @@ async function spawn(runId, forDate) {
     cwd: stateDir,
     agentPreset: 'minimal',
     reflectionRunId: runId,
-    title: 'Ria 反省 ' + forDate,
+    title: '反思 ' + forDate,
   })
   assert.equal(result.ok, true, JSON.stringify(result))
   return result.sessionId
@@ -94,6 +94,9 @@ try {
   assert.equal(started.ok, true, JSON.stringify(started))
   assert.equal(started.locked, false)
   assert.equal(started.attempt, 1)
+  assert.equal(started.ordinal, 1)
+  assert.equal(started.title, '反思 ' + dateA)
+  assert.equal(started.spawn.title, started.title)
   assert.equal(started.spawn.agentPreset, 'minimal')
   assert.match(started.instruction, new RegExp(started.runId))
   assert.ok(existsSync(lockFile), 'begin must create the lock')
@@ -159,6 +162,9 @@ try {
   const forced = await begin(dateA, { force: true })
   assert.equal(forced.ok, true)
   assert.notEqual(forced.runId, started.runId)
+  assert.equal(forced.ordinal, 2)
+  assert.equal(forced.title, '反思 ' + dateA + '（第2次）')
+  assert.equal(forced.spawn.title, forced.title)
   assert.match(forced.reportPath, new RegExp(dateA + '[.]manual-[0-9]{4}[.]md$'))
   await call('ria_reflect', { action: 'abort', runId: forced.runId, reason: 'test cleanup' })
 
@@ -222,6 +228,9 @@ try {
   assert.equal(second.ok, true)
   assert.equal(second.locked, false)
   assert.equal(second.attempt, 2)
+  assert.equal(second.ordinal, 2)
+  assert.equal(second.title, '反思 ' + dateE + '（第2次）')
+  assert.equal(second.spawn.title, second.title)
   assert.notEqual(second.runId, retry.runId)
   const secondWorker = await spawn(second.runId, dateE)
   const secondFailed = await call('ria_reflect', { action: 'dispatch', runId: second.runId, sessionId: secondWorker })
@@ -241,6 +250,8 @@ try {
   const takeover = await begin(dateF)
   assert.equal(takeover.ok, true)
   assert.equal(takeover.locked, false)
+  assert.equal(takeover.ordinal, 2)
+  assert.equal(takeover.title, '反思 ' + dateF + '（第2次）')
   assert.notEqual(takeover.runId, stale.runId)
   const abandoned = JSON.parse(readFileSync(join(stateDir, 'reflections', 'runs', stale.runId, 'run.json'), 'utf8'))
   assert.equal(abandoned.status, 'abandoned')

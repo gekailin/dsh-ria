@@ -51,7 +51,7 @@ try {
     cwd: stateDir,
     agentPreset: 'minimal',
     reflectionRunId: begun.runId,
-    title: 'Ria 反省 ' + forDate,
+    title: begun.spawn.title,
   })
   assert.equal(spawned.ok, true, JSON.stringify(spawned))
   const worker = spawned.sessionId

@@ -256,7 +256,7 @@ try {
   const start = source.indexOf('/* board-layout:start */')
   const end = source.indexOf('/* topic-board:end */')
   assert.ok(start >= 0 && end > start, 'client board markers')
-  const api = new Function(source.slice(start, end) + '\nreturn { boardLayout, boardCanOpenSession, topicWaterfall, topicBoardLayout, topicTicketLayout, topicCardHeight, topicSectionOmitted, topicTicketMatchesFilter, topicFilterOutside, topicFilterBubbleState, topicFilterScrollTop, topicBriefText, topicMatchesQuery, ticketSearchResults, ticketMatchesQuery, ticketSearchRank, TICKET_SEARCH_LIMIT, TOPIC_CARD_WIDTH, TOPIC_CARD_GAP, TOPIC_PROJECT_GAP, TOPIC_TICKET_INSET, TOPIC_FILTERS, TOPIC_MODAL_PER_COLUMN, TOPIC_FILTER_BUBBLE_MARGIN };')()
+  const api = new Function(source.slice(start, end) + '\nreturn { boardLayout, boardCanOpenSession, topicWaterfall, topicBoardLayout, topicTicketLayout, topicCardHeight, topicSectionOmitted, topicTicketMatchesFilter, topicClockText, topicDayKey, topicDayLabel, topicTimelineGroups, topicFilterOutside, topicFilterBubbleState, topicFilterScrollTop, topicBriefText, topicMatchesQuery, ticketSearchResults, ticketMatchesQuery, ticketSearchRank, TICKET_SEARCH_LIMIT, TOPIC_CARD_WIDTH, TOPIC_CARD_GAP, TOPIC_PROJECT_GAP, TOPIC_TICKET_INSET, TOPIC_FILTERS, TOPIC_TIMELINE_MAX_HEIGHT, TOPIC_TIMELINE_TIME_WIDTH, TOPIC_FILTER_BUBBLE_MARGIN };')()
   const card = (topicId, lastUpdatedAt, counts, extra = {}) => ({
     topicId,
     title: topicId,
@@ -282,7 +282,8 @@ try {
   const p4 = flow.positions.get('t4')
   assert.equal(api.TOPIC_CARD_WIDTH, 200)
   assert.equal(api.TOPIC_TICKET_INSET, 4, '160px ticket leaves 20px margins inside a 200px card')
-  assert.equal(api.TOPIC_MODAL_PER_COLUMN, 4)
+  assert.equal(api.TOPIC_TIMELINE_MAX_HEIGHT, 'min(70vh, 640px)')
+  assert.equal(api.TOPIC_TIMELINE_TIME_WIDTH, 74)
   assert.equal(p1.column, 0)
   assert.equal(p2.column, 1)
   assert.equal(p3.column, 2)
@@ -323,63 +324,50 @@ try {
   assert.equal(projects.projects[0].positions.get('a').x, 18)
   assert.equal(projects.projects[0].positions.get('a').y, 48 + 18)
 
-  const tickets = [1, 2, 3, 4, 5].map(index => ({
-    ticketId: 'ticket_' + index,
-    goal: 'goal ' + index,
-    status: index === 1 ? 'done' : index === 2 ? 'working' : 'open',
-    createdAt: index,
-    dependsOn: [],
-  }))
-  const canvas = api.topicTicketLayout(tickets)
-  assert.equal(canvas.positions.size, 5, 'every ticket gets one node')
-  assert.equal(canvas.edges.length, 0, 'no dependency edges in the time-order case')
-  assert.equal(canvas.bands.length, 1, 'one lane for the whole topic')
-  assert.equal(canvas.positions.get('ticket_5').column, 0, 'the newest ticket starts the first column')
-  assert.equal(canvas.positions.get('ticket_5').row, 0, 'the newest ticket is the top card')
-  assert.equal(canvas.positions.get('ticket_4').row, 1, 'rows run newest to oldest')
-  assert.equal(canvas.positions.get('ticket_3').row, 2)
-  assert.equal(canvas.positions.get('ticket_2').row, 3, 'four tickets fill the first column')
-  assert.equal(canvas.positions.get('ticket_1').column, 1, 'the fifth newest wraps to the next column')
-  assert.equal(canvas.positions.get('ticket_1').row, 0, 'the wrapped ticket is at the top of the new column')
-  assert.ok(canvas.height > 58 * 2, 'canvas has four rows')
-  const columnCounts = layout => {
-    const counts = new Map()
-    layout.positions.forEach(position => counts.set(position.column, (counts.get(position.column) || 0) + 1))
-    return counts
-  }
-  columnCounts(canvas).forEach((count, column) => {
-    assert.ok(count <= api.TOPIC_MODAL_PER_COLUMN, 'column ' + column + ' holds at most four cards')
-  })
+  const day = (date, hour, minute = 0) => new Date(2026, 10, date, hour, minute, 0).getTime()
+  const noon = day(16, 12)
+  assert.equal(api.topicClockText(day(16, 11, 8)), '11-16 11:08')
+  assert.equal(api.topicDayKey(day(16, 11, 8)), '2026-11-16')
+  assert.equal(api.topicDayLabel(day(16, 9), noon), '今天')
+  assert.equal(api.topicDayLabel(day(15, 23), noon), '昨天')
+  assert.equal(api.topicDayLabel(day(14, 9), noon), '2026-11-14')
 
-  const crowded = api.topicTicketLayout(Array.from({ length: 9 }, (_, index) => ({
-    ticketId: 'dense_' + index,
-    createdAt: index,
-    dependsOn: index === 8 ? ['dense_0'] : [],
-  })))
-  const crowdedCounts = columnCounts(crowded)
-  crowdedCounts.forEach((count, column) => {
-    assert.ok(count <= api.TOPIC_MODAL_PER_COLUMN, 'a dependency shift does not overflow column ' + column)
-  })
-  assert.ok(crowded.positions.get('dense_8').column > crowded.positions.get('dense_0').column, 'the dependent card still moves right')
+  const timelineTickets = [
+    { ticketId: 'today_new', createdAt: day(16, 11), dependsOn: [] },
+    { ticketId: 'today_mid', createdAt: day(16, 10), dependsOn: [] },
+    { ticketId: 'today_old', createdAt: day(16, 9), dependsOn: [] },
+    { ticketId: 'yesterday_new', createdAt: day(15, 18), dependsOn: [] },
+    { ticketId: 'yesterday_mid', createdAt: day(15, 14), dependsOn: [] },
+    { ticketId: 'yesterday_old', createdAt: day(15, 8), dependsOn: [] },
+    { ticketId: 'older_new', createdAt: day(14, 17), dependsOn: [] },
+    { ticketId: 'older_mid', createdAt: day(14, 12), dependsOn: [] },
+    { ticketId: 'older_old', createdAt: day(14, 9), dependsOn: [] },
+  ]
+  const timeline = api.topicTicketLayout(timelineTickets, noon)
+  assert.deepEqual(timeline.tickets.map(ticket => ticket.ticketId), [
+    'today_new', 'today_mid', 'today_old',
+    'yesterday_new', 'yesterday_mid', 'yesterday_old',
+    'older_new', 'older_mid', 'older_old',
+  ], 'the whole topic is one createdAt-descending list')
+  assert.deepEqual(timeline.groups.map(group => group.label), ['今天', '昨天', '2026-11-14'])
+  assert.deepEqual(timeline.groups.map(group => group.tickets.length), [3, 3, 3])
+  assert.equal(timeline.positions, undefined, 'the timeline no longer uses column positions')
+  assert.equal(timeline.edges, undefined, 'the timeline no longer draws dependency edges')
+  assert.equal(timeline.bands, undefined, 'the timeline no longer has a lane band')
+  assert.equal(api.topicTimelineGroups(timelineTickets, noon).length, 3)
 
   const sameStamp = api.topicTicketLayout([
     { ticketId: 'ticket_b', createdAt: 5, dependsOn: [] },
     { ticketId: 'ticket_a', createdAt: 5, dependsOn: [] },
-  ])
-  assert.equal(sameStamp.positions.get('ticket_a').row, 0, 'equal createdAt falls back to ticketId')
-  assert.equal(sameStamp.positions.get('ticket_b').row, 1, 'the tie order is stable')
-  assert.equal(sameStamp.positions.get('ticket_a').column, 0)
+  ], noon)
+  assert.deepEqual(sameStamp.tickets.map(ticket => ticket.ticketId), ['ticket_a', 'ticket_b'], 'equal createdAt falls back to ticketId')
 
-  const shifted = api.topicTicketLayout([
+  const dependent = api.topicTicketLayout([
     { ticketId: 'ticket_old', createdAt: 1, dependsOn: [] },
     { ticketId: 'ticket_new', createdAt: 2, dependsOn: ['ticket_old'] },
-  ])
-  assert.equal(shifted.positions.get('ticket_old').column, 0)
-  assert.equal(shifted.positions.get('ticket_new').column, 1, 'a downstream ticket still moves one column right')
-  assert.equal(shifted.edges.length, 1)
-  assert.equal(shifted.edges[0].from, 'ticket_old')
-  assert.equal(shifted.edges[0].to, 'ticket_new')
-  assert.ok(shifted.edges[0].d.includes('C '), 'the dependency is a cubic curve')
+  ], noon)
+  assert.deepEqual(dependent.tickets.map(ticket => ticket.ticketId), ['ticket_new', 'ticket_old'], 'a downstream ticket stays in time order instead of moving right')
+  assert.equal(Object.prototype.hasOwnProperty.call(dependent, 'positions'), false)
 
   const topCard = { ticketId: 'top', rect: { top: -100, bottom: -42 } }
   const hiddenBottom = { ticketId: 'bottom-far', rect: { top: 700, bottom: 758 } }
@@ -510,7 +498,7 @@ try {
   const modal = source.slice(modalStart, overlayStart)
   const overlay = source.slice(overlayStart, applyStart)
 
-  assert.equal((source.match(/React\.createElement\(TicketCard, \{/g) || []).length, 2, 'the topic card and the modal share TicketCard')
+  assert.equal((source.match(/React\.createElement\(TicketCard, \{/g) || []).length, 1, 'the topic card keeps the compact TicketCard')
   assert.match(source, /"data-ria-topic-card": topic\.topicId,\s*"data-ria-topic-open": "1",\s*onClick: open,/, 'clicking the card opens its topic page')
   const topicCard = source.slice(source.indexOf('function TopicCard(props)'), modalStart)
   assert.match(topicCard, /"data-ria-topic-ellipsis": String\(count\)/)
@@ -530,9 +518,15 @@ try {
   assert.match(modal, /TOPIC_FILTERS\.map\(function \(item\)/)
   assert.match(modal, /data-ria-topic-filter/)
   assert.match(modal, /muted: !topicTicketMatchesFilter\(ticket, filter\)/)
-  assert.match(modal, /layout\.edges\.map\(function \(edge\)/)
-  assert.match(modal, /onOpenTopic: function \(edge\)/)
   assert.match(modal, /topicTicketLayout\(tickets\)/)
+  assert.match(modal, /timeline\.groups\.map\(function \(group, groupIndex\)/)
+  assert.match(modal, /TopicTimelineDayHeader/)
+  assert.match(modal, /TimelineTicketCard/)
+  assert.match(modal, /insideDeps: insideFor\(ticket\.ticketId\)/)
+  assert.match(modal, /onRevealTicket: revealTicket/)
+  assert.match(modal, /"data-ria-topic-timeline": topicId/)
+  assert.match(modal, /maxHeight: TOPIC_TIMELINE_MAX_HEIGHT/)
+  assert.doesNotMatch(modal, /layout\.edges|layout\.positions|layout\.bands|markerId|data-ria-topic-band/)
   assert.match(modal, /ref: scrollRef/)
   assert.match(modal, /data-ria-filter-bubble/)
   assert.match(modal, /revealFiltered\(direction\)/)
@@ -541,7 +535,11 @@ try {
   assert.match(modal, /filterBubbleNode\("top", filterBubbles && filterBubbles\.top\)/)
   assert.match(modal, /filterBubbleNode\("bottom", filterBubbles && filterBubbles\.bottom\)/)
   assert.match(modal, /pointerEvents: "auto"/)
-  assert.match(modal, /width: "min\(1120px, 94vw\)"/)
+  assert.match(modal, /width: "min\(920px, 94vw\)"/)
+  assert.match(source, /"data-ria-ticket-dependency"/)
+  assert.match(source, /topicClockText\(ticket\.createdAt \|\| ticket\.updatedAt\)/)
+  assert.match(source, /"data-ria-timeline-day": group\.key/)
+  assert.match(source, /"按创建时间从新到旧/)
   assert.match(overlay, /placeholder: "搜索主题、简报或工单"/)
   assert.match(overlay, /ref: searchRef/)
   assert.match(overlay, /"aria-label": "搜索工单或主题"/)

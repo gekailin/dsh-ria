@@ -373,9 +373,10 @@ async function waitForStatus(service, predicate, label) {
   }
 }
 
-// A channel can be connected before its user has sent anything. Assistant
-// replies in that window must be dropped silently; async send failures must be
-// logged instead of escaping as unhandled rejections and killing the host.
+// A channel can be connected before its user has sent anything. QQ drops the
+// reply silently; Claw reports the missing target so its fallback can queue.
+// Async send failures must be logged instead of escaping as unhandled
+// rejections and killing the host.
 {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-ria-no-peer-'))
   const logs = []
@@ -414,12 +415,15 @@ async function waitForStatus(service, predicate, label) {
 
   try {
     assert.equal(await qq.sendText('no peer'), undefined)
-    assert.equal(await claw.sendText('no peer'), undefined)
+    await assert.rejects(claw.sendText('no peer'), error => {
+      assert.equal(error.code, 'WECHAT_CLAW_NO_PEER')
+      return true
+    })
     qq.forwardAssistant('no peer')
     claw.forwardAssistant('no peer')
     await new Promise(resolve => setTimeout(resolve, 40))
     assert.equal(logs.some(line => line.includes('could not send assistant text')), false)
-    assert.equal(logs.some(line => line.includes('发送失败')), false)
+    assert.ok(logs.some(line => line.includes('assistant text send_failed')), 'Claw should report the missing reply target')
 
     qq.peer = { scope: 'c2c', targetId: 'openid-1' }
     qq.session.bot.sendText = () => { throw new Error('gateway down') }

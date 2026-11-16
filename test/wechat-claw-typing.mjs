@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -296,6 +296,91 @@ async function attachSession(service, base) {
   } finally {
     await claw.shutdown()
     await new Promise(resolve => server.close(resolve))
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+// A missing reply target must reject, not resolve as if the message was sent.
+{
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-ria-claw-no-peer-'))
+  const claw = serviceFor(dir, 'http://127.0.0.1:1', { typingOptions: () => ({ enabled: false }) })
+  await attachSession(claw, 'http://127.0.0.1:1')
+  try {
+    await assert.rejects(claw.sendText('no reply target'), error => {
+      assert.equal(error.code, 'WECHAT_CLAW_NO_PEER')
+      assert.equal(error.message, '微信 Claw 尚未收到可回复的消息')
+      return true
+    })
+  } finally {
+    await claw.shutdown()
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+// An inbound message supplies the peer and token used by the next reply.
+{
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-ria-claw-peer-'))
+  const sent = []
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url, 'http://127.0.0.1')
+    if (url.pathname === '/ilink/bot/sendmessage') {
+      const body = await readJsonBody(request)
+      sent.push(body.msg)
+      json(response, { ret: 0 })
+      return
+    }
+    response.writeHead(404)
+    response.end()
+  })
+  await listen(server)
+  const base = 'http://127.0.0.1:' + server.address().port
+  const claw = serviceFor(dir, base, { typingOptions: () => ({ enabled: false }) })
+  await attachSession(claw, base)
+  try {
+    assert.equal(claw.peer, undefined)
+    await claw.handleMessage(claw.session, inbound())
+    assert.deepEqual(claw.peer, { userId: 'user-1', contextToken: 'context-1' })
+    await claw.sendText('after inbound')
+    assert.equal(sent.length, 1)
+    assert.equal(sent[0].to_user_id, 'user-1')
+    assert.equal(sent[0].context_token, 'context-1')
+    assert.equal(sent[0].item_list[0].text_item.text, 'after inbound')
+  } finally {
+    await claw.shutdown()
+    await new Promise(resolve => server.close(resolve))
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+// The reply-target timestamp survives a restart; legacy and bad values fall back to 0.
+{
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-ria-claw-state-'))
+  const stateFile = join(dir, 'wechat-claw', 'state.json')
+  const claw = serviceFor(dir, 'http://127.0.0.1:1', { typingOptions: () => ({ enabled: false }) })
+  await attachSession(claw, 'http://127.0.0.1:1')
+  try {
+    const before = Date.now()
+    await claw.handleMessage(claw.session, inbound('persist-1'))
+    assert.ok(claw.lastInboundAt >= before)
+    const stored = JSON.parse(readFileSync(stateFile, 'utf8'))
+    assert.equal(stored.lastInboundAt, claw.lastInboundAt)
+
+    const reopened = serviceFor(dir, 'http://127.0.0.1:1', { typingOptions: () => ({ enabled: false }) })
+    assert.equal(reopened.lastInboundAt, claw.lastInboundAt)
+
+    writeFileSync(stateFile, JSON.stringify({ version: 1 }) + '\n')
+    const legacy = serviceFor(dir, 'http://127.0.0.1:1', { typingOptions: () => ({ enabled: false }) })
+    assert.equal(legacy.lastInboundAt, 0)
+
+    writeFileSync(stateFile, JSON.stringify({ version: 1, lastInboundAt: 'yesterday' }) + '\n')
+    const invalid = serviceFor(dir, 'http://127.0.0.1:1', { typingOptions: () => ({ enabled: false }) })
+    assert.equal(invalid.lastInboundAt, 0)
+
+    writeFileSync(stateFile, JSON.stringify({ version: 1, lastInboundAt: -1 }) + '\n')
+    const negative = serviceFor(dir, 'http://127.0.0.1:1', { typingOptions: () => ({ enabled: false }) })
+    assert.equal(negative.lastInboundAt, 0)
+  } finally {
+    await claw.shutdown()
     rmSync(dir, { recursive: true, force: true })
   }
 }

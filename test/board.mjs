@@ -105,6 +105,66 @@ try {
   assert.ok(lanes.includes('unassigned'))
   assert.equal(board.lanes.find(lane => lane.id === 'unassigned').total, 1)
 
+  // The flat search index must reach the seventh pending ticket, completed
+  // tickets, and unclassified tickets that a topic card cannot render.
+  const searchFixture = await createFixture()
+  try {
+    const searchTickets = []
+    for (let index = 0; index < 8; index += 1) {
+      const created = await searchFixture.call('ria_ticket', {
+        goal: 'searchable ticket ' + index,
+        executor: 'session-worker',
+      })
+      searchTickets.push(created.ticket)
+    }
+    const searchTopic = await searchFixture.call('ria_topic', {
+      action: 'create',
+      title: 'Search Topic',
+      brief: 'Searchable brief',
+    })
+    for (const ticket of searchTickets) {
+      const linked = await searchFixture.call('ria_topic', {
+        action: 'link',
+        topicId: searchTopic.topic.topicId,
+        ticketId: ticket.ticketId,
+      })
+      assert.equal(linked.role, 'primary')
+    }
+    const store = searchFixture.service.store
+    assert.equal(store.transitionTicket(searchTickets[0].ticketId, 'working', { executor: 'session-worker' }).ok, true)
+    assert.equal(store.transitionTicket(searchTickets[0].ticketId, 'done', {
+      resolution: { kind: 'answered', summary: 'done' },
+    }).ok, true)
+    const loose = await searchFixture.call('ria_ticket', {
+      goal: 'loose searchable idea',
+      executor: 'self',
+    })
+
+    const searchBoard = await searchFixture.service.boardData()
+    assert.equal(searchBoard.searchIndex.length, 9)
+    const indexed = new Map(searchBoard.searchIndex.map(item => [item.ticketId, item]))
+    const doneItem = indexed.get(searchTickets[0].ticketId)
+    assert.equal(doneItem.status, 'done')
+    assert.equal(doneItem.topicTitle, 'Search Topic')
+    assert.equal(doneItem.topicBrief, 'Searchable brief')
+    assert.equal(doneItem.goal, 'searchable ticket 0')
+    assert.equal(doneItem.executorTitle, 'Worker One')
+    const doneProject = searchBoard.projects.find(project =>
+      project.topics.some(topic => topic.topicId === searchTopic.topic.topicId))
+    assert.equal(doneItem.projectTitle, doneProject.title)
+    assert.equal(indexed.get(loose.ticket.ticketId).unclassified, true)
+    assert.equal(indexed.get(loose.ticket.ticketId).topicTitle, '未分类')
+
+    const searchCard = searchBoard.projects
+      .flatMap(project => project.topics)
+      .find(topic => topic.topicId === searchTopic.topic.topicId)
+    assert.equal(searchCard.tickets.length, 6, 'the card still shows six pending tickets')
+    assert.equal(searchCard.tickets.some(ticket => ticket.ticketId === searchTickets[0].ticketId), false, 'the done ticket is not in the pending section')
+    assert.ok(searchBoard.searchIndex.some(item => item.ticketId === searchTickets[7].ticketId), 'the seventh pending ticket is in the index')
+  } finally {
+    searchFixture.cleanup()
+  }
+
   // Broken workspace metadata must not take the endpoint down.
   const original = fixture.ctx.workspaceRegistry.list
   fixture.ctx.workspaceRegistry.list = () => { throw new Error('registry offline') }

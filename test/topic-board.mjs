@@ -256,7 +256,7 @@ try {
   const start = source.indexOf('/* board-layout:start */')
   const end = source.indexOf('/* topic-board:end */')
   assert.ok(start >= 0 && end > start, 'client board markers')
-  const api = new Function(source.slice(start, end) + '\nreturn { boardLayout, boardCanOpenSession, topicWaterfall, topicBoardLayout, topicTicketLayout, topicCardHeight, topicSectionOmitted, topicTicketMatchesFilter, topicFilterOutside, topicFilterBubbleState, topicFilterScrollTop, topicBriefText, topicMatchesQuery, TOPIC_CARD_WIDTH, TOPIC_CARD_GAP, TOPIC_PROJECT_GAP, TOPIC_TICKET_INSET, TOPIC_FILTERS, TOPIC_MODAL_PER_COLUMN, TOPIC_FILTER_BUBBLE_MARGIN };')()
+  const api = new Function(source.slice(start, end) + '\nreturn { boardLayout, boardCanOpenSession, topicWaterfall, topicBoardLayout, topicTicketLayout, topicCardHeight, topicSectionOmitted, topicTicketMatchesFilter, topicFilterOutside, topicFilterBubbleState, topicFilterScrollTop, topicBriefText, topicMatchesQuery, ticketSearchResults, ticketMatchesQuery, ticketSearchRank, TICKET_SEARCH_LIMIT, TOPIC_CARD_WIDTH, TOPIC_CARD_GAP, TOPIC_PROJECT_GAP, TOPIC_TICKET_INSET, TOPIC_FILTERS, TOPIC_MODAL_PER_COLUMN, TOPIC_FILTER_BUBBLE_MARGIN };')()
   const card = (topicId, lastUpdatedAt, counts, extra = {}) => ({
     topicId,
     title: topicId,
@@ -426,6 +426,83 @@ try {
   assert.equal(api.topicMatchesQuery(briefed, 'written brief'), true)
   assert.equal(api.topicMatchesQuery(briefed, 'missing'), false)
 
+  // The flat index reaches completed tickets, unclassified tickets, and the
+  // seventh ticket that a topic card never renders.
+  const searchIndex = [
+    {
+      ticketId: 'ticket_done',
+      goal: 'ship the appendix',
+      status: 'done',
+      updatedAt: 30,
+      topicId: 'topic_a',
+      topicTitle: 'Draft',
+      topicBrief: 'First topic',
+      projectTitle: 'dsh-ria',
+      executor: 'session-worker',
+      executorTitle: 'Worker One',
+      dependsOn: [],
+      checklist: [],
+    },
+    {
+      ticketId: 'ticket_working',
+      goal: 'edit the draft',
+      status: 'working',
+      updatedAt: 20,
+      topicId: 'topic_a',
+      topicTitle: 'Draft',
+      topicBrief: 'First topic',
+      projectTitle: 'dsh-ria',
+      executor: 'session-worker',
+      executorTitle: 'Worker One',
+      dependsOn: [],
+      checklist: [],
+    },
+    {
+      ticketId: 'ticket_seventh',
+      goal: 'collect the seventh reference',
+      status: 'open',
+      updatedAt: 10,
+      topicId: 'topic_a',
+      topicTitle: 'Draft',
+      topicBrief: 'First topic',
+      projectTitle: 'dsh-ria',
+      executor: 'self',
+      executorTitle: 'Ria',
+      dependsOn: [],
+      checklist: [],
+    },
+    {
+      ticketId: 'ticket_loose',
+      goal: 'loose idea without a topic',
+      status: 'blocked',
+      updatedAt: 40,
+      topicId: 'unclassified:ria',
+      topicTitle: '未分类',
+      topicBrief: '',
+      projectTitle: 'Ria',
+      executor: 'self',
+      executorTitle: 'Ria',
+      dependsOn: [],
+      checklist: [],
+    },
+  ]
+  assert.equal(api.TICKET_SEARCH_LIMIT, 40)
+  assert.deepEqual(api.ticketSearchResults(searchIndex, '  '), [], 'empty query never lists every ticket')
+  assert.equal(api.ticketMatchesQuery(searchIndex[0], ''), false)
+  assert.deepEqual(api.ticketSearchResults(searchIndex, '  SHIP  ').map(ticket => ticket.ticketId), ['ticket_done'], 'trim and case-insensitive')
+  assert.deepEqual(api.ticketSearchResults(searchIndex, 'draft appendix').map(ticket => ticket.ticketId), ['ticket_done'], 'all terms must match')
+  assert.deepEqual(api.ticketSearchResults(searchIndex, '待执行').map(ticket => ticket.ticketId), ['ticket_seventh'], 'status word matches')
+  assert.deepEqual(api.ticketSearchResults(searchIndex, '进行中').map(ticket => ticket.ticketId), ['ticket_working'], 'working alias matches')
+  assert.deepEqual(api.ticketSearchResults(searchIndex, '未分类').map(ticket => ticket.ticketId), ['ticket_loose'], 'unclassified topic is searchable')
+  assert.deepEqual(api.ticketSearchResults(searchIndex, 'first topic').map(ticket => ticket.ticketId), ['ticket_working', 'ticket_seventh', 'ticket_done'], 'topic brief matches every linked ticket')
+  assert.deepEqual(api.ticketSearchResults(searchIndex, 'worker one').map(ticket => ticket.ticketId), ['ticket_working', 'ticket_done'], 'executor title matches')
+  assert.deepEqual(api.ticketSearchResults(searchIndex, 'ticket_seventh').map(ticket => ticket.ticketId), ['ticket_seventh'], 'ticket id matches')
+  assert.deepEqual(api.ticketSearchResults(searchIndex, 'zzz'), [])
+  assert.deepEqual(api.ticketSearchResults(searchIndex, 'draft').map(ticket => ticket.ticketId), ['ticket_working', 'ticket_seventh', 'ticket_done'], 'active tickets rank before done, then by updatedAt')
+  assert.equal(api.ticketSearchRank({ status: 'working' }), 0)
+  assert.equal(api.ticketSearchRank({ status: 'blocked' }), 1)
+  assert.equal(api.ticketSearchRank({ status: 'done' }), 6)
+
   const modalStart = source.indexOf('function TopicModal(props)')
   const overlayStart = source.indexOf('function TopicBoardOverlay(props)')
   const applyStart = source.indexOf('function apply(ctx)')
@@ -466,6 +543,23 @@ try {
   assert.match(modal, /pointerEvents: "auto"/)
   assert.match(modal, /width: "min\(1120px, 94vw\)"/)
   assert.match(overlay, /placeholder: "搜索主题、简报或工单"/)
+  assert.match(overlay, /ref: searchRef/)
+  assert.match(overlay, /"aria-label": "搜索工单或主题"/)
+  assert.match(overlay, /ticketSearchResults\(board && board\.searchIndex, query\)/)
+  assert.match(overlay, /ticketResultsPanel\(\)/)
+  assert.match(overlay, /data-ria-ticket-results/)
+  assert.match(overlay, /data-ria-ticket-result": ticket\.ticketId/)
+  assert.match(overlay, /data-ria-ticket-more/)
+  assert.match(overlay, /"没有匹配的工单。"/)
+  assert.match(overlay, /event\.key !== "\/"/)
+  assert.match(overlay, /setQuery\(""\)/)
+  assert.match(overlay, /searchRef\.current\.focus\(\)/)
+  assert.match(overlay, /setDetailTicket\(ticket\)/)
+  assert.match(overlay, /TicketDetailDialog, \{/)
+  assert.match(source, /function TicketDetailDialog\(props\)/)
+  assert.match(source, /"data-ria-ticket-detail": ticket\.ticketId/)
+  assert.match(source, /"打开主题"/)
+  assert.match(overlay, /setResultLimit\(TICKET_SEARCH_LIMIT\)/)
   assert.doesNotMatch(overlay, /TOPIC_FILTERS\.map|setFilter|topicFilterMatches|dimmed/)
 }
 

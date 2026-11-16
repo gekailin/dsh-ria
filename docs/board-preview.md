@@ -16,7 +16,11 @@
   - 已完成：只显示计数，不列工单。
 - 卡内工单条目和主题弹窗共用同一个 160×58 的工单卡：状态圆点与状态文字、goal 摘要、清单进度、执行者；blocked 卡额外挂「等拍板」红标签。
 - 卡内不就地展开。点「……」行、计数行或卡片其它位置，都会打开该主题的主题页弹窗；省略号只表示还有未列出的工单。
-- 顶部只有搜索框，全部/进行中/卡住/空闲筛选已经移进主题弹窗。搜索会过滤主题并重算瀑布布局。
+- 顶部只有搜索框，全部/进行中/卡住/空闲筛选已经移进主题弹窗。关键词非空时，画布上方先出现「工单结果」平铺列表：每行是状态圆点、goal、ticketId、主题/项目、执行者，右侧是状态词；下方保留匹配主题的瀑布画布。清空关键词后列表消失、画布恢复。
+- 工单搜索读的是 `/board` 新增的只读 `searchIndex`，不是主题卡里截断后的名单，因此已完成、未分类和第 7 张起没画在卡里的工单都能搜到。匹配范围包括 ticketId、goal、主题 title/brief、项目名、执行者，以及待执行/执行中/卡住/已完成等状态词；大小写不敏感、首尾空格忽略，多个关键词按空格拆分后要求全部命中。
+- 结果先按状态活跃度排序（执行中 → 卡住 → 待执行 → 已失败/已分叉 → 已完成 → 已取消），同状态按 updatedAt 倒序。最多先列 40 张，底部「还有 N 张」每次再展开 40 张，避免一次渲染几百张。
+- 单击工单结果打开工单详情弹窗：状态、goal、ticketId、主题/项目、执行者、时间、依赖数、队列、清单和卡点；可打开所属主题、打开执行者会话或复制单号。没有匹配工单时列表显示「没有匹配的工单。」；主题仍可单独命中，下方画布的「没有匹配的主题。」不会盖住工单结果。
+- 看板内按 `/` 聚焦搜索框（焦点已在输入框时不拦截），按 Esc 先清空搜索并还焦，再按原有顺序关闭浮层或看板。
 - 单击工单卡复制 `ticketId`，底部弹出「已复制 ticket_…」约 2 秒；剪贴板权限失败时改为显示可手动选中的单号。单击主题卡打开主题页，不会复制。
 - 悬停工单卡弹出详情浮层：goal、状态、执行者、更新时间、依赖数、清单进度与逐条清单、卡点原因、排队说明。浮层可悬停、文字可选中；最多列 6 步清单，多出的显示「…还有 N 步」。浮层贴着视口边缘时自动翻转，不会超出窗口。
 - 点工单卡里的执行者名字调用宿主 `ctx.uiWorkspace.openSession(sessionId)` 打开会话；`executor=self` 显示「Ria」且不可点。执行会话缺失或归档时不跳转，只在浮层里标明。
@@ -45,6 +49,7 @@ curl -s "http://127.0.0.1:3080/plugins/dsh-ria/api/board?limit=200"
 
 - `projects[]`：`projectId`、`title`、`kind`、`cwd`、`sessionId`、`counts`、`lastUpdatedAt`、`topics[]`。
 - 每个 topic：`topicId`、`title`、`brief`、`summaryAuto`、`level`、`parentId`、`unclassified`、`counts{open,working,blocked,done,total}`、`lastUpdatedAt`、`tickets`（待执行，最多 6 条）、`working`（执行中，最多 6 条）。`brief` 是最终展示文本：人工摘要时 `summaryAuto=false`，为空则由宿主按最近工单自动拼接，`summaryAuto=true`。
+- `searchIndex[]`：全量工单的只读扁平投影，供看板搜索使用，不受主题卡每段 6 条上限影响。字段包括 `ticketId`、`goal`、`status`、`createdAt`、`updatedAt`、`executor` / `executorTitle`、`laneId` / `projectTitle`、`topicId` / `topicTitle` / `topicBrief` / `unclassified`，以及详情弹窗需要的 `blockedReason`、`dependsOn`、`checklist`、`progress`、`queueText` 等字段；未分类工单的 `topicId` 是 `unclassified:<laneId>`。
 - 每张票带 `primaryTopicId`。一票最多一个 primary；`related` 链接不会把同一张票重复放到另一张主题卡上。
 
 主题页：
@@ -65,6 +70,7 @@ curl -s "http://127.0.0.1:3080/plugins/dsh-ria/api/board/topic?topicId=topic_xxx
 ## 已覆盖的边界
 
 - 空看板、搜索无结果、主题没有工单、主题 brief 为空、worker 会话缺失、worker 已归档。
+- 主题卡只画前几条工单时，搜索仍覆盖全部：已完成、未分类、第 7 张待执行工单都能在结果列表里找到；结果列表与匹配主题并存，清空后恢复原画布。
 - 瀑布列分配（最矮列、并列取低列号）、每项目最多 3 列、主题卡高度随三段条数变化。
 - 卡内条目不就地展开：点工单卡复制单号，点「……」或卡片其它位置进入主题页；卡内条目的复制、悬停、执行者跳转与弹窗一致。
 - 弹窗按时间逆序、4 张一列换列；同 createdAt 顺序稳定；依赖把下游卡右移一列，目标列已满就继续向右；筛选气泡只统计完全在可视区外的匹配卡，部分露出不计，点气泡滚动后计数更新；跨主题胶囊只在目标主题存在时可点。

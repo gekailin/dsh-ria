@@ -22,13 +22,13 @@ Ria 入口标题右侧有一个“连接”chip。点开后默认打开上次使
 - 面板：已登录时 chip 弹层里有一张推送状态卡。正常显示“推送中”；暂停显示“已暂停推送”、来源（“手动”或“自动（触发暂停的通道消息）”）和暂停时间，旁边是“暂停推送 / 恢复推送”按钮。点击后立即用 POST 的返回值刷新，不等下一次轮询。
 - 自动暂停开关：设置页的“自动暂停微信推送”（`wechatAutoPause`，默认开）控制是否在非微信通道消息到达时自动暂停；关闭后不自动暂停，也不改当前的 pausedBy/pauseReason。该开关只作用于微信「文件传输助手」通道；微信 Claw 与 QQ 通道仍按自己的“最后消息通道”规则暂停其他通道。来自微信 Claw 的消息也会暂停「文件传输助手」，但 `pauseReason` 记为“微信 Claw 通道消息”，不再笼统写成“非微信通道消息”。
 - 自动暂停提示：弹层轮询或侧边栏轮询发现 paused 从 false 变为 true 且 pausedBy=channel 时，显示一条 8 秒自动消失的轻提示“已自动暂停微信推送：<pauseReason>”，不弹窗、不打断输入。chip 圆点同时变橙色。同时 Ria 通过副作用 outbox 往被暂停的通道自己发一条说明；「文件传输助手」被暂停时就发到文件传输助手自己，回一条微信消息即可恢复。
-- 恢复时折叠积压：恢复推送（手动或收到本通道消息自动恢复）时，outbox 里 `createdAt` 早于恢复时刻的 `wechat_dispatch_note`、`wechat_approval_note` 和旧版 `wechat_pause_notice` 不再逐条补发，直接标记 `delivered` 并记 `folded=true`；如果折叠了 N 条，只发一条汇总“恢复推送：刚才 N 条任务通知已折叠”，之后的新通知照常发送。汇总本身是 `wechat_fold_notice`，不会被下一次折叠吃掉。新版 `channel_pause_notice` 不属于微信折叠集合，恢复后若已不暂停会在投递时直接丢弃。折叠计数 `folded` 与 `lastFoldedAt` 持久化在 `outbox.json`，`GET /wechat/status` 和 `ria_status.outbox` 都带这两个字段。
+- 恢复时按真人消息锚点重放：恢复推送（手动或收到本通道消息自动恢复）时，Ria 读取 `ria.json` 里持久化的 `lastHumanMessageAt`——任意通道（网页、微信「文件传输助手」、微信 Claw、QQ）最后一条真人消息的时间。事件时间 `eventAt` 不晚于锚点的 outbox 通知直接标记 `delivered`，不发送，也不生成任何汇总横幅；晚于锚点的按 `eventAt` 升序重新排队，Ria 正文 `wechat_assistant_note` 与派发/审批卡片按原事件顺序交错补发，`dedupeKey` 继续去重。恢复时刻本身和单通道的 `lastInboundAt` 都不是锚点；旧版 `wechat_fold_notice` 一律静默标记送达，不再产生新的汇总。排队中的 `channel_file_send` 与内部 `dispatch_note` 不参与锚点静默/重排，仍按原重试逻辑补发。
 - 手动：`POST /plugins/dsh-ria/api/wechat/pause`，body 为 `{"paused":true}` 或 `{"paused":false}`，可选 `reason`；`paused` 不是布尔值返回 400。三个通道统一的多通道接口见 [channels.md](channels.md#http-api)。
-- 查询：`GET /wechat/status` 返回 `paused`、`pausedBy`、`pauseReason`、`pausedAt`、`resumedAt`、`resumedBy`、`wechatAutoPause`、`folded` 和 `lastFoldedAt`。
+- 查询：`GET /wechat/status` 返回 `paused`、`pausedBy`、`pauseReason`、`pausedAt`、`resumedAt`、`resumedBy`、`wechatAutoPause`。`folded` 和 `lastFoldedAt` 仍作为旧字段返回，但当前恢复流程不再累加。
 - 自动：Web/手机/QQ/其他非微信用户消息进入 Ria 时自动暂停（`pausedBy=channel`）；微信 Claw 入站也会暂停，但原因写“微信 Claw 通道消息”。微信「文件传输助手」入站自动恢复，包括恢复手动暂停；`wechatAutoPause=false` 时整个自动暂停分支跳过，Claw/QQ 自己的切换规则不受影响。
 - 合成消息（`host_` 开头的启动恢复、启动失败、worker idle 唤醒）和官方 schedule 提醒不触发切换。
 - 手动暂停优先：非微信消息的自动暂停不会覆盖 `pausedBy=manual`；手动恢复后，下一条非微信消息会再次暂停，这是预期行为。
-- 正在发送的那一条会发完；还没开始发送的排队文本/文件丢弃。暂停期间不写微信内部 Outbound 队列（自动暂停提示是唯一例外：三个通道各自的暂停提示都允许在暂停态发出，且只发这一条），恢复后按重连积压策略补发。副作用 outbox 里的微信通知不逐条重放，按上面的“恢复时折叠积压”处理。
+- 正在发送的那一条会发完；还没开始发送的排队文本/文件丢弃。暂停期间不写微信内部 Outbound 队列（自动暂停提示是唯一例外：三个通道各自的暂停提示都允许在暂停态发出，且只发这一条），恢复后按重连积压策略补发。副作用 outbox 里的通知在恢复时按上面的“真人消息锚点”重放：锚点前的静默，锚点后的按事件时间补发，不再折叠成汇总。
 - 自动暂停提示走副作用 outbox：仅在 channel 暂停真正转入时入队一次，dedupeKey 为 `channel:pausedAt`，重启不重复；允许在暂停态发出，但只限被暂停通道自己的一条提示，不放行后续推送；发送失败按 outbox 退避重试，最终失败只记日志；目标通道未连接、没有可回复的 peer 或手动暂停时不入队；投递时已恢复或 pausedAt 已变化则直接丢弃，deferred 不消耗 attempts。
 - 丢弃会记 warn 日志：`dropped outbound while paused: {"at":...,"riaSessionId":...,"to":"filehelper","kind":"assistant|system|text|file","pausedBy":...,"reason":...}`，文本带 chars/preview，文件带 name/bytes。暂停和恢复各有一条 `pause:` / `resume:` info/warn 日志。
 
@@ -36,7 +36,7 @@ Ria 入口标题右侧有一个“连接”chip。点开后默认打开上次使
 
 `wechat_dispatch_note`、`wechat_approval_note` 只投给微信侧通道，不投 QQ；候选是「文件传输助手」和微信 Claw。旧版 `wechat_pause_notice` 仍按这个路由兼容老条目；新版 `channel_pause_notice` 不在这里路由，只发给被暂停的通道自己，包括 QQ。
 
-1. 选择 `lastInboundAt` 最大的通道（最近一次收到该通道用户消息的时间）；时间相同时「文件传输助手」优先。
+1. 选择 `lastInboundAt` 最大的通道（最近一次收到该通道用户消息的时间）；时间相同时「文件传输助手」优先。这里的 `lastInboundAt` 只用于选择投递通道，不是恢复推送的锚点。
 2. 首选通道暂停、未登录、或 Claw 还没有可回复的 `peer`/`context_token` 时返回 deferred，继续尝试下一个通道。
 3. 两个通道都 deferred：outbox 条目保持 `pending`，`attempts` 和 `due` 都不变，由 30 秒 tick、startup 或后续 pump 再试；不丢条目，也不消耗 10s/1m/5m/15m/1h 的重试次数。
 4. 某个通道真正发送报错：记一次失败；另一个通道成功则本条算送达，两个都失败才按退避重试。

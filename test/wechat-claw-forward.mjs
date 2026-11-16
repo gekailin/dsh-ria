@@ -48,12 +48,14 @@ function makeClaw({ stateDir, send, sendImage, imageOptions = { inbound: true, o
   const sent = []
   try {
     const claw = makeClaw({ stateDir: dir, send: async text => { sent.push(text); return 'msg-1' } })
-    claw.forwardAssistant('短回复', { seq: 1 })
+    const eventAt = Date.UTC(2026, 10, 14, 9, 0, 0)
+    claw.forwardAssistant('短回复', { seq: 1, time: eventAt })
     await waitFor(() => claw.lastAssistantForward && claw.lastAssistantForward.reason === 'delivered', 'short delivery')
     assert.equal(sent.length, 1)
     assert.equal(sent[0], '🌊 短回复')
     assert.equal(claw.lastAssistantForward.chars, 3)
     assert.equal(claw.lastAssistantForward.eventSeq, 1)
+    assert.equal(claw.lastAssistantForward.eventAt, eventAt, 'the record keeps the assistant event time, not the delivery time')
     assert.equal(claw.statusView().lastAssistantForward.reason, 'delivered')
     const logFile = join(dir, 'wechat-claw', 'assistant.log.jsonl')
     assert.equal(existsSync(logFile), true)
@@ -193,6 +195,8 @@ function makeClaw({ stateDir, send, sendImage, imageOptions = { inbound: true, o
     assert.ok(entry)
     assert.equal(entry.status, 'delivered')
     assert.equal(entry.payload.reason, 'send_failed')
+    assert.equal(entry.eventAt, Date.parse('2026-11-14T09:00:00.000Z'))
+    assert.equal(entry.payload.eventAt, entry.eventAt)
 
     service.wechatClaw.sendAssistantNote = async () => ({ deferred: true })
     assert.equal(service.notifyWechatAssistantFallback({ text: '稍后再发', reason: 'paused', at: '2026-11-14T09:01:00.000Z', eventSeq: 2 }), true)

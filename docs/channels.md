@@ -108,10 +108,10 @@ Ria 入口标题右侧有一个“连接”chip。点开后是一个通道面板
 ### 回复补发与可观测性
 
 - `sendmessage` 返回 `ret != 0` 时，错误会带上 `ret` 和 `errmsg`，不再只有裸 `ret`。出站单条按 4000 字符、最多 8 段发送，长报告不会因为超过 iLink 单条约 5000 字符的上限而整条丢失。
-- 每条 assistant 正文的转发结果记在 `lastAssistantForward`：`{ at, reason, chars, preview, eventSeq?, images?, imagesFailed?, error?, errorCode?, ret?, errmsg?, deliveredChunks?, totalChunks?, fallbackQueued?, fallbackError? }`。`reason` 取 `delivered`、`paused`、`no_outbound`、`no_text`、`extract_failed`、`send_failed` 之一。
+- 每条 assistant 正文的转发结果记在 `lastAssistantForward`：`{ at, eventAt?, reason, chars, preview, eventSeq?, images?, imagesFailed?, error?, errorCode?, ret?, errmsg?, deliveredChunks?, totalChunks?, fallbackQueued?, fallbackError? }`。`eventAt` 是 assistant 事件本身的时间（用于恢复重排），`at` 是记录这条转发结果的时间。`reason` 取 `delivered`、`paused`、`no_outbound`、`no_text`、`extract_failed`、`send_failed` 之一。
 - `GET /channels/wechat-claw/status` 返回 `lastAssistantForward`，`GET /plugins/dsh-ria/api/state` 的 `wechatClawAssistant` 与之同源。插件自己的持久日志在 `<stateDir>/wechat-claw/assistant.log.jsonl`（0600，超过 2 MB 轮转为 `.1`），不依赖 dsh-web.log。
 - 正文没有送达（暂停、无 outbound、发送或图片提取失败）时，会以 durable `wechat_assistant_note` 入 outbox，由微信 Claw 通道补发，消息前缀「（补发）」。legacy 微信通道不发，避免重复。
-- 补发保持 pending 直到成功：暂停或没有 peer 时标记 deferred，不消耗重试次数；下一次 Claw 入站刷新 `context_token` 后，会把这些补发重新置为待投递并立即重试。恢复推送时的通知折叠不会折叠补发内容。
+- 补发保持 pending 直到成功：暂停或没有 peer 时标记 deferred，不消耗重试次数；下一次 Claw 入站刷新 `context_token` 后，会把这些补发重新置为待投递并立即重试。`wechat_assistant_note` 入队时带 assistant 事件的 `eventAt`；微信侧通道恢复后，它会和派发/审批卡片一起按事件时间重排，不会被折叠掉。
 - 补发正文超过 24000 字符会截断，并附「补发内容已截断，完整内容见 Ria 会话」。
 
 限制与行为：
@@ -222,7 +222,7 @@ DSH_HOME/state/ria/
 - 派发 note、审批提醒的文本会发给最近活跃的微信侧通道（「文件传输助手」或微信 Claw），不会发给 QQ；两个都不可用时留在 outbox 等待，规则见 [wechat.md](wechat.md#派发审批-note-走哪个微信通道)。
 - 自动暂停提示不走上面的路由：被暂停的通道只在自己的通道发一条提示。仅当 `pausedBy=channel` 且本次从「未暂停」变为「暂停」时入队一次，手动暂停不发；同一 `pausedAt` 去重，DSH 重启重放不重复。未连接或没有可回复目标时不入队。提示走 outbox 的 `channel_pause_notice`，`dedupeKey` 为 `channel:pausedAt`；暂停态仍可发出这一条（绕过暂停），投递时若已恢复或 `pausedAt` 已变化则直接丢弃，deferred 不消耗 `attempts`，真正的发送失败按 outbox 退避重试。
 - 通道收到自己的消息时会恢复推送，包括之前是手动暂停的情况；因为用户在这个通道里说话，本身就表示希望在这里继续。
-- 恢复时折叠积压：手动恢复或收到本通道消息自动恢复时，outbox 中 `createdAt` 早于恢复时刻的微信通知（派发、审批、旧版 `wechat_pause_notice`）不再逐条重放，直接标 `delivered`；有折叠时只发一条汇总“恢复推送：刚才 N 条任务通知已折叠”。新版 `channel_pause_notice` 不属于微信折叠集合，恢复后若已不暂停会在投递时直接丢弃。`folded` 与 `lastFoldedAt` 出现在 `/channels/<id>/status`、`/wechat/status` 和 `ria_status.outbox`。
+- 恢复时按真人消息锚点重放：手动恢复或收到本通道消息自动恢复时，Ria 读取持久化的 `lastHumanMessageAt`（任意通道最后一条真人消息）。事件时间 `eventAt` 不晚于锚点的通知静默标记 `delivered`，不发送也不生成汇总；晚于锚点的按 `eventAt` 升序重排，assistant 正文与派发/审批卡片混排补发，`dedupeKey` 去重。恢复时刻和单通道 `lastInboundAt` 不是锚点；旧版 `wechat_fold_notice` 一律静默。`folded` 与 `lastFoldedAt` 仍出现在 `/channels/<id>/status`、`/wechat/status` 和 `ria_status.outbox`，但当前流程不再累加。
 - 合成消息（`host_` 开头的启动恢复、启动失败、worker idle 唤醒）和官方 schedule 提醒不触发切换。
 - 因此正常情况下只有“最后收到用户消息的通道”在推送，避免同一条回复发到多个聊天窗口。手动暂停优先：自动暂停不会覆盖 `pausedBy=manual`，但该通道自己的入站消息会恢复它。
 

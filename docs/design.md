@@ -848,7 +848,7 @@ Phase 28：会话改名工具。新增 `ria_title({ sessionId, title })`，走�
 - lib/worker-idle.mjs：agent/status 只读监听、working ticket executor 过滤、Ria 排除、按 worker+task 节流、配置/环境变量归一化。
 - lib/outbox.mjs：副作用队列、原子写、幂等 key、退避重试、delivered 清理、失败保留、summary、按谓词作废（依赖退回等待时删除 queue wake）。
 - lib/grants.mjs：临时权限 set/list/reset、原值记录、task close/expiry/startup 恢复、审计、失败重试。
-- lib/client.js：侧边栏入口、瞬时 launcher、入口右侧微信 chip 和登录弹层（含推送状态卡、暂停/恢复按钮、自动暂停轻提示）、设置页 Ria section、conversation.chat.turnTail 派发 note 卡片、conversation.input.dock 的 blank 欢迎卡片、侧栏 Ria 入口右侧（看板→设置→连接）的任务看板图标，以及项目横轴 + 主题瀑布卡片 + 主题弹窗二维网格与四筛选的全屏只读看板。
+- lib/client.js：侧边栏入口、瞬时 launcher、入口右侧微信 chip 和登录弹层（含推送状态卡、暂停/恢复按钮、自动暂停轻提示）、设置页 Ria section、conversation.chat.turnTail 派发 note 卡片、conversation.input.dock 的 blank 欢迎卡片、侧栏 Ria 入口右侧（看板→设置→连接）的任务看板图标，以及项目横轴 + 主题瀑布卡片 + 主题弹窗二维网格与四筛选的全屏看板；看板内「说一句」输入只把带来源标注的用户消息发给 Ria，不建票、不派发。
 - lib/wechat/wxweb.mjs：文件传输助手协议、扫码登录、文本发送、uploadMedia 单块 multipart 上传、.md 文件 appmsg 发送、图片 sendImage（mediatype=pic、MediaType=3、webwxsendmsgimg Type=3），以及 requestBuffer/downloadImage 原图下载（webwxgetmsgimg，回落文件域名与 webwxgetmedia）。
 - lib/wechat/markdown.mjs：长度/代码块/表格/标题/链接判定、配置归一化、文件名。
 - lib/wechat/image.mjs：wechatImage.inbound/outbound 归一化（默认都 true）、MsgType 3 识别、<img> 元数据/原文字解析、入站原图校验与 stateDir/wechat-inbound 落盘、30 天/500 个清理、失败文本，以及 imageMediaType 文件头识别。

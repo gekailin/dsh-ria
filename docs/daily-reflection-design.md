@@ -80,7 +80,7 @@
 | 定时只用官方 `schedule_create/list/view/edit`，`target` 只能是 `this_session`，插件不实现 timer | `docs/design.md:336-340` | 反思必须走 schedule；设置页只能调用宿主 schedule 服务，不新写定时器 |
 | startup 延迟 1.5s，先恢复未收敛工单；没有单位/ pending 直接返回 | `docs/operations.md:96-108`、`lib/index.js:4630-4751`、`:5048` | 反思不能抢在恢复前；补跑用一次性 schedule |
 | `ria_read` 默认 30、最多 100 条，返回 messages/lastTurn/queue，不 resume | `lib/index.js:4229` | 这是 Ria 的读取工具，不是 worker 的；且没有 forDate 窗口 |
-| `ria_memory` 只处理 memory；memory 上限 4KB，只放稳定偏好 | `lib/index.js:4333-4359`、`docs/design.md:288-321` | 反思不能把进度、会话细节、密钥写进去 |
+| `ria_memory` 只处理 memory；memory 预算 4096 字符，只放稳定偏好 | `lib/index.js:4333-4359`、`docs/design.md:288-321` | 反思不能把进度、会话细节、密钥写进去 |
 | 现有 memory 9 条（2475 bytes）：restart-report、restart-method、worker-routing、todo-no-dispatch、工单术语两条、工单随手收口、重启后核验窗口、反思执行者 | 2026-11-13 实测 | manager prompt 另有行为规则；不要重复写回 |
 
 ### 1.1 关键代码事实：worker 拿不到任何 `ria_*`
@@ -456,11 +456,11 @@ ticketId
 
 | 工具 | 参数 | 返回 | 边界 |
 | --- | --- | --- | --- |
-| `ria_reflect_status` | `scope?`（candidates 默认 / all） | `{runId, forDate, window, deadlineAt, remainingMs, candidates, candidateTotal, candidatesTruncated, limits, memoryBytes, reportPath, state}` | 只返回绑定 run；默认候选只含窗口内有活动的会话（最多 50），`scope=all` 才给全量候选；`candidateTotal` 是候选总数（含被过滤的），`candidatesTruncated` 只表示列表撞到 50 条上限 |
+| `ria_reflect_status` | `scope?`（candidates 默认 / all） | `{runId, forDate, window, deadlineAt, remainingMs, candidates, candidateTotal, candidatesTruncated, limits, memoryChars, reportPath, state}` | 只返回绑定 run；默认候选只含窗口内有活动的会话（最多 50），`scope=all` 才给全量候选；`candidateTotal` 是候选总数（含被过滤的），`candidatesTruncated` 只表示列表撞到 50 条上限 |
 | `ria_reflect_read_tickets` | `{scope:"window" / "open" / "history", status?, executor?, detail?, limit?}` | `{detail, tickets, total, truncated}` | 默认 `detail=summary`，每条只给 ticketId/goal/status/waitingOn/executor/updatedAt；`full` 才给 acceptance/blockedReason/attention/resolution/failure/dependsOn/checklist/progress；`limit` 1–200，默认 80；`scope=open` 只含非终态；文本截 500 字；不返回完整对话 |
 | `ria_reflect_read_sessions` | `{scope:"candidates" / "recent" / "all", limit?}` | `{scope, sessions:[{sessionId,title,running,blank,lastUsedAt,ticketIds}], total, truncated}` | `limit` 1–50，默认 50；candidates 只列窗口内有活动的候选，recent 只列最近 7 天 worker，all 才给全量候选；candidates/all 的 `total` 是候选总数（含无活动的），recent 的 `total` 是 7 天窗口内 worker 数；不任意全库搜索 |
 | `ria_reflect_read_session` | `{sessionId, mode?: "summary" / "full", from?, to?, refs?, tailTurns?, maxMessages?, maxChars?}` | `{mode, messages, lastTurn, window, stats, corruptFrames, truncated, source}` | `mode` 默认 `summary`；`tailTurns` 1–50，只用于 summary，不能与 `refs/from/to` 同用，返回仍时间升序；`maxMessages` 1–200（summary 默认 50 / full 默认 20）；`maxChars` 1–40000（summary 默认 10000 / full 默认 40000）；`from/to` 为 ISO 时间或原始事件 0-based index；`refs` 1–50，与 `from/to` 互斥；full 必须给 `refs` 或 `from/to` 之一；只允许本 run 候选 sessionId；窗口夹在 run 窗口内；只读；不 resume；详见下方读取契约 |
-| `ria_reflect_read_context` | `{kind:"memory" / "outbox" / "schedule"}` | `{text, bytes, truncated}` | memory ≤4KB；outbox 只取窗口内/未送达 ≤50 条；schedule 只读反思任务 |
+| `ria_reflect_read_context` | `{kind:"memory" / "outbox" / "schedule"}` | `{text, bytes, truncated}` | memory ≤4096 字符；outbox 只取窗口内/未送达 ≤50 条；schedule 只读反思任务 |
 | `ria_reflect_report` | `{markdown, status:"complete" / "partial", counts, degraded?}` | `{path, bytes, sha256}` | 只写 `runs/<runId>/report.partial.md`；≤30KB；0600；原子写；拒绝路径参数 |
 
 **`ria_reflect_read_session` 读取契约**：
@@ -694,7 +694,7 @@ degraded: []
 | --- | --- | --- | --- | --- |
 | 每日/每周 notes | `reflections/YYYY-MM-DD.md` | 当天/当周观察、错漏、证据、未验证假设 | 反思 worker 起草，Ria 收口 | 180 天，可归档 |
 | 长期 wiki | `reflections/wiki/` | 反复出现/已对账的规则、项目约束、索引 | P3，人工确认或自动提议 | 持续，按月修剪 |
-| memory | `memory.md`（4KB） | 用户稳定偏好 | 用户确认后的 `ria_memory`（P1 窄口径） | 用户控制 |
+| memory | `memory.md`（4096 字符预算） | 用户稳定偏好 | 用户确认后的 `ria_memory`（P1 窄口径） | 用户控制 |
 
 wiki 页格式（P3）：
 
@@ -957,7 +957,7 @@ RRULE:FREQ=WEEKLY;BYDAY=MO
 - 路由、sessionId、模型、端口等易变值；
 - 与现有条目冲突、需要改写/合并/删除的；
 - 操作流程（重启、审批、部署）；
-- memory 已用 >80%，或候选写入后超 4KB（先合并/删除，不自动追加）；
+- memory 已用 >80%，或候选写入后超 4096 字符（先合并/删除，不自动追加）；
 - 任何不确定的。
 
 **永不**：
@@ -1001,7 +1001,7 @@ RRULE:FREQ=WEEKLY;BYDAY=MO
 - `ria_reflect_read_tickets`：当天窗口内的工单、所有非终态、`recovery.count>0`、窗口内 feedback。默认 `detail=summary` 只取 ticketId/goal/status/waitingOn/executor/updatedAt；需要证据细节（blockedReason、attempts、resolution）的工单再单独 `detail=full`，不整表展开。
 - 归档：筛 `closedAt` 在窗口内；最多 50 条。
 - outbox：只取 `status!=delivered` 或 `deliveredAt` 在窗口内；最多 50 条。
-- memory：全文（<=4KB）。
+- memory：全文（<=4096 字符）。
 - schedule：只找 title 前缀 `Ria: 定期反思`。
 
 **Tier 1：会话摘要（默认 summary）**
@@ -1208,7 +1208,7 @@ front matter 记录：
 | **Transcripts**（原始执行流水） | 无损对话、工具调用、结果；唯一 ground truth，可全文检索 | `session.v4.jsonl.zstd`、`ria.json`、`tickets.log.jsonl`、`outbox.json`；只读证据，绝不重写 |
 | **Memory Notes**（记忆笔记） | 会话中自主记录的显著观察，平铺 Markdown，不承担全局结构 | `reflections/YYYY-MM-DD.md` 的观察/错漏 |
 | **Wiki / 知识地图** | 离线算力把碎片笔记抽象、归纳、交叉链接成结构化 Markdown 网络 | P3 的 `reflections/wiki/`；规则页、索引、双向链接 |
-| **Injected Context**（开局注入） | 新会话启动预加载的极轻量导航摘要，不塞细节 | `memory.md` + manager prompt；只注入经核验的稳定偏好/规则，4KB 级 |
+| **Injected Context**（开局注入） | 新会话启动预加载的极轻量导航摘要，不塞细节 | `memory.md` + manager prompt；只注入经核验的稳定偏好/规则，4096 字符级 |
 
 文章给了两个规模对比：Stainless 的 wiki 在 128 轮后长成多级目录 + 双向链接，跨语料问答每问少约 20,000 token 检索开销；反例是宝可梦红里 Sonnet 3.7 到 1 万步写了 413 个文件 / 977,930 字符，光整理笔记不推进游戏，只拿 1 枚徽章；Fable 5 只留 10 个文件 / 43,406 字符，拿到 4 枚。结论不是“记得越多越好”，而是“少而结构化，比多而平铺更值钱”。
 

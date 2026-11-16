@@ -19,7 +19,39 @@ Ria 通过 run_code SDK 调用 15 个 `ria_*` 工具（含反思编排 `ria_refl
 | ria_queue | 列出或撤回一个顶层 worker 尚未执行的消息。action=list 返回 running 与 queue（id、placement=queued/steering/context、可选 rpcId、preview）；冷会话 queue=null。action=remove 接受 itemId 或 rpcId（rpcId 来自 ria_request 的 requestId；两者都给时 itemId 优先），不可恢复，只删 pending，不停止当前 turn、不改工单、不影响 recentWorkers。失败码 queue_item_not_found、queue_remove_failed；预检同 ria_request。 |
 | ria_approval | 列出正在等待审批的 worker（仅限有 active 工单的 executor）。每项带 approvalId、workerSessionId、ticketId、toolName、callId/reason、createdAt、expiresAt、expiresInMs。捕获审批时会把对应工单标成 blocked+waitingOn=approval、写 kind=approval 的 attention，并排一张 approval_note 卡片与一条微信提醒。只读：不批准、不拒绝、不替 UI answerer 作答。 |
 | ria_grant | 临时调整一个 worker 的 sandbox mode 和/或 approval policy。action=set/list/reset；set 必须带 userConfirmed=true，并记录原值、到期时间、审计，任务结束或 reset 时恢复。 |
-| ria_memory | read/remember/forget。写 stateDir/memory.md，0600，上限 4096 字节。 |
+| ria_memory | 读/写 memory.md 与归档记忆。core 预算默认 2400 字符 / 12 条 / 单条 300 字符，按 Unicode code point 计；超限拒绝写入；archive 按主题存 `memory-archive/<slug>.md`，不注入 prompt。 |
+
+## 记忆预算与归档（ria_memory）
+
+### core：memory.md
+
+- 文件：`stateDir/memory.md`，0600；全局一份，Web、微信和所有 worker 共用。
+- 预算：`maxChars`（core 总字符，默认 2400，统计全文去掉末尾换行）、`maxEntries`（顶格 `- ` 条目数，默认 12）、`maxEntryChars`（单条整行，含 `- **key**: ` 前缀，默认 300）。
+- 单位：字符一律是 Unicode code point（`[...text].length`），不是 UTF-16 `.length`，也不是字节；`bytes` 只作为附加信息展示。所有大小判断走 `lib/text-size.mjs` 的 `measureText()`，预算代码里不裸算 `text.length` 或 `Buffer.byteLength`。
+- 90% 预警：2160 字符 / 11 条 / 270 字符只返回 `warning` 和建议归档，不阻断写入。
+- 硬超限：三项任一超限即拒绝、**不部分写入**。错误同时列当前值/上限/超出量、超限 key 和具体动作，并明确 `No changes were made.`。例：
+
+  ~~~text
+  memory.md not written: 2430/2400 chars (+30), 13/12 entries (+1), entry "restart" 314/300 chars (+14).
+  Shorten entry "restart" to at most 300 chars or move its detail to memory-archive/restart.md. Run ria_memory action="read" to inspect the current file, then retry.
+  No changes were made.
+  ~~~
+
+- 读：`action=read`（默认 `scope=core`）返回 `text`、`chars`、`bytes`、`entries`、`maxChars`、`maxEntries`、`maxEntryChars`、`longestEntryChars`、`longestEntryKey`、`overBudget`、`warnings` 和 `archives`。
+- 写：`action=remember` 追加 `- **key**: text`（无 key 时 `- text`）；`action=forget` 按 key/文本子串删行。两者都返回写入后的预算视图；`memory.md` 超限时文件保持不变。
+- 手工编辑：允许；若超过预算，注入 prompt 时只保留能完整放入的顶格条目，并在末尾附一行显式告警，不静默截断、不把超长内容继续注入。
+
+### archive：memory-archive/<slug>.md
+
+- 位置：`stateDir/memory-archive/<slug>.md`，目录 0700、文件 0600；一个主题一个文件。`slug` 必须以字母或数字开头，只允许 `[A-Za-z0-9._-]`，最长 80 个字符，且不能包含 `..`。
+- 单文件软上限 16 KB：超过只提示拆子主题，不自动删除、不自动改写。
+- `action=read scope=archive path=<slug>`：默认返回 4000 字符，超出用 `offset` 续读，返回 `nextOffset`/`truncated`/`overSoftLimit`；非法 path 返回 `invalid memory archive path: ...`，不存在返回 `memory archive not found: <slug>`。
+- `action=list`：列出每个 archive 的 `slug`、`chars`、`bytes`、`entries`、`updatedAt`、`overSoftLimit`。
+- archive 内容**绝不注入 system prompt**；只在相关工单需要时显式读取。
+
+### 设置页
+
+设置页「记忆预算」段可直接改三项，范围：`maxChars` 500–20000、`maxEntries` 1–50、`maxEntryChars` 50–2000；保存走 `POST /settings` 的 `body.memory`，下一轮生效，不需要重启。`GET /settings` 同时返回 `settings.memory` 与 `settings.memoryStatus`（当前 chars/bytes/entries/最长条目/是否超限/预警）。Ria 自己不能通过工具改这些上限。
 
 ## 工单排队与依赖
 
@@ -199,11 +231,11 @@ ria_reflect 是反思的编排入口，只注册给 Ria。它管理 `reflections
 
 反思 worker 由编排层用 `ria_spawn({reflectionRunId})` 创建；创建前必须先打开 run 并写入绑定，绑定命中时只给这个 worker 注册下面 6 个工具。Ria 自己的 15 个 `ria_*` 工具、普通 worker 的会话都看不到这些工具；普通 worker 调它们会得到 unknown_tool。它们全部只读，不会 resume 冷会话，也不会写 `ria.json` 或会话日志。
 
-- `ria_reflect_status`：当前 run 的 runId、forDate、window、deadline/remainingMs、候选会话、limits、memoryBytes、reportPath、state。默认 `scope=candidates` 只列**本 run 窗口内有事件**的会话（最多 50 条）；`scope=all` 返回不按窗口过滤的全部候选。两者都给 `candidateTotal`（run 候选总数，含被窗口过滤掉的）与 `candidatesTruncated`（列表是否撞到 50 条上限）；不再是全部顶层会话的静态名单。
+- `ria_reflect_status`：当前 run 的 runId、forDate、window、deadline/remainingMs、候选会话、limits、memoryChars、reportPath、state。默认 `scope=candidates` 只列**本 run 窗口内有事件**的会话（最多 50 条）；`scope=all` 返回不按窗口过滤的全部候选。两者都给 `candidateTotal`（run 候选总数，含被窗口过滤掉的）与 `candidatesTruncated`（列表是否撞到 50 条上限）；不再是全部顶层会话的静态名单。
 - `ria_reflect_read_tickets`：scope=window/open/history，可按 status/executor 过滤；limit 1–200，默认 80。默认 `detail=summary`，每条只返回 ticketId/goal/status/waitingOn/executor/updatedAt（goal 截 500 字）；`detail=full` 才给 acceptance、blockedReason、attention、resolution、failure、dependsOn、checklist、progress 等完整字段。`scope=open` 只返回非终态工单，done/cancelled/failed 不会混进来。
 - `ria_reflect_read_sessions`：scope=candidates（默认，只含窗口内有活动的候选）/recent（最近 7 天派发过的 worker）/all（不按窗口过滤的全部候选）；limit 1–50，默认 50；返回 `{scope,sessions,total,truncated}`，只含 sessionId/title/running/blank/lastUsedAt/ticketIds 等元数据。candidates/all 的 `total` 是候选总数（含无活动的），recent 的 `total` 是命中 7 天窗口的 worker 数；`truncated` 表示是否被 limit 截断。
 - `ria_reflect_read_session`：mode=summary（默认）或 full；summary 保留 user、每 turn 最后一条 assistant、tool/thinking brief；full 返回原始事件，必须给 refs 或 from/to。refs 1–50 且只能用于本会话之前返回过的 ref；from/to 同为 ISO 时间或同为事件下标，左闭右开；maxMessages 默认 50/20，maxChars 默认 10000/40000；坏帧跳过并计入 corruptFrames。summary 可加 `tailTurns`（1–50）：按 turn 从最近往回取，返回仍按时间升序；不能与 refs/from/to 同用，full 模式不支持；没有 turn 信息时回退为最后 N 个事件。
-- `ria_reflect_read_context`：kind=memory/outbox/schedule；memory 最多 4KB，outbox 最多 50 条，schedule 本轮返回空视图。
+- `ria_reflect_read_context`：kind=memory/outbox/schedule；memory 最多 4096 字符，outbox 最多 50 条，schedule 本轮返回空视图。
 - `ria_reflect_report`：只写 `runs/<runId>/report.partial.md`，原子写、0600、不超过 30KB；不接受 path/runId/sessionId 参数。run finish/abort 后所有工具返回 run_closed。
 
 一次真实日志试跑的量级、缺口和默认值建议见 [reflection_tool_trial.md](reflection_tool_trial.md)。

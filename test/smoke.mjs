@@ -240,7 +240,8 @@ const REFLECTION_DEFAULTS = {
 }
 
 function expectedSettings(patch = {}) {
-  const { reflection, reflectionStatus, style, ...rest } = patch
+  const { reflection, reflectionStatus, style, memory, memoryStatus, ...rest } = patch
+  const memoryLimits = { maxChars: 2400, maxEntries: 12, maxEntryChars: 300, ...(memory || {}) }
   return {
     dispatchGuard: true,
     progressCards: false,
@@ -248,6 +249,20 @@ function expectedSettings(patch = {}) {
     wechatClawImage: { inbound: true, outbound: true },
     style: { ...STYLE_SETTINGS_DEFAULTS, ...(style || {}), effectiveText: (style && style.effectiveText) || '' },
     reflection: { ...REFLECTION_DEFAULTS, ...(reflection || {}) },
+    memory: memoryLimits,
+    memoryStatus: {
+      chars: 0,
+      bytes: 0,
+      entries: 0,
+      maxChars: memoryLimits.maxChars,
+      maxEntries: memoryLimits.maxEntries,
+      maxEntryChars: memoryLimits.maxEntryChars,
+      longestEntryKey: null,
+      longestEntryChars: 0,
+      overBudget: false,
+      warnings: [],
+      ...(memoryStatus || {}),
+    },
     reflectionStatus: {
       lastCompletedDate: null,
       lastStatus: null,
@@ -739,7 +754,7 @@ const httpState = await request('GET', '/plugins/dsh-ria/api/state')
 assert.equal(httpState.status, 200)
 assert.equal(httpState.body.grants.length, 1)
 assert.equal(httpState.body.grants[0].grantId, grant.grant.grantId)
-const { reflectionStatus: ignoredStateStatus, style: responseStyle, ...stateSettings } = expectedSettings()
+const { reflectionStatus: ignoredStateStatus, memoryStatus: ignoredMemoryStatus, style: responseStyle, ...stateSettings } = expectedSettings()
 assert.deepEqual(httpState.body.settings, {
   ...stateSettings,
   style: { enabled: responseStyle.enabled, preset: responseStyle.preset, custom: responseStyle.custom },

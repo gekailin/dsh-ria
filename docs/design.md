@@ -192,7 +192,7 @@ ticket 是 Ria 的管理单位；一个 ticket 只对应一个 executor。完整
 | ria_queue | 列出或撤回顶层 worker 尚未执行的 pending 消息；只删 pending，不 cancel turn、不改 ticket、不影响 recentWorkers | action: list/remove, sessionId, itemId?, rpcId? |
 | ria_approval | 列出等待审批的 worker | action: list |
 | ria_grant | 临时调整 worker 的 sandbox/审批策略，并记录原值 | action: set/list/reset, sessionId?, ticketId?, sandboxMode?, approvalPolicy?, ttlSeconds?, reason?, grantId?, userConfirmed? |
-| ria_memory | 读写 memory.md | action: read/remember/forget, text?, key? |
+| ria_memory | 读写 memory.md 与 memory-archive；core 有字符/条数/单条预算，archive 按需读取且不注入 | action: read/remember/forget/list, scope?, text?, key?, path?, offset? |
 
 共同规则：
 
@@ -314,7 +314,7 @@ request 就是一条普通会话消息，没有单独的消息类型体系。
 
 ## 8. Memory
 
-只做一个文件：
+core 只放一个文件：
 
 ~~~text
 stateDir/memory.md
@@ -323,8 +323,20 @@ stateDir/memory.md
 - 全局一份，Web 和微信共用。
 - 只放稳定偏好：语言、沟通风格、常用项目、约定、禁忌。
 - 不放 ticket 进度、聊天记录、worker 细节、凭据。
-- 0600；上限 4KB；满了先合并，再问用户删。
-- 用户可以直接编辑。
+- 0600。预算按 Unicode code point：`maxChars` 默认 2400 字符（全文去末尾换行）、`maxEntries` 默认 12 条（只数顶格 `- `）、`maxEntryChars` 默认 300 字符（含 `- **key**: ` 前缀）。
+- 90% 时返回 warning 并建议归档；任一硬超限拒绝写入、不部分写入，错误列出当前值/上限/超出量、超限 key 与迁移路径，并以 `No changes were made.` 结尾。
+- 用户可以直接编辑；手工超限时注入只保留能完整放入预算的完整条目，并在末尾显式告警，不静默截断。
+- 设置页「记忆预算」可调三项（500–20000 字符 / 1–50 条 / 50–2000 字符），下一轮生效；Ria 不能通过工具改上限。
+
+细节放 archive：
+
+~~~text
+stateDir/memory-archive/<slug>.md
+~~~
+
+- 一个主题一个文件，0600；单文件软上限 16 KB，超出提示拆分，不自动删除、不改写。
+- `ria_memory action=read scope=archive path=<slug>` 按需读取，默认 4000 字符、`offset` 续读；`action=list` 列文件。
+- archive 绝不注入 system prompt。
 
 格式示例：
 
@@ -557,6 +569,7 @@ stateDir/
   tickets.log.jsonl   # 终态归档（追加），受 24h/50 条窗口控制
   tickets-YYYY-MM.jsonl # 按月滚动，保留 12 个月
   memory.md
+  memory-archive/<slug>.md  # 不注入 system prompt，单文件软上限 16 KB，0600
   audit.jsonl      # 临时权限审计，0600
   wechat/
     creds.json      # 登录凭据，0600
@@ -602,7 +615,7 @@ ria.json 和 memory.md 都不存 transcript。
 - 早期实现是 Host 侧由 Session.append 写一个合成的完整 turn（turn 1/step 1）。该 turn 的 assistant/message 会成为 surface 的首个节点，排在真实 turn 的 system/message 之前，DSH session-format v4 校验要求 system/message 是 protected first surface head，因此重启 resume 报 corrupt（`system/message requires a protected first surface head`），已移除。
 - 带 ticketId 的派发 note 由 Host 记录到 ria.json（最多保留 100 条），插件 client 在 `conversation.chat.turnTail` slot 渲染为当前轮次末尾的卡片，标题「任务已派发」/「消息已转交」。卡片不属于 turn process，不会被完成后折叠；不进入模型上下文；通过 GET /api/dispatch-notes?sessionId&turn 读取。早期用 command/run + command/done，卡片被 ChatNodeSeat 当作 process member 折叠，真实 UI 不可见，已移除。
 - 微信 chip 在 Ria 入口标题右侧，点击打开微信弹层。
-- 设置页注册 settings.section：id=ria-settings、order=25、label=Ria；外层是独立的白色卡片（#ffffff、浅灰边框、固定深色文字），不依赖 DSH 主题变量，背景图下仍可读。卡片内有“任务转交提示”“自动暂停推送”“说话风格”“定期反思”四段，均走 POST /settings 持久化。任务转交提示只影响后续 system prompt，不改 worker 历史、工具或预设；自动暂停关闭后非微信消息不再自动暂停；说话风格默认关闭、关闭时零注入；定期反思默认关闭，开启后维护「Ria: 定期反思」计划。
+- 设置页注册 settings.section：id=ria-settings、order=25、label=Ria；外层是独立的白色卡片（#ffffff、浅灰边框、固定深色文字），不依赖 DSH 主题变量，背景图下仍可读。卡片内有“任务转交提示”“自动暂停推送”“记忆预算”“说话风格”“定期反思”五段，均走 POST /settings 持久化。任务转交提示只影响后续 system prompt，不改 worker 历史、工具或预设；自动暂停关闭后非微信消息不再自动暂停；说话风格默认关闭、关闭时零注入；定期反思默认关闭，开启后维护「Ria: 定期反思」计划。
 
 ## 14. 安全
 
@@ -675,6 +688,8 @@ Phase 30：任务看板重做与归档日志改名。看板改为单画布：按
 
 Phase 31：主题看板与 schema v5。ria.json 新增 topics/links，一个工单最多一个 primary；旧 v4 原样加载并在首次写入前备份。新增 ria_topic（create/update/link/unlink/merge/archive/list）与 test/topic-board.mjs。GET /board 增加 projects[]→topics[]→tickets[] 投影与每主题 counts/brief/lastUpdatedAt，GET /board/topic?topicId= 返回主题全部工单与主题内/跨主题依赖边；无 primary 的工单进入每项目合成的未分类桶。看板改为横轴项目、项目内主题瀑布最多 3 列、卡内待执行/执行中/已完成三段、「……」行点击打开主题页、行点击复制与执行者跳转，筛选只灰化不重排。视觉迭代：主题卡 300→240→200px，卡内条目与弹窗共用 160×58 工单卡，超出条数上限时以「……」收尾；主题弹窗改为 2D 画布（每列 4 张、依赖右移、跨主题胶囊跳转），筛选从看板头移入弹窗头、只淡化不重排。
 
+Phase 32：memory 容量预算与 archive。core 改为 Unicode code point 计量（`maxChars` 2400 字符 / `maxEntries` 12 条 / `maxEntryChars` 300 字符），90% 预警、硬超限拒绝且不部分写入；`ria_memory` 增加 `list`、`scope=archive`、`path`、`offset`，archive 存 `stateDir/memory-archive/<slug>.md`（0600、16 KB 软上限、默认 4000 字符分页、绝不注入 prompt）；读侧手工超限只注入完整条目并显式告警；设置页新增「记忆预算」三项即时可调；`lib/reflection.mjs` 的 `memoryBytes` 改为 `memoryChars`，所有大小判断统一走 `lib/text-size.mjs` 的 `measureText()`。
+
 Phase 28：会话改名工具。新增 `ria_title({ sessionId, title })`，走宿主 `sessionController.rename`，只改会话名，不发消息、不建 ticket、不唤醒 worker；预检复用 `sessionProblem`（存在、顶层、未归档、cwd 可用），允许改 Ria 自己，subagent 一律拒绝；空标题或宿主 `session/title-invalid` 映射为 `title_invalid` 并保留宿主原始 message；成功返回 accepted title 与已知 previous。`ria_spawn` 的 title 设置复用同一 helper，返回值语义不变（失败仍只写 `titleError`）。
 
 ## 16. 验收
@@ -687,7 +702,7 @@ Phase 28：会话改名工具。新增 `ria_title({ sessionId, title })`，走�
 6. 重启后 pending request 原 requestId 重试；已送达 ticket 用新 requestId 继续。
 7. 同一 ticket 连续自动恢复最多 3 次；达到上限后标 blocked 并通知，不静默跳过；ticket 更新、成功派发或 reopen 清零 recovery.count。
 7.1. startup recovery 抛错时向 Ria 发送失败通知，不只写日志。
-8. memory.md 跨重启保留；冷启动注入；remember/forget 可用；当前消息优先。
+8. memory.md 跨重启保留；冷启动注入；remember/forget 可用；core 按 2400 字符 / 12 条 / 单条 300 字符预算，90% 预警，超限拒绝且不部分写入；archive 按需读取、不注入；当前消息优先。
 9. 没有 lessons/FTS5；经验默认只在上下文，用户给路径才写文件。
 10. 微信进程内运行，无 bridge 端口/socket；消息进 Ria，回复回微信。
 11. 微信积压超过 10 条时只发最后 10 条并提示。
@@ -726,6 +741,8 @@ Phase 28：会话改名工具。新增 `ria_title({ sessionId, title })`，走�
 
 44. ria_title 只改会话名：不发消息、不建 ticket、不唤醒 worker、不改其它状态；预检覆盖 session_missing/not_top_level/session_archived/workspace_missing，subagent 拒绝，允许改 Ria 自己；空标题或宿主 `session/title-invalid` 返回 title_invalid 并带宿主原始 message；成功返回 accepted title，已知 previous 时附上。
 
+45. memory.md 的 core 预算按 Unicode code point 计：默认 2400 字符 / 12 条 / 单条 300 字符；任一项超限拒绝写入且不部分写入，错误列当前值、上限、超出量、超限 key 和 archive 路径，并写 `No changes were made.`；90% 只预警；手工超限时只注入完整条目并显式告警；archive 存在 `stateDir/memory-archive/<slug>.md`，默认 4000 字符分页读取、不自动删除、不注入 prompt；三项预算可在设置页调整，应用后下一轮生效。
+
 ## 17. 已确认
 
 - ticket 单 executor；广播建多个 ticket。
@@ -753,7 +770,7 @@ Phase 28：会话改名工具。新增 `ria_title({ sessionId, title })`，走�
 | 自动恢复误判 | 先 read；连续最多 3 次；达到上限标 blocked 并通知 |
 | 恢复额度被无关重启耗尽 | ticket 更新或成功派发清零 recoveryCount；达到上限仍可见可处理 |
 | 启动恢复失败无感知 | catch 中除日志外，再向 Ria 发失败通知；通知异常单独记录 |
-| memory 过期/膨胀 | 当前消息优先；4KB 上限；用户可删 |
+| memory 过期/膨胀 | 当前消息优先；2400 字符/12 条/单条 300 字符预算；90% 预警；超限拒绝并给 archive 迁移路径；archive 不注入；用户可删 |
 | 微信全量同步 | 已接受；后续可做 turn 关联 |
 | 微信长连接绑 DSH 进程 | 重启加载 creds 重连，通常不扫码 |
 | 微信文件上传协议随网页版变化 | 规则命中时尝试上传/发 appmsg；任一步失败回退文本并提示 |
@@ -789,7 +806,7 @@ Phase 28：会话改名工具。新增 `ria_title({ sessionId, title })`，走�
 
 ## 19. 总结
 
-全局一个 Ria，PTC preset（agentPreset=ptc）+ 管理者 prompt、memory.md 和 15 个工具；模型通过 run_code SDK 调用工具；用 ticket 管理谁做什么，request 就是普通会话消息；通过可开关的 agent system prompt section 提供通用防误发提示（简短英文，不提具体会话），任务消息不加前缀；派发必须提供 note，Host 记录后由 client 在 turn 末尾显示卡片，并把同一段 note 以“📌 任务已派发”文本同步微信，然后结束本轮；worker idle 时自动唤醒 Ria（只读事件、30 秒节流）；重启按未收敛 ticket 继续；派发卡片、微信镜像和恢复提示走副作用 outbox，至少一次、失败退避、failed 可见；blocked + waitingOn=user 的 ticket 可带结构化 attention，说明在等用户回答什么；微信客户端进程内运行，长回复/复杂 Markdown 自动转 .md 文件；推送可暂停（手动或按消息通道自动切换），暂停只停出站、连接保持；新建会话在 blank 状态显示一张 client 侧欢迎卡片（不写日志、不调用模型）；微信图片双向可用：出站把 assistant 文本里的本机 Markdown 图片作为图片发出；入站下载微信原图、校验落盘后以“文字+图片”投给 Ria，失败仍投文字并附原因。
+全局一个 Ria，PTC preset（agentPreset=ptc）+ 管理者 prompt、带字符/条数预算与 archive 的 memory.md 和 15 个工具；模型通过 run_code SDK 调用工具；用 ticket 管理谁做什么，request 就是普通会话消息；通过可开关的 agent system prompt section 提供通用防误发提示（简短英文，不提具体会话），任务消息不加前缀；派发必须提供 note，Host 记录后由 client 在 turn 末尾显示卡片，并把同一段 note 以“📌 任务已派发”文本同步微信，然后结束本轮；worker idle 时自动唤醒 Ria（只读事件、30 秒节流）；重启按未收敛 ticket 继续；派发卡片、微信镜像和恢复提示走副作用 outbox，至少一次、失败退避、failed 可见；blocked + waitingOn=user 的 ticket 可带结构化 attention，说明在等用户回答什么；微信客户端进程内运行，长回复/复杂 Markdown 自动转 .md 文件；推送可暂停（手动或按消息通道自动切换），暂停只停出站、连接保持；新建会话在 blank 状态显示一张 client 侧欢迎卡片（不写日志、不调用模型）；微信图片双向可用：出站把 assistant 文本里的本机 Markdown 图片作为图片发出；入站下载微信原图、校验落盘后以“文字+图片”投给 Ria，失败仍投文字并附原因。
 
 ## 20. 实现状态
 

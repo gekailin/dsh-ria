@@ -46,6 +46,8 @@
 | `ria_reflect_read_context` | schedule | 0 | 本轮未接 schedule，返回空视图 |
 | `ria_reflect_report` | 5,950 B 报告 | 187 | 只返回 path/bytes/sha256；报告正文由模型写 |
 
+> 试跑记录里的 `memoryBytes` 是当时的字段名；实现后已改为 `memoryChars`，按 Unicode code point 计字符。
+
 ### read_session（summary / full）
 
 | 会话 | summary 字符 | summary 条目 | stats（messages/toolCalls/toolResults/thoughts） | full 字符 | full truncated |

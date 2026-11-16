@@ -7,7 +7,8 @@ DSH_HOME/state/ria/
   ria.json       # riaSessionId、riaPreset、tickets、pending deliveries、grants、settings、dispatchNotes
   outbox.json    # 副作用待投递/失败记录（dispatch note、微信镜像），0600
   memory.md       # 用户偏好和长期记忆
-  audit.jsonl     # 临时权限审计，0600
+  audit.jsonl     # 临时权限与审批决定审计，0600
+  approval-diagnostics.jsonl  # 到达但未匹配 active 工单的审批诊断，0600
   wechat/creds.json        # 微信文件传输助手登录凭据，0600
   wechat/state.json        # 已处理消息 id、Outbound 队列、暂停状态与时间
   wechat-claw/creds.json   # 微信 Claw bot_token、accountId、baseUrl、userId，0600

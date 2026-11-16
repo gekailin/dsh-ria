@@ -299,5 +299,31 @@ await withFixture({ approvalAutomation: true }, async fixture => {
   assert.equal(classifyApproval({ toolName: 'run_code', args: { code: "import fs from 'node:fs'; fs.writeFileSync('a','b')" }, cwd: '/work' }).risk, 'high')
 }
 
+// Requests Ria does not own fall through and leave one diagnostic line so a
+// future "approval never reached Ria" report can be traced from stateDir.
+{
+  const fixture = await createFixture({ approvalAutomation: true })
+  try {
+    const result = await fixture.emit(
+      'approval/request',
+      request('session-unknown', 'bash', 'call_unknown', 'not ours'),
+      async () => 'unavailable',
+    )
+    assert.equal(result, 'unavailable')
+    const lines = readFileSync(join(fixture.stateDir, 'approval-diagnostics.jsonl'), 'utf8')
+      .split(String.fromCharCode(10))
+      .filter(Boolean)
+      .map(line => JSON.parse(line))
+    assert.equal(lines.length, 1)
+    assert.equal(lines[0].event, 'approval_unhandled')
+    assert.equal(lines[0].reason, 'no_active_ticket')
+    assert.equal(lines[0].agentId, 'session-unknown')
+    assert.equal(lines[0].toolName, 'bash')
+    assert.equal(lines[0].callId, 'call_unknown')
+  } finally {
+    fixture.cleanup()
+  }
+}
+
 
 console.log('approval automation ok')

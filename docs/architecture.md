@@ -107,7 +107,7 @@ outbox 与 `ria.json` 不是同一个事务：派发已被接受、但 outbox �
 
 ### 4.4 审批自动化
 
-插件监听 `approval/request`，用 `lib/approval-policy.mjs` 对缓存的工具参数做保守分类。低风险直接返回 `allowed-once`（仅本次），硬拒绝直接 `rejected`；中/高风险把工单迁到 `blocked + waitingOn=approval`，写 attention，唤醒 Ria，并等待 `ria_approval_decision`。Ria 只能 allow 中/低风险；高风险只能 `ask-user` 或 `deny`。2 分钟无决定、唤醒失败或审计失败一律按拒绝处理并通知用户。`ask-user` 调用宿主原生 UI，用户的结果同样入审计。审批结束、abort 或 TTL 到期后，工单从 `blocked` 经 `open` 回到 `working`；重启时清理已失效的审批引用，避免永久卡住。关闭设置开关后回到只读观察 + 原生 UI 的旧行为。
+插件监听 `approval/request`，用 `lib/approval-policy.mjs` 对缓存的工具参数做保守分类。监听器以 `prepend` 注册：宿主 web bundle 先加载的 `dsh-api-remotes` 会把审批转发给浏览器并等用户点击，且不调用 `next()`；普通注册（append）会让转发器先拿到请求，Ria 永远收不到。prepend 后 Ria 先判断自己的 active 工单，不匹配再用 `next()` 放回宿主原生 UI。低风险直接返回 `allowed-once`（仅本次），硬拒绝直接 `rejected`；中/高风险把工单迁到 `blocked + waitingOn=approval`，写 attention，唤醒 Ria，并等待 `ria_approval_decision`。Ria 只能 allow 中/低风险；高风险只能 `ask-user` 或 `deny`。2 分钟无决定、唤醒失败或审计失败一律按拒绝处理并通知用户。`ask-user` 调用宿主原生 UI，用户的结果同样入审计。审批结束、abort 或 TTL 到期后，工单从 `blocked` 经 `open` 回到 `working`；重启时清理已失效的审批引用，避免永久卡住。关闭设置开关后回到只读观察 + 原生 UI 的旧行为。到达但未归 Ria 处理的请求会向 `approval-diagnostics.jsonl` 写一行 `{event:"approval_unhandled",reason,agentId,toolName,callId?}`，用于排查「worker 有 approval/asked、Ria 侧却没有任何记录」。
 
 ### 4.5 依赖与忙碌
 
@@ -130,7 +130,8 @@ outbox 与 `ria.json` 不是同一个事务：派发已被接受、但 outbox �
 | `reflections/` | 定期反思的 notes 与运行账本；P2 wiki 也规划在这里（尚未实现） |
 | `wechat-inbound/` / `wechat-claw-inbound/` | 微信入站图片原图；30 天 / 500 个上限 |
 | `wechat/`、`wechat-claw/`、`qq-bot/` | 各通道凭据、游标与暂停状态 |
-| `audit.jsonl` | 临时权限（grant）审计 |
+| `audit.jsonl` | 临时权限（grant）与审批决定审计 |
+| `approval-diagnostics.jsonl` | 到达但未归 Ria 处理的 approval/request 诊断（agentId、toolName、callId、reason） |
 
 不保存聊天 transcript；原始会话日志在 DSH 的 `sessions` 下。
 

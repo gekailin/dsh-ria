@@ -18,7 +18,7 @@ npm test
 | 派发与 worker | `spawn`、`workspace-spawn`、`workspace-reconcile`、`model`、`title`、`recent-workers`、`worker-idle`、`working-guard`、`dispatch-confirm`、`attachments` | 顶层 worker 创建/改模型/改名、最近 worker、idle 唤醒、防误发、附件预检 |
 | 看板与主题 | `board`、`topic-board`、`board-ask`、`board-events`、`topic-suggest` | 瀑布布局、主题网格与筛选、搜索索引、`/ask` 两种来源、SSE 变更广播与断线清理、suggest 打分与 v4→v5 迁移 |
 | 通道 | `wechat`、`wechat-pause`、`wechat-file`、`wechat-image`、`wechat-image-inbound`、`wechat-fold`、`wechat-claw-*`、`qq-bot-typing`、`channels`、`inbound-delivery`、`channel-pause-notices` | 三通道扫码/入站去重/暂停、长回复转 .md、图片与文件上下行、typing、忙碌 steer 与空闲 queue 回退 |
-| 审批与权限 | `approvals`、`approval-automation`、`grants`、`approval-visibility` | 审批捕获与清理、风险分类与代批（低风险放行/硬拒绝/中风险 Ria 裁决/ask-user/超时/审计失败 fail closed/参数脱敏）、临时 grant 的过期/恢复/审计、审批可见性 |
+| 审批与权限 | `approvals`、`approval-automation`、`approval-ordering`、`grants`、`approval-visibility` | 审批捕获与清理、风险分类与代批（低风险放行/硬拒绝/中风险 Ria 裁决/ask-user/超时/审计失败 fail closed/参数脱敏）、真实 cordis waterfall 下的 prepend 顺序与未匹配诊断、临时 grant 的过期/恢复/审计、审批可见性 |
 | 反思与风格 | `reflection`、`reflection-run`、`reflection-schedule`、`reflection-tools-lossless`、`reflection-front-matter`、`reflection-report-sections`、`reflection-settings-ui`、`reflection-naming`、`voice-style`、`memory-budget` | 只读 worker 与工具、一次性/单并发/幂等、报告结构、设置页、说话风格、记忆预算与归档 |
 | 其他 | `outbox`、`startup`、`dispatch-guard` | outbox 退避/去重、启动恢复、system prompt section 安装与卸载 |
 

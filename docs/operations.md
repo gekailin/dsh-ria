@@ -144,4 +144,6 @@ Host 启动后延迟 1.5 秒：
 
 `allow` 只对当前这次调用生效，不会改变 sandbox 或 approval policy。超时、唤醒失败、审计写入失败都按拒绝处理（fail closed），并给用户发一条结果通知。`ask-user` 会调用宿主的原生审批 UI，用户最终决定同样写入审计。审批结束、abort 或超时后工单从 `blocked` 经 `open` 回到 `working`；多个审批同时挂在一个工单时，等最后一个结束再恢复。审批队列只在内存中，重启后 startup 会把没有对应 pending 的 blocked+approval 工单恢复为 working，不会永久卡住。
 
+审批监听器以 prepend 注册，排在宿主 web 的浏览器转发器之前；不匹配 active 工单的请求会调用 `next()`，仍由原生 UI 决定。若某个 `approval/request` 到了 Ria 但没有匹配到 active 工单，会在 `stateDir/approval-diagnostics.jsonl` 留一行诊断（agentId、toolName、callId、原因），排查「worker 日志有 approval/asked、Ria 侧无记录」时先看这个文件。
+
 关闭设置里的「审批自动代批」后，回到旧行为：插件只观察、把工单标成 blocked 并通知，由用户在 worker 会话或原生 UI 决定，15 分钟 TTL 后恢复；`ria_approval` 可查看，`ria_approval_decision` 会返回 `approval_automation_disabled`。

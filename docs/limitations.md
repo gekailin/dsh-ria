@@ -27,7 +27,7 @@
 - note 卡片已在隔离 DSH 的真实 Web UI 中验证渲染：`[data-ria-dispatch-note="ticket"]` 出现在轮次末尾，标题“任务已派发”。该截图用手工写入 ria.json 的 note 验证 UI；真实 `ria_request` 写入路径由 smoke 覆盖。截图：`docs/assets/screenshots/ui-dispatch-note.png`。
 - note 只保留最近 100 条；更早的卡片不会再显示。
 - note 缺失/空白/超长是 Host 硬报错；note 展示失败只记 warn，不阻断已经成功的派发。
-- 审批自动化的判断链路只在单元测试和 fixture 中验证过（模拟 approval/request、真实 observer/policy/decision/audit），还没有在真实 worker 会话里触发；首次使用时需要确认 DSH 的 sandbox/approval 事件投影、agent.followup 唤醒和恢复行为。
+- 审批自动化的判断链路已在隔离 DSH_HOME（独立 profile、127.0.0.1:3091、真实 worker session 与真实 ApprovalService）中跑通：`approval_note` delivered、Ria 收到 `source.kind=ria-approval` 唤醒、`ria_approval` 返回 pending、`ria_approval_decision allow` → `allowed-once`、`audit.jsonl` actor=ria；生产 profile 仍需同步安装副本并重启后才会加载。
 - “近期 worker”只记录 Ria 成功派发过的会话；用户手工在其他会话里做的使用不会计入。挑选本身是 prompt 行为约束，不是 Host 强制，模型仍可能违背；尚未用真实模型验证。
 - DSH 的 sandbox override 无法清除；恢复会写回原 effective mode，因此可能留下一个同值 override。
 - 工单依赖由 Host 计算并写持久信号，但实际派发仍只由 Ria 通过 ria_request 完成；没有第二调度器，Ria 不响应 [Queue ready] 时工单会停在 ready。
@@ -44,6 +44,7 @@
 - Ria 可以读 Session、发消息、建任务；这些能力只在用户明确要求时使用。
 - `approval/request` 监听器在自动代批开启时会返回审批结果：低风险 `allowed-once`、硬拒绝 `rejected`、中/高风险由 Ria 在 2 分钟内裁决；超时、唤醒失败、审计失败一律 `rejected`。关闭开关后回到只读 + `next()`。
 - 自动代批只放行单次调用（`allowed-once`），不写 sandbox override、不改 approval policy；`ask-user` 才进入原生 UI。
+- `approval/request` 监听器必须 prepend，否则宿主 web 的 UI 转发器会先消费请求且不调用 `next()`；未匹配 active 工单的请求只记 `approval-diagnostics.jsonl` 后回落到原生 UI。
 - `agent/status` 监听器只读 worker 的 id 和状态，只向 Ria 发通知；不 resume、不写 worker。
 - 临时权限只写当前 session 的 sandbox/mode 和 approval policy 投影，不改全局默认，也不改 worker 的 tools/prompt/preset；所有变更写入 audit.jsonl 0600。审批决定也写同一份 audit.jsonl，参数摘要做脱敏。
 - 删除 Ria 不会自动删除工单、memory 和 Workspace；需要时手动清理。

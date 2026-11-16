@@ -158,8 +158,10 @@ try {
   assert.equal(cardB.summaryAuto, true)
   assert.equal(cardA.brief, 'Updated brief')
   assert.equal(cardA.summaryAuto, false)
+  assert.equal(project.counts.total, project.topics.reduce((sum, topic) => sum + topic.counts.total, 0), 'the project header sums every topic, including unclassified')
   const riaProject = board.projects.find(item => item.kind === 'ria')
   assert.ok(riaProject, 'Ria project exists')
+  assert.equal(riaProject.counts.total, riaProject.topics.reduce((sum, topic) => sum + topic.counts.total, 0), 'the Ria project header sums its unclassified bucket')
   const unclassified = riaProject.topics.find(topic => topic.unclassified)
   assert.ok(unclassified, 'unclassified bucket exists')
   assert.equal(unclassified.title, '未分类')
@@ -256,7 +258,7 @@ try {
   const start = source.indexOf('/* board-layout:start */')
   const end = source.indexOf('/* topic-board:end */')
   assert.ok(start >= 0 && end > start, 'client board markers')
-  const api = new Function(source.slice(start, end) + '\nreturn { boardLayout, boardCanOpenSession, topicWaterfall, topicBoardLayout, topicTicketLayout, topicCardHeight, topicSectionOmitted, topicTicketMatchesFilter, topicClockText, topicDayKey, topicDayLabel, topicTimelineGroups, topicFilterOutside, topicFilterBubbleState, topicFilterScrollTop, topicBriefText, topicMatchesQuery, ticketSearchResults, ticketMatchesQuery, ticketSearchRank, TICKET_SEARCH_LIMIT, TOPIC_CARD_WIDTH, TOPIC_CARD_GAP, TOPIC_PROJECT_GAP, TOPIC_TICKET_INSET, TOPIC_FILTERS, TOPIC_TIMELINE_MAX_HEIGHT, TOPIC_TIMELINE_TIME_WIDTH, TOPIC_FILTER_BUBBLE_MARGIN };')()
+  const api = new Function(source.slice(start, end) + '\nreturn { boardLayout, boardCanOpenSession, topicWaterfall, topicBoardLayout, topicTicketLayout, topicTicketTerminal, topicGridColumns, projectTicketTotal, topicCardHeight, topicSectionOmitted, topicTicketMatchesFilter, topicClockText, topicFilterOutside, topicFilterBubbleState, topicFilterScrollTop, topicBriefText, topicMatchesQuery, ticketSearchResults, ticketMatchesQuery, ticketSearchRank, TICKET_SEARCH_LIMIT, TOPIC_CARD_WIDTH, TOPIC_CARD_GAP, TOPIC_PROJECT_GAP, TOPIC_TICKET_INSET, TOPIC_MAX_COLUMNS, TOPIC_FILTERS, TOPIC_DEFAULT_FILTER, TOPIC_GRID_MAX_HEIGHT, TOPIC_GRID_GAP, TOPIC_GRID_MIN_CARD_WIDTH, TOPIC_FILTER_BUBBLE_MARGIN };')()
   const card = (topicId, lastUpdatedAt, counts, extra = {}) => ({
     topicId,
     title: topicId,
@@ -273,8 +275,9 @@ try {
     card('t3', 10, idleCounts),
     card('t4', 5, idleCounts),
   ]
-  const flow = api.topicWaterfall(topics, 3)
-  assert.equal(flow.columns, 3)
+  const flow = api.topicWaterfall(topics, api.TOPIC_MAX_COLUMNS)
+  assert.equal(api.TOPIC_MAX_COLUMNS, 2, 'a project never grows past two masonry columns')
+  assert.equal(flow.columns, 2)
   assert.deepEqual(flow.topics.map(topic => topic.topicId), ['t1', 't2', 't3', 't4'])
   const p1 = flow.positions.get('t1')
   const p2 = flow.positions.get('t2')
@@ -282,20 +285,21 @@ try {
   const p4 = flow.positions.get('t4')
   assert.equal(api.TOPIC_CARD_WIDTH, 200)
   assert.equal(api.TOPIC_TICKET_INSET, 4, '160px ticket leaves 20px margins inside a 200px card')
-  assert.equal(api.TOPIC_TIMELINE_MAX_HEIGHT, 'min(70vh, 640px)')
-  assert.equal(api.TOPIC_TIMELINE_TIME_WIDTH, 74)
+  assert.equal(api.TOPIC_GRID_MAX_HEIGHT, 'min(72vh, 680px)')
+  assert.equal(api.TOPIC_GRID_GAP, 12)
+  assert.equal(api.TOPIC_GRID_MIN_CARD_WIDTH, 240)
   assert.equal(p1.column, 0)
   assert.equal(p2.column, 1)
-  assert.equal(p3.column, 2)
+  assert.equal(p3.column, 0, 'third card returns to the shortest column')
   assert.equal(p1.y, 0)
   assert.equal(p2.y, 0)
-  assert.equal(p3.y, 0)
-  assert.equal(p4.column, 0, 'fourth card returns to the shortest column')
-  assert.equal(p4.y, p1.height + api.TOPIC_CARD_GAP)
-  assert.equal(flow.width, 200 * 3 + 14 * 2, 'three 200px cards plus two gaps')
+  assert.equal(p3.y, p1.height + api.TOPIC_CARD_GAP)
+  assert.equal(p4.column, 1)
+  assert.equal(p4.y, p2.height + api.TOPIC_CARD_GAP)
+  assert.equal(flow.width, 200 * 2 + 14, 'two 200px cards plus one gap')
 
-  const short = api.topicWaterfall([card('only', 1, idleCounts)], 3)
-  assert.equal(short.columns, 1, 'a one-topic project does not reserve three columns')
+  const short = api.topicWaterfall([card('only', 1, idleCounts)], api.TOPIC_MAX_COLUMNS)
+  assert.equal(short.columns, 1, 'a one-topic project occupies a single column')
 
   const empty = card('plain', 1, idleCounts)
   const busy = card('busy', 1, { total: 9, open: 5, working: 4, blocked: 2, done: 0 })
@@ -325,49 +329,60 @@ try {
   assert.equal(projects.projects[0].positions.get('a').y, 48 + 18)
 
   const day = (date, hour, minute = 0) => new Date(2026, 10, date, hour, minute, 0).getTime()
-  const noon = day(16, 12)
   assert.equal(api.topicClockText(day(16, 11, 8)), '11-16 11:08')
-  assert.equal(api.topicDayKey(day(16, 11, 8)), '2026-11-16')
-  assert.equal(api.topicDayLabel(day(16, 9), noon), '今天')
-  assert.equal(api.topicDayLabel(day(15, 23), noon), '昨天')
-  assert.equal(api.topicDayLabel(day(14, 9), noon), '2026-11-14')
 
-  const timelineTickets = [
-    { ticketId: 'today_new', createdAt: day(16, 11), dependsOn: [] },
-    { ticketId: 'today_mid', createdAt: day(16, 10), dependsOn: [] },
-    { ticketId: 'today_old', createdAt: day(16, 9), dependsOn: [] },
-    { ticketId: 'yesterday_new', createdAt: day(15, 18), dependsOn: [] },
-    { ticketId: 'yesterday_mid', createdAt: day(15, 14), dependsOn: [] },
-    { ticketId: 'yesterday_old', createdAt: day(15, 8), dependsOn: [] },
-    { ticketId: 'older_new', createdAt: day(14, 17), dependsOn: [] },
-    { ticketId: 'older_mid', createdAt: day(14, 12), dependsOn: [] },
-    { ticketId: 'older_old', createdAt: day(14, 9), dependsOn: [] },
+  const layoutTickets = [
+    { ticketId: 'unfinished_new', status: 'open', createdAt: day(16, 11), dependsOn: [] },
+    { ticketId: 'unfinished_mid', status: 'working', createdAt: day(16, 10), dependsOn: [] },
+    { ticketId: 'unfinished_old', status: 'blocked', createdAt: day(15, 9), dependsOn: [] },
+    { ticketId: 'finished_new', status: 'done', createdAt: day(16, 12), dependsOn: [] },
+    { ticketId: 'finished_failed', status: 'failed', createdAt: day(15, 18), dependsOn: [] },
+    { ticketId: 'finished_cancelled', status: 'cancelled', createdAt: day(14, 9), dependsOn: [] },
   ]
-  const timeline = api.topicTicketLayout(timelineTickets, noon)
-  assert.deepEqual(timeline.tickets.map(ticket => ticket.ticketId), [
-    'today_new', 'today_mid', 'today_old',
-    'yesterday_new', 'yesterday_mid', 'yesterday_old',
-    'older_new', 'older_mid', 'older_old',
-  ], 'the whole topic is one createdAt-descending list')
-  assert.deepEqual(timeline.groups.map(group => group.label), ['今天', '昨天', '2026-11-14'])
-  assert.deepEqual(timeline.groups.map(group => group.tickets.length), [3, 3, 3])
-  assert.equal(timeline.positions, undefined, 'the timeline no longer uses column positions')
-  assert.equal(timeline.edges, undefined, 'the timeline no longer draws dependency edges')
-  assert.equal(timeline.bands, undefined, 'the timeline no longer has a lane band')
-  assert.equal(api.topicTimelineGroups(timelineTickets, noon).length, 3)
+  const layout = api.topicTicketLayout(layoutTickets)
+  assert.deepEqual(layout.tickets.map(ticket => ticket.ticketId), [
+    'unfinished_new', 'unfinished_mid', 'unfinished_old',
+    'finished_new', 'finished_failed', 'finished_cancelled',
+  ], 'unfinished always precedes terminal, even when a terminal ticket is newer')
+  assert.deepEqual(layout.groups.map(group => group.key), ['unfinished', 'finished'])
+  assert.deepEqual(layout.groups.map(group => group.label), ['未完成', '已完成与已结束'])
+  assert.deepEqual(layout.groups.map(group => group.tickets.length), [3, 3])
+  assert.equal(layout.groups[0].hint, '新的在上面')
+  assert.equal(layout.positions, undefined, 'the grid does not compute column positions')
+  assert.equal(layout.edges, undefined, 'the grid does not draw dependency edges')
 
   const sameStamp = api.topicTicketLayout([
-    { ticketId: 'ticket_b', createdAt: 5, dependsOn: [] },
-    { ticketId: 'ticket_a', createdAt: 5, dependsOn: [] },
-  ], noon)
+    { ticketId: 'ticket_b', status: 'open', createdAt: 5, dependsOn: [] },
+    { ticketId: 'ticket_a', status: 'open', createdAt: 5, dependsOn: [] },
+  ])
   assert.deepEqual(sameStamp.tickets.map(ticket => ticket.ticketId), ['ticket_a', 'ticket_b'], 'equal createdAt falls back to ticketId')
 
   const dependent = api.topicTicketLayout([
-    { ticketId: 'ticket_old', createdAt: 1, dependsOn: [] },
-    { ticketId: 'ticket_new', createdAt: 2, dependsOn: ['ticket_old'] },
-  ], noon)
-  assert.deepEqual(dependent.tickets.map(ticket => ticket.ticketId), ['ticket_new', 'ticket_old'], 'a downstream ticket stays in time order instead of moving right')
-  assert.equal(Object.prototype.hasOwnProperty.call(dependent, 'positions'), false)
+    { ticketId: 'ticket_blocked', status: 'open', createdAt: 1, dependsOn: ['ticket_dependency'] },
+    { ticketId: 'ticket_dependency', status: 'open', createdAt: 2, dependsOn: [] },
+  ])
+  assert.deepEqual(dependent.tickets.map(ticket => ticket.ticketId), ['ticket_dependency', 'ticket_blocked'], 'dependencies do not reorder the grid')
+
+  assert.equal(api.topicTicketTerminal({ status: 'done' }), true)
+  assert.equal(api.topicTicketTerminal({ status: 'cancelled' }), true)
+  assert.equal(api.topicTicketTerminal({ status: 'forked' }), false)
+  assert.equal(api.topicTicketTerminal({}), false)
+  assert.equal(api.topicGridColumns(848), 3, 'the 920px modal fits three columns')
+  assert.equal(api.topicGridColumns(1110), 3)
+  assert.equal(api.topicGridColumns(600), 2, 'a narrow window falls back to two columns')
+  assert.equal(api.topicGridColumns(240), 2)
+  assert.equal(api.topicGridColumns(0), 3, 'an unmeasured width defaults to three columns')
+  assert.equal(api.topicGridColumns(undefined), 3)
+
+  assert.equal(api.projectTicketTotal({
+    topics: [
+      { counts: { total: 27 } },
+      { counts: { total: 6 } },
+      { title: 'unclassified', counts: { total: 98 } },
+    ],
+  }), 131, 'the project header sums every topic total, including the unclassified bucket')
+  assert.equal(api.projectTicketTotal({}), 0, 'a project without topics counts zero tickets')
+  assert.equal(api.projectTicketTotal({ counts: { total: 5 }, topics: [] }), 0, 'the header does not fall back to a stale project total')
 
   const topCard = { ticketId: 'top', rect: { top: -100, bottom: -42 } }
   const hiddenBottom = { ticketId: 'bottom-far', rect: { top: 700, bottom: 758 } }
@@ -383,20 +398,28 @@ try {
   assert.equal(outside.bottomTargetId, 'bottom-near', 'the nearest bottom card is the target')
   assert.equal(api.topicFilterBubbleState([topCard, visible], viewport, 'working').top, 1)
   assert.equal(api.topicFilterBubbleState([visible], viewport, 'working'), null, 'nothing hidden means no bubble')
-  assert.equal(api.topicFilterBubbleState([topCard], viewport, 'all'), null, 'the all filter never shows bubbles')
+  assert.equal(api.topicFilterBubbleState([topCard], viewport, 'all').top, 1, 'the all filter still reports hidden cards')
   assert.equal(api.TOPIC_FILTER_BUBBLE_MARGIN, 16)
   assert.equal(api.topicFilterScrollTop(topCard, viewport, 500, 'top'), 384)
   assert.equal(api.topicFilterScrollTop(nearBottom, viewport, 500, 'bottom'), 654)
   assert.equal(api.topicFilterScrollTop({ ticketId: 'above', rect: { top: -100, bottom: -42 } }, viewport, 0, 'top'), 0, 'the scroll target never goes negative')
 
-  assert.deepEqual(api.TOPIC_FILTERS.map(item => item.label), ['全部', '进行中', '卡住', '空闲'])
-  assert.equal(api.topicTicketMatchesFilter({ status: 'open' }, 'all'), true)
+  assert.deepEqual(api.TOPIC_FILTERS.map(item => item.label), ['未完成', '执行中', '待执行', '全部'])
+  assert.equal(api.TOPIC_DEFAULT_FILTER, 'unfinished')
+  for (const status of ['intake', 'open', 'working', 'blocked', 'forked']) {
+    assert.equal(api.topicTicketMatchesFilter({ status }, 'unfinished'), true, status + ' is unfinished')
+  }
+  for (const status of ['done', 'failed', 'cancelled']) {
+    assert.equal(api.topicTicketMatchesFilter({ status }, 'unfinished'), false, status + ' is terminal')
+  }
   assert.equal(api.topicTicketMatchesFilter({ status: 'working' }, 'working'), true)
-  assert.equal(api.topicTicketMatchesFilter({ status: 'blocked' }, 'blocked'), true)
-  assert.equal(api.topicTicketMatchesFilter({ status: 'done' }, 'idle'), true)
-  assert.equal(api.topicTicketMatchesFilter({ status: 'failed' }, 'idle'), true)
-  assert.equal(api.topicTicketMatchesFilter({ status: 'open' }, 'idle'), false)
-  assert.equal(api.topicTicketMatchesFilter({ status: 'working' }, 'blocked'), false)
+  assert.equal(api.topicTicketMatchesFilter({ status: 'open' }, 'working'), false)
+  assert.equal(api.topicTicketMatchesFilter({ status: 'intake' }, 'pending'), true)
+  assert.equal(api.topicTicketMatchesFilter({ status: 'open' }, 'pending'), true)
+  assert.equal(api.topicTicketMatchesFilter({ status: 'blocked' }, 'pending'), false)
+  assert.equal(api.topicTicketMatchesFilter({ status: 'working' }, 'pending'), false)
+  assert.equal(api.topicTicketMatchesFilter({ status: 'done' }, 'all'), true)
+  assert.equal(api.topicTicketMatchesFilter({ status: 'cancelled' }, 'all'), true)
 
   assert.equal(api.boardCanOpenSession({ executor: 'session-worker' }), true)
   assert.equal(api.boardCanOpenSession({ executor: 'self' }), false)
@@ -514,21 +537,29 @@ try {
   assert.match(source, /"等拍板"/)
   assert.doesNotMatch(source, /TopicTicketRow|TOPIC_ROW_HEIGHT|data-ria-topic-ticket|compact: true/)
   assert.doesNotMatch(source, /data-ria-topic-expand/)
+  assert.ok(source.includes("projectTicketTotal(project)"), "the project header renders the topic sum, not a stale project total")
 
   assert.match(modal, /TOPIC_FILTERS\.map\(function \(item\)/)
   assert.match(modal, /data-ria-topic-filter/)
   assert.match(modal, /muted: !topicTicketMatchesFilter\(ticket, filter\)/)
   assert.match(modal, /topicTicketLayout\(tickets\)/)
   assert.match(modal, /timeline\.groups\.map\(function \(group, groupIndex\)/)
-  assert.match(modal, /TopicTimelineDayHeader/)
-  assert.match(modal, /TimelineTicketCard/)
+  assert.match(modal, /TopicTicketSectionHeader/)
+  assert.match(modal, /TopicGridTicketCard/)
+  assert.match(modal, /topicGridColumns\(gridWidth\)/)
+  assert.match(modal, /"data-ria-ticket-grid": group\.key/)
+  assert.match(modal, /gridTemplateColumns: "repeat\(" \+ gridColumns/)
+  assert.doesNotMatch(modal, /isLast/)
   assert.match(modal, /insideDeps: insideFor\(ticket\.ticketId\)/)
   assert.match(modal, /onRevealTicket: revealTicket/)
-  assert.match(modal, /"data-ria-topic-timeline": topicId/)
-  assert.match(modal, /maxHeight: TOPIC_TIMELINE_MAX_HEIGHT/)
+  assert.match(modal, /"data-ria-topic-scroll": topicId/)
+  assert.match(modal, /maxHeight: TOPIC_GRID_MAX_HEIGHT/)
+  assert.match(modal, /gridWidth/)
+  assert.match(source, /new ResizeObserver\(measureWidth\)/)
   assert.doesNotMatch(modal, /layout\.edges|layout\.positions|layout\.bands|markerId|data-ria-topic-band/)
   assert.match(modal, /ref: scrollRef/)
   assert.match(modal, /data-ria-filter-bubble/)
+  assert.doesNotMatch(modal, /filter === "all" \|\| !filterBubbles/)
   assert.match(modal, /revealFiltered\(direction\)/)
   assert.match(modal, /behavior: "smooth"/)
   assert.match(modal, /highlighted: highlightId === ticket\.ticketId/)
@@ -538,8 +569,9 @@ try {
   assert.match(modal, /width: "min\(920px, 94vw\)"/)
   assert.match(source, /"data-ria-ticket-dependency"/)
   assert.match(source, /topicClockText\(ticket\.createdAt \|\| ticket\.updatedAt\)/)
-  assert.match(source, /"data-ria-timeline-day": group\.key/)
-  assert.match(source, /"按创建时间从新到旧/)
+  assert.match(source, /"data-ria-ticket-section": group\.key/)
+  assert.match(source, /"未完成在前，按创建时间从新到旧/)
+  assert.doesNotMatch(source, /data-ria-timeline-day|TOPIC_TIMELINE_|topicTimelineGroups|topicDayKey|TopicTimelineDayHeader/)
   assert.match(overlay, /placeholder: "搜索主题、简报或工单"/)
   assert.match(overlay, /ref: searchRef/)
   assert.match(overlay, /"aria-label": "搜索工单或主题"/)

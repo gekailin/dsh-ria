@@ -115,7 +115,7 @@ Ria 通过 run_code SDK 调用 15 个 `ria_*` 工具（含反思编排 `ria_refl
 1. 新工单「修复登录接口超时」→ suggest 命中「登录改造」→ `ria_topic {action:"link", topicId, ticketId, role:"primary"}`，不新建主题。
 2. 新工单「导出对账单 CSV」→ suggest 无命中 → `ria_topic {action:"create", title:"对账单导出", brief:"导出对账单 CSV"}` → 把返回的 topicId 传给 `ria_ticket create`（或再 link）。
 
-主题与链接存 ria.json 的 `topics`、`links`，schema v5 起存在；旧 v4 文件原样加载，缺字段视为空数组，首次写入前备份 `ria.json.v4.bak`。看板的主题卡最多显示待执行 2 条、执行中 3 条，超出时末尾显示「……」；已完成只显示计数。点「……」打开主题页，不在卡内展开。主题页是单列纵向时间轴，按 createdAt 倒序列出该主题全部工单，按天分隔并显示 MM-DD HH:mm；主题内依赖显示「依赖 N 张」标签（点击滚到上游并高亮 1 秒），跨主题依赖标出「↗ 在 <主题名>」。
+主题与链接存 ria.json 的 `topics`、`links`，schema v5 起存在；旧 v4 文件原样加载，缺字段视为空数组，首次写入前备份 `ria.json.v4.bak`。看板的主题卡最多显示待执行 2 条、执行中 3 条，超出时末尾显示「……」；已完成只显示计数。点「……」打开主题页，不在卡内展开。主题页是二维多列网格（2–3 列随宽度自适应）：未完成工单先排、终态工单排在后段，段内按 createdAt 倒序，卡片顶部显示 MM-DD HH:mm；筛选为未完成/执行中/待执行/全部，默认未完成，只淡化不重排。主题内依赖显示「依赖 N 张」标签（点击滚到上游并高亮 1 秒），跨主题依赖标出「↗ 在 <主题名>」。
 
 ## 排队消息（ria_queue）
 

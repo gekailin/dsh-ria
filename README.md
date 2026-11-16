@@ -50,6 +50,12 @@ dsh plugin --profile web add github:gekailin/dsh-ria
 
 若 `dsh plugin` 报 pnpm store 不可写，进入 `~/.dsh/profiles/web` 执行 `pnpm add --ignore-scripts github:gekailin/dsh-ria`；github: 简写解析不稳时改用 `git+https://github.com/gekailin/dsh-ria.git`。本地改代码调试才用 `file:` 路径：`dsh plugin --profile web add file:$PWD`。
 
+## 致谢
+
+感谢 dsh（DeepSeek Harness）框架：阿汐运行在它之上，插件形态、会话和审批能力都来自它。
+
+也感谢 dsh superagent 原型的启发——出站通知的 outbox（先落盘、失败重试、幂等投递）、结构化 attention，以及「状态先落定，再想办法送达」的思路。借鉴记录见 [superagent-borrow.md](docs/archive/superagent-borrow.md)；本项目与 superagent 没有官方关联或背书。
+
 ## License
 
 Apache License 2.0，见 [LICENSE](LICENSE)。

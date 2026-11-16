@@ -63,7 +63,7 @@ try {
   assert.equal(workspacePrompt.sessionId, workspace.body.sessionId)
   assert.equal(workspacePrompt.mode, 'queue')
   assert.match(workspacePrompt.requestId, /^host_/)
-  assert.equal(promptText(workspacePrompt), '【看板 · 工作区】dsh-ria board Check the empty state before the next review')
+  assert.equal(promptText(workspacePrompt), '[来自看板 / dsh-ria board]\nCheck the empty state before the next review')
 
   // A missing title falls back to the project id rather than dropping the
   // source label.
@@ -73,24 +73,36 @@ try {
     source: 'workspace',
   })
   assert.equal(fallbackTitle.status, 200, JSON.stringify(fallbackTitle.body))
-  assert.equal(promptText(fixture.prompts[1]), '【看板 · 工作区】workspace:demo fallback title')
+  assert.equal(promptText(fixture.prompts[1]), '[来自看板 / workspace:demo]\nfallback title')
 
   const card = await request('POST', '/plugins/dsh-ria/api/ask', {
     topicId: child.topic.topicId,
+    projectId: 'workspace:demo',
+    projectTitle: '  dsh-ria   board  ',
     text: 'Where does this sub-topic stand?',
     source: 'card',
   })
   assert.equal(card.status, 200, JSON.stringify(card.body))
   assert.equal(card.body.source, 'card')
-  assert.equal(promptText(fixture.prompts[2]), '【看板 · 主题卡】【Design】（子主题）Where does this sub-topic stand?')
+  assert.equal(promptText(fixture.prompts[2]), '[来自看板 / dsh-ria board / Design]\nWhere does this sub-topic stand?')
 
   const topCard = await request('POST', '/plugins/dsh-ria/api/ask', {
     topicId: root.topic.topicId,
+    projectId: 'workspace:demo',
     text: 'Top level question',
     source: 'card',
   })
   assert.equal(topCard.status, 200, JSON.stringify(topCard.body))
-  assert.equal(promptText(fixture.prompts[3]), '【看板 · 主题卡】【Roadmap】Top level question')
+  assert.equal(promptText(fixture.prompts[3]), '[来自看板 / workspace:demo / Roadmap]\nTop level question')
+
+  // An older client without a project title still gets a one-line header.
+  const noProject = await request('POST', '/plugins/dsh-ria/api/ask', {
+    topicId: root.topic.topicId,
+    text: 'No project supplied',
+    source: 'card',
+  })
+  assert.equal(noProject.status, 200, JSON.stringify(noProject.body))
+  assert.equal(promptText(fixture.prompts[4]), '[来自看板 / 未分配 / Roadmap]\nNo project supplied')
 
   const empty = await request('POST', '/plugins/dsh-ria/api/ask', {
     projectId: 'workspace:demo',
@@ -114,7 +126,7 @@ try {
     source: 'card',
   })
   assert.equal(atLimit.status, 200, JSON.stringify(atLimit.body))
-  assert.equal(fixture.prompts.length, 5)
+  assert.equal(fixture.prompts.length, 6)
 
   const missingProject = await request('POST', '/plugins/dsh-ria/api/ask', {
     text: 'hello',
@@ -156,7 +168,7 @@ try {
   })
   assert.equal(badSource.status, 400)
   assert.equal(badSource.body.code, 'source_invalid')
-  assert.equal(fixture.prompts.length, 5, 'rejected asks do not reach Ria')
+  assert.equal(fixture.prompts.length, 6, 'rejected asks do not reach Ria')
 
   // A busy Ria must still receive a queued prompt: /ask never steers or
   // interrupts, and it never creates a ticket or dispatches a worker.
@@ -167,7 +179,7 @@ try {
     source: 'workspace',
   })
   assert.equal(busy.status, 200, JSON.stringify(busy.body))
-  assert.equal(fixture.prompts[5].mode, 'queue')
+  assert.equal(fixture.prompts[6].mode, 'queue')
   fixture.service.currentRiaTurn = undefined
 
   assert.equal(fixture.service.store.tickets().length, ticketsBefore, 'asking the board never creates a ticket')
@@ -194,6 +206,8 @@ try {
   assert.match(sourceText, /data-ria-board-ask-toast/)
   assert.match(sourceText, /function boardAskToast/)
   assert.match(sourceText, /function sendAsk/)
+  assert.match(sourceText, /projectTitle: chosen\.projectTitle/)
+  assert.match(sourceText, /projectId: chosen\.projectId/)
   assert.equal(sourceText.split('"data-ria-topic-ask-form"').length - 1, 1, 'only topic cards keep an ask form')
   assert.doesNotMatch(sourceText, /【看板 · 主题面板】/)
   assert.doesNotMatch(sourceText, /function TicketComposeDialog/)
@@ -205,7 +219,10 @@ try {
   assert.match(serverText, /async askBoardTopic/)
   assert.match(serverText, /BOARD_ASK_TEXT_LIMIT/)
   assert.match(serverText, /project_required/)
-  assert.match(serverText, /【看板 · 工作区】/)
+  assert.match(serverText, /\[来自看板 \/ /)
+  assert.doesNotMatch(serverText, /【看板 · 工作区】/)
+  assert.doesNotMatch(serverText, /【看板 · 主题卡】/)
+  assert.doesNotMatch(serverText, /（子主题）/)
   assert.match(serverText, /topicsActive/)
   assert.match(serverText, /topicsBlocked/)
   assert.doesNotMatch(serverText, /【看板 · 主题面板】/)

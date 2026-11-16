@@ -9,7 +9,7 @@
 - 横轴按项目排列；项目头分两行：第一行左侧项目名、右侧「说」按钮；第二行统计「N 个主题（活跃 X · 阻塞 Y） · M 张工单（活跃 X · 阻塞 Y）」。M 取该项目所有主题 `total` 之和（含未分类桶），不是屏幕上的卡片数；主题活跃/阻塞按「有 working / 有 blocked 工单的主题数」计算，工单活跃/阻塞按 status=working / blocked 计数，为 0 也保留括号。点「说」时统计行原位换成输入框和发送按钮，不把卡片往下推。项目之间留间距，项目底色交替。
 - 每个项目内最多 2 列主题卡，只有一个主题时也只占一列宽。主题按 `lastUpdatedAt` 倒序，依次放进当前已用高度最小的列（瀑布贪心），因此越新的主题越靠前，列高保持接近。
 - 主题卡固定 200px 宽，卡片间距 14px；卡内 160px 宽的工单卡左右各留 20px。卡头第一行是主题标题，第二行是「更新于 MM-DD HH:MM · done/total」。
-- 卡头右侧有一个「说」小按钮；点开后卡片底部展开单行输入框，Enter 发送、Esc 收起。输入会作为普通用户消息发给 Ria，消息前标注「【看板 · 主题卡】【主题名】」，二级主题再加「（子主题）」；不会建票，也不会直接唤醒 worker。发送成功弹出「已发给 Ria」，失败在输入框下显示原因并保留原文。
+- 卡头右侧有一个「说」小按钮；点开后卡片底部展开单行输入框，Enter 发送、Esc 收起。输入会作为普通用户消息发给 Ria，第一行是「[来自看板 / 项目名 / 主题名]」，下一行才是正文；二级主题用自身标题，不加「（子主题）」后缀。不会建票，也不会直接唤醒 worker。发送成功弹出「已发给 Ria」，失败在输入框下显示原因并保留原文。
 - 卡头下面是 summary：优先用主题的 `brief`；为空时取该主题 `updatedAt` 最新的一张工单（不再只限未完成），生成「「goal 最多 60 字」状态词 · 待执行 N · 执行中 M · 已完成 K」，为 0 的段省略，goal 超出 60 字补「…」。未分类桶显示「N 张待分类 · 最近：「goal」」，空桶显示「暂无工单」。
 - 卡内只有三段：
   - 待执行：计数，最多列 2 条；超过 2 条时末尾补一行「……」。blocked 归入待执行，但卡片上有红点和「等拍板」标签。
@@ -50,21 +50,23 @@
 两个入口共用同一个发送函数和同一条服务端接口：
 
 - 工作区表头：项目名右侧「说」按钮，展开后是单行输入；source=workspace，body 为 {projectId, projectTitle, text, source}。
-- 主题卡：卡头「说」按钮，展开后是单行输入；source=card，body 为 {topicId, text, source}。
+- 主题卡：卡头「说」按钮，展开后是单行输入；source=card，body 为 {topicId, projectId, projectTitle, text, source}。项目名由看板随卡片带上，服务端缺失时回退 projectId，再缺失用「未分配」。
 
-服务端把消息用 mode:"queue" 投给 Ria，Ria 正忙时排队，不打断当前 turn。消息正文是工作区来源：
-
-~~~text
-【看板 · 工作区】dsh-ria <用户输入>
-~~~
-
-或主题卡来源（二级主题在主题名后加「（子主题）」）：
+服务端把消息用 mode:"queue" 投给 Ria，Ria 正忙时排队，不打断当前 turn。消息第一行是来源，正文从第二行开始。工作区来源：
 
 ~~~text
-【看板 · 主题卡】【看板与主题视图】<用户输入>
+[来自看板 / dsh-ria]
+<用户输入>
 ~~~
 
-工作区入口要求 projectId，projectTitle 缺失时回退 projectId，连续空白压成一个空格；主题卡入口校验主题存在且不是未分类桶。两者都要求文本 trim 后非空且不超过 1000 字。接口只发消息，不建工单、不写派发队列、不唤醒 worker。成功返回 {ok:true, projectId/topicId, source, sessionId}；失败返回 project_required、topic_missing、topic_unclassified、text_empty、text_too_long、source_invalid 或 ask_failed。
+主题卡来源：
+
+~~~text
+[来自看板 / dsh-ria / 看板与主题视图]
+<用户输入>
+~~~
+
+二级主题使用自己的标题，例如「[来自看板 / dsh-ria / Design]」，不再追加「（子主题）」。工作区入口要求 projectId，projectTitle 缺失时回退 projectId，连续空白压成一个空格；主题卡入口校验主题存在且不是未分类桶，主题名和项目名都会把连续空白压成一个空格。两者都要求文本 trim 后非空且不超过 1000 字。接口只发消息，不建工单、不写派发队列、不唤醒 worker。成功返回 {ok:true, projectId/topicId, source, sessionId}；失败返回 project_required、topic_missing、topic_unclassified、text_empty、text_too_long、source_invalid 或 ask_failed。
 
 ## 数据
 

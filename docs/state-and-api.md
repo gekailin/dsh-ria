@@ -16,6 +16,10 @@ DSH_HOME/state/ria/
   wechat-claw/cursor.json  # getupdates 长轮询游标
   qq-bot/creds.json        # QQ 机器人 appId、appSecret、userOpenid，0600
   qq-bot/state.json        # 暂停状态
+  reflections/state.json   # 反思调度状态与 lastCompletedDate
+  reflections/.lock        # 当前反思 run 的锁
+  reflections/runs/<runId>/run.json   # 单次 run；dispatch 后含 watchTicketId/watchCreatedAt，结束含 watchClosedAt
+  reflections/runs/<runId>/report.partial.md  # 本次 run 的草稿
 ~~~
 
 不保存聊天 transcript。Ria 的原始 Session 日志仍由 DSH 写在 DSH_HOME/sessions 下。

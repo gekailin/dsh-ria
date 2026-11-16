@@ -55,7 +55,7 @@ executor 要么是 worker 的 sessionId，要么是 `self`：Ria 默认把任务
 - **executor**：`self` 或一个顶层 worker 的 sessionId；一个工单同一时间只有一个 executor。
 - **waitingOn**：`ria`、`worker`、`user`、`approval`、`environment`、`children`、`dependency`、`none`。它回答“现在卡在谁”。
 - **dependsOn**：最多 8 个上游，DAG，可跨 root。未全部 `done` 时工单停在 `open + waitingOn=dependency`，不可派发；上游 `failed`/`cancelled` 不自动跳过，写 `dependencyAlerts` 并告警。全部 `done` 后写 `readyAt`，生成 `queueToken = ticketId:readyAt:revision`。token 不入库，派发时校验，保证一次就绪最多派发一次。
-- **checklist**：有序步骤，最多 50 条；status 与看板显示 `done/total`；终态后视为最终结果，不再改勾。
+- **checklist**：有序步骤，最多 50 条；status 与看板显示 `done/total`；终态后视为最终结果，不再改勾。转 done/cancelled 时若仍有未勾项，默认拒绝（checklist_pending）；只有显式 waiver 才放行，并把 waiver、未完成项与豁免时间一并写进 resolution，所有收口路径（含 cascade、merge、resolveIntake、父工单自动收口）走同一门禁。
 - **attention**：结构化等待项 `{kind, question, options?}`；`blocked + user` 放问题与选项，`blocked + approval` 放审批引用。审批默认由插件按风险规则加 Ria 裁决处理；Ria 只能放行本次调用，不能改持久权限。
 - **revision / history**：每次状态变更 revision 递增，按 revision 做乐观并发；非法转移返回 `invalid_transition`，不静默改写。只有 `RiaStore.transitionTicket` 能改 status，22 条不变量在写入时校验。
 
@@ -147,7 +147,7 @@ outbox 与 `ria.json` 不是同一个事务：派发已被接受、但 outbox �
 
 ## 7. 记忆与反省
 
-`memory.md` 只放稳定偏好与长期约定，由 `ria_memory` 显式读写；默认上限 2400 字符 / 12 条 / 单条 300（warn 阈值 2160 / 11 / 270），超限拒绝写入，长内容归档到 `memory-archive/<slug>.md`（不注入）；不抄工单状态、时间戳或逐轮流水。定期反思已实现：设置页可开启每天/每周的 schedule，到点后 Ria 启动一个独立的只读 worker（只有 6 个 `ria_reflect_*` 工具），读当天/当周的工单、turn 与 outbox（会话默认 `summary`，异常再按 `ref`/窗口 `full` 定点读），把报告写到 `reflections/YYYY-MM-DD.md`；worker 只提议隐性规则，不自动改写记忆。报告渲染/归档 UI、多天回填与 P2 wiki 尚未实现。
+`memory.md` 只放稳定偏好与长期约定，由 `ria_memory` 显式读写；默认上限 2400 字符 / 12 条 / 单条 300（warn 阈值 2160 / 11 / 270），超限拒绝写入，长内容归档到 `memory-archive/<slug>.md`（不注入）；不抄工单状态、时间戳或逐轮流水。定期反思已实现：设置页可开启每天/每周的 schedule，到点后 Ria 启动一个独立的只读 worker（只有 6 个 `ria_reflect_*` 工具），读当天/当周的工单、turn 与 outbox（会话默认 `summary`，异常再按 `ref`/窗口 `full` 定点读），把报告写到 `reflections/YYYY-MM-DD.md`；worker 只提议隐性规则，不自动改写记忆。报告在写入草稿前就跑与 finish 相同的校验，失败不落盘；Ria 也可用 `ria_reflect action=validate` 先验后写。每次 dispatch 自动在固定主题「记忆与反思」下建一张监控工单（executor=本次反思 worker，status=working，run.json 记 watchTicketId）；finish 把它置 done 并写 reportPath/bytes，abort 置 cancelled，报告失败/超时置 blocked 并写原因；重启恢复会跳过这类监控单。报告渲染/归档 UI、多天回填与 P2 wiki 尚未实现。
 
 ## 8. 扩展点
 

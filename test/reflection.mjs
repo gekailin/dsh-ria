@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { zstdCompressSync } from 'node:zlib'
 import { createFixture } from './support/ria-fixture.mjs'
-import { makeReflectionRun, querySession, readArchiveSession, sessionArchiveInfo, writeReflectionReport } from '../lib/reflection.mjs'
+import { reflectionReportMarkdown } from './support/reflection-report.mjs'
+import { makeReflectionRun, querySession, readArchiveSession, sessionArchiveInfo, validateReflectionReport, writeReflectionReport } from '../lib/reflection.mjs'
 
 const base = Date.UTC(2026, 10, 14, 9, 0, 0)
 const t = offset => base + offset
@@ -143,14 +144,55 @@ assert.deepEqual(readFileSync(file), beforeArchive)
 
 const runReport = makeReflectionRun({ runId: 'refl-report', forDate: '2026-11-14', stateDir: join(home, 'state') }, { stateDir: join(home, 'state') })
 runReport.status = 'running'
-const report = writeReflectionReport({ run: runReport, markdown: '# hi\n', status: 'partial', counts: { messages: 1 } })
+runReport.workerSessionId = 'session-report-worker'
+const partialMarkdown = reflectionReportMarkdown(runReport, 'partial')
+const report = writeReflectionReport({ run: runReport, markdown: partialMarkdown, status: 'partial', counts: { messages: 1 } })
 assert.equal(report.ok, true)
-assert.equal(report.bytes, 5)
+assert.equal(report.bytes, Buffer.byteLength(partialMarkdown))
 assert.equal(statSync(report.path).mode & 0o777, 0o600)
+assert.equal(readFileSync(report.path, 'utf8'), partialMarkdown)
 const tooLarge = writeReflectionReport({ run: runReport, markdown: 'x'.repeat(30721), status: 'partial', counts: {} })
 assert.equal(tooLarge.code, 'report_too_large')
 const empty = writeReflectionReport({ run: runReport, markdown: '', status: 'partial', counts: {} })
 assert.equal(empty.code, 'report_empty')
+const sixItems = [1, 2, 3, 4, 5, 6].map(item => item + '. 建议 ' + item).join('\n')
+const tooMany = writeReflectionReport({
+  run: runReport,
+  markdown: reflectionReportMarkdown(runReport, 'partial', { iteration: sixItems }),
+  status: 'partial',
+  counts: {},
+})
+assert.equal(tooMany.ok, false)
+assert.equal(tooMany.code, 'report_invalid')
+assert.ok(tooMany.problems.some(item => item.includes('supports at most 5 items')))
+assert.equal(readFileSync(report.path, 'utf8'), partialMarkdown)
+const missingHeading = writeReflectionReport({
+  run: runReport,
+  markdown: reflectionReportMarkdown(runReport, 'partial', { omitHeading: '未覆盖' }),
+  status: 'partial',
+  counts: {},
+})
+assert.equal(missingHeading.code, 'report_invalid')
+assert.ok(missingHeading.problems.includes('missing heading: 未覆盖'))
+const fiveItems = [1, 2, 3, 4, 5].map(item => item + '. 建议 ' + item).join('\n')
+const five = writeReflectionReport({
+  run: runReport,
+  markdown: reflectionReportMarkdown(runReport, 'partial', { iteration: fiveItems }),
+  status: 'partial',
+  counts: {},
+})
+assert.equal(five.ok, true)
+const fixtureMarkdown = readFileSync(new URL('./fixtures/reflection-report-2026-11-16-d7c9c2.md', import.meta.url), 'utf8')
+const fixtureRun = {
+  forDate: '2026-11-16',
+  trigger: 'schedule',
+  runId: 'refl-fixture-20261116-d7c9c2',
+  attempt: 2,
+  windowStart: Date.parse('2026-11-15T16:00:00.000Z'),
+  windowEnd: Date.parse('2026-11-16T15:46:14.327Z'),
+  workerSessionId: 'session-1a71ab03-fbc8-4e2d-8b7e-c4f973ef1104',
+}
+assert.equal(validateReflectionReport({ run: fixtureRun, markdown: fixtureMarkdown, status: 'complete' }).ok, true)
 
 const liveEvents = events.map((event, index) => ({ ...event, time: Date.now() - 60000 + index * 1000 }))
 const staleEvents = [{
@@ -184,6 +226,7 @@ try {
   assert.equal(spawned.ok, true)
   assert.equal(spawned.reflectionRunId, opened.runId)
   const reflectId = spawned.sessionId
+  opened.workerSessionId = reflectId
   assert.equal(fixture.service.reflectionBindings.get(reflectId), opened.runId)
   const tools = fixture.agentTools.get(reflectId)
   assert.ok(tools)
@@ -262,9 +305,20 @@ try {
   assert.equal(memory.text.includes('sk-secret-value'), false)
   assert.ok(memory.text.includes('[redacted]'))
 
-  const written = await call('ria_reflect_report', { markdown: '# reflection\n', status: 'partial', counts: { messages: 1 } })
+  const validDraft = reflectionReportMarkdown(opened, 'partial')
+  const validated = await fixture.call('ria_reflect', { action: 'validate', runId: opened.runId, status: 'partial', markdown: validDraft })
+  assert.equal(validated.ok, true)
+  const invalidDraft = reflectionReportMarkdown(opened, 'partial', { iteration: '1. a\n2. b\n3. c\n4. d\n5. e\n6. f' })
+  const invalidValidated = await fixture.call('ria_reflect', { action: 'validate', runId: opened.runId, status: 'partial', markdown: invalidDraft })
+  assert.equal(invalidValidated.ok, false)
+  assert.ok(invalidValidated.problems.some(item => item.includes('supports at most 5 items')))
+  const written = await call('ria_reflect_report', { markdown: validDraft, status: 'partial', counts: { messages: 1 } })
   assert.equal(written.ok, true)
   assert.equal(statSync(written.path).mode & 0o777, 0o600)
+  const rejected = await call('ria_reflect_report', { markdown: invalidDraft, status: 'partial', counts: { messages: 1 } })
+  assert.equal(rejected.ok, false)
+  assert.ok(rejected.problems.some(item => item.includes('supports at most 5 items')))
+  assert.equal(readFileSync(written.path, 'utf8'), validDraft)
   const injected = await call('ria_reflect_report', { markdown: '# x\n', status: 'partial', counts: {}, path: '/tmp/nope' })
   assert.equal(injected.code, 'invalid_argument')
 

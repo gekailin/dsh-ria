@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { createFixture } from './support/ria-fixture.mjs'
+import { reflectionReportMarkdown } from './support/reflection-report.mjs'
 import { querySession, reflectionDate } from '../lib/reflection.mjs'
 
 function undefinedPath(value, path = '$') {
@@ -59,6 +60,7 @@ try {
   assert.equal(dispatched.ok, true, JSON.stringify(dispatched))
 
   const tools = fixture.agentTools.get(worker)
+  const run = service.reflectionRunById(begun.runId)
   const callTool = (name, args = {}) => tools.get(name).execute(args, {
     agent: { id: worker },
     signal: new AbortController().signal,
@@ -71,7 +73,7 @@ try {
     ['ria_reflect_read_sessions', { scope: 'candidates' }],
     ['ria_reflect_read_session', { sessionId: 'session-worker', mode: 'summary' }],
     ['ria_reflect_read_context', { kind: 'memory' }],
-    ['ria_reflect_report', { markdown: '# 测试报告\n', status: 'complete', counts: { sessions: 1 } }],
+    ['ria_reflect_report', { markdown: reflectionReportMarkdown(run, 'complete'), status: 'complete', counts: { sessions: 1 } }],
   ]
   for (const [name, args] of outputs) {
     assert.ok(tools.has(name), name + ' is not installed')
@@ -83,7 +85,6 @@ try {
   assert.ok(tickets.tickets.some(ticket => ticket.ticketId === legacy.ticketId), 'legacy ticket is missing')
   assert.ok(tickets.tickets.some(ticket => ticket.ticketId === blocked.ticketId), 'blocked ticket is missing')
 
-  const run = service.reflectionRunById(begun.runId)
   const direct = querySession({
     run,
     events: [{ type: 'user/message', data: { content: [{ type: 'text', text: '没有时间戳' }] } }],

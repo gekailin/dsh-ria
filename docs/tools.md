@@ -29,16 +29,19 @@ Ria 通过 run_code SDK 调用 15 个 `ria_*` 工具（含反思编排 `ria_refl
 - 预算：`maxChars`（core 总字符，默认 2400，统计全文去掉末尾换行）、`maxEntries`（顶格 `- ` 条目数，默认 12）、`maxEntryChars`（单条整行，含 `- **key**: ` 前缀，默认 300）。
 - 单位：字符一律是 Unicode code point（`[...text].length`），不是 UTF-16 `.length`，也不是字节；`bytes` 只作为附加信息展示。所有大小判断走 `lib/text-size.mjs` 的 `measureText()`，预算代码里不裸算 `text.length` 或 `Buffer.byteLength`。
 - 90% 预警：2160 字符 / 11 条 / 270 字符只返回 `warning` 和建议归档，不阻断写入。
-- 硬超限：三项任一超限即拒绝、**不部分写入**。错误同时列当前值/上限/超出量、超限 key 和具体动作，并明确 `No changes were made.`。例：
+- 硬超限：三项任一超限即拒绝、**不部分写入**。工具返回 `ok:false`、`code:memory_over_budget`，`message`/`error` 同时列当前值/上限/超出量、最长条目 key 与 chars、每个超限 key 与 chars，并以 `No changes were made.` 结尾；`diagnostics` 带同一组数字和 `overEntryDetails`。例：
 
   ~~~text
-  memory.md not written: 2430/2400 chars (+30), 13/12 entries (+1), entry "restart" 314/300 chars (+14).
-  Shorten entry "restart" to at most 300 chars or move its detail to memory-archive/restart.md. Run ria_memory action="read" to inspect the current file, then retry.
+  memory.md not written: 2430/2400 chars (+30), 13/12 entries (+1), 1 entry over 300 chars.
+  Longest entry "restart": 314/300 chars (+14).
+  Over-limit entries: "restart" 314/300 chars (+14).
+  Shorten "restart" to at most 300 chars or move the detail to memory-archive/restart.md. Run ria_memory action="read" to inspect the current file, then retry.
   No changes were made.
   ~~~
 
 - 读：`action=read`（默认 `scope=core`）返回 `text`、`chars`、`bytes`、`entries`、`maxChars`、`maxEntries`、`maxEntryChars`、`longestEntryChars`、`longestEntryKey`、`overBudget`、`warnings` 和 `archives`。
 - 写：`action=remember` 追加 `- **key**: text`（无 key 时 `- text`）；`action=forget` 按 key/文本子串删行。两者都返回写入后的预算视图；`memory.md` 超限时文件保持不变。
+- 整体重写：`action=replace`，`content`（完整文本，原样写入）或 `entries`（`{ key?, text }` 数组，逐项生成顶格 bullet）**二选一**。一次校验、一次 `writeAtomic`；任一项超限则整次拒绝并返回上述诊断，旧文件一个字节都不改。`entries` 每项必须单行、`text` 非空、`key` 不含 `*`；需要多行排版时用 `content`。replace 只改 core，不删除、不改写 archive；长细节仍按现有规则先写到 `memory-archive/<slug>.md`，core 只留指针。
 - 手工编辑：允许；若超过预算，注入 prompt 时只保留能完整放入的顶格条目，并在末尾附一行显式告警，不静默截断、不把超长内容继续注入。
 
 ### archive：memory-archive/<slug>.md
@@ -51,7 +54,7 @@ Ria 通过 run_code SDK 调用 15 个 `ria_*` 工具（含反思编排 `ria_refl
 
 ### 设置页
 
-设置页「记忆预算」段可直接改三项，范围：`maxChars` 500–20000、`maxEntries` 1–50、`maxEntryChars` 50–2000；保存走 `POST /settings` 的 `body.memory`，下一轮生效，不需要重启。`GET /settings` 同时返回 `settings.memory` 与 `settings.memoryStatus`（当前 chars/bytes/entries/最长条目/是否超限/预警）。Ria 自己不能通过工具改这些上限。
+设置页「记忆预算」段只暴露**条目数**一个输入，范围 1–50；保存只提交 `body.memory.maxEntries`，不会把 `maxChars`/`maxEntryChars` 写成空值或 0。总字符 2400 与单条 300 仍保留服务端配置路径（`body.memory` 仍接受三项），但界面不暴露；保存后下一轮生效，不需要重启。`GET /settings` 同时返回 `settings.memory` 与 `settings.memoryStatus`（当前 chars/bytes/entries/最长条目/是否超限/预警）。Ria 自己不能通过工具改这些上限。
 
 ## 工单排队与依赖
 

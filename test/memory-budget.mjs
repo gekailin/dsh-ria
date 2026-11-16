@@ -70,28 +70,50 @@ try {
   assert.match(near.warning, /near budget/)
   assert.equal(near.warnings.length, 1)
 
+  // A rejected write returns every number the model needs, not just a code.
+  resetMemory({ maxChars: 500, maxEntries: 2, maxEntryChars: 50 })
+  writeFileSync(memoryFile, '- one\n- **long**: ' + 'a'.repeat(60) + '\n', { mode: 0o600 })
+  const beforeReject = store.readMemory()
+  const rejected = await fixture.call('ria_memory', { action: 'remember', key: 'new', text: 'x' })
+  assert.equal(rejected.ok, false)
+  assert.equal(rejected.code, 'memory_over_budget')
+  assert.match(rejected.message, /3\/2 entries \(\+1\)/)
+  assert.match(rejected.message, /Longest entry "long": \d+\/50 chars \(\+\d+\)/)
+  assert.match(rejected.message, /Over-limit entries: "long" \d+\/50 chars \(\+\d+\)/)
+  assert.match(rejected.message, /No changes were made\./)
+  assert.equal(rejected.error, rejected.message)
+  assert.equal(rejected.diagnostics.entries, 3)
+  assert.equal(rejected.diagnostics.maxEntries, 2)
+  assert.deepEqual(rejected.diagnostics.overEntryKeys, ['long'])
+  assert.equal(rejected.diagnostics.overEntryDetails[0].key, 'long')
+  assert.equal(store.readMemory(), beforeReject)
+
   // Each hard limit rejects the whole write and leaves the file untouched.
   resetMemory({ maxChars: 500, maxEntryChars: 2000 })
-  await assert.rejects(
-    () => fixture.call('ria_memory', { action: 'remember', text: 'a'.repeat(500) }),
-    error => /memory\.md not written: 502\/500 chars \(\+2\)/.test(error.message) && /No changes were made\./.test(error.message),
-  )
+  const tooManyChars = await fixture.call('ria_memory', { action: 'remember', text: 'a'.repeat(500) })
+  assert.equal(tooManyChars.ok, false)
+  assert.match(tooManyChars.message, /502\/500 chars \(\+2\)/)
+  assert.match(tooManyChars.message, /total only/)
+  assert.match(tooManyChars.message, /No changes were made\./)
+  assert.equal(tooManyChars.diagnostics.totalOnly, true)
   assert.equal(store.readMemory(), '')
 
   resetMemory({ maxEntries: 1 })
   await fixture.call('ria_memory', { action: 'remember', key: 'one', text: 'x' })
-  const beforeReject = store.readMemory()
-  await assert.rejects(
-    () => fixture.call('ria_memory', { action: 'remember', key: 'two', text: 'y' }),
-    error => /2\/1 entries \(\+1\)/.test(error.message) && /No changes were made\./.test(error.message),
-  )
-  assert.equal(store.readMemory(), beforeReject)
+  const oneEntry = store.readMemory()
+  const tooManyEntries = await fixture.call('ria_memory', { action: 'remember', key: 'two', text: 'y' })
+  assert.equal(tooManyEntries.ok, false)
+  assert.match(tooManyEntries.message, /2\/1 entries \(\+1\)/)
+  assert.match(tooManyEntries.message, /No changes were made\./)
+  assert.equal(store.readMemory(), oneEntry)
 
   resetMemory({ maxEntryChars: 50 })
-  await assert.rejects(
-    () => fixture.call('ria_memory', { action: 'remember', text: 'a'.repeat(60) }),
-    error => /62\/50 chars \(\+12\)/.test(error.message) && /No changes were made\./.test(error.message),
-  )
+  const tooLongEntry = await fixture.call('ria_memory', { action: 'remember', text: 'a'.repeat(60) })
+  assert.equal(tooLongEntry.ok, false)
+  assert.match(tooLongEntry.message, /1 entry over 50 chars/)
+  assert.match(tooLongEntry.message, /Longest entry \(unnamed\): 62\/50 chars \(\+12\)/)
+  assert.match(tooLongEntry.message, /Over-limit entries: "\(unnamed\)" 62\/50 chars \(\+12\)/)
+  assert.match(tooLongEntry.message, /No changes were made\./)
   assert.equal(store.readMemory(), '')
 
   // Chars decide the budget. A UTF-8-heavy entry may have more bytes than the
@@ -109,6 +131,76 @@ try {
   assert.equal(counted.entries, 2)
   assert.equal((await fixture.call('ria_memory', { action: 'read' })).entries, 2)
 
+  // action=replace writes the whole core atomically; content is verbatim.
+  resetMemory()
+  mkdirSync(archiveDir, { recursive: true, mode: 0o700 })
+  writeFileSync(join(archiveDir, 'worker-lessons.md'), 'detail stays here\n', { mode: 0o600 })
+  const contentReplace = await fixture.call('ria_memory', {
+    action: 'replace',
+    content: '# Memory\n- one\n- two\n',
+  })
+  assert.equal(contentReplace.ok, true)
+  assert.equal(contentReplace.action, 'replace')
+  assert.equal(contentReplace.entries, 2)
+  assert.equal(contentReplace.text, undefined)
+  assert.equal(store.readMemory(), '# Memory\n- one\n- two\n')
+  assert.equal(contentReplace.archives[0].slug, 'worker-lessons')
+
+  // entries=[...] is the other replacement shape; each item becomes one bullet.
+  const entriesReplace = await fixture.call('ria_memory', {
+    action: 'replace',
+    entries: [{ key: 'name', text: '阿汐' }, { text: '中文，先结论' }],
+  })
+  assert.equal(entriesReplace.ok, true)
+  assert.equal(entriesReplace.entries, 2)
+  assert.equal(store.readMemory(), '- **name**: 阿汐\n- 中文，先结论\n')
+  assert.equal((await fixture.call('ria_memory', { action: 'read', scope: 'archive', path: 'worker-lessons' })).text, 'detail stays here\n')
+
+  // Any over-budget replacement rejects every entry and leaves the old file.
+  resetMemory({ maxEntries: 2 })
+  writeFileSync(memoryFile, 'BEFORE\n', { mode: 0o600 })
+  const tooManyReplaced = await fixture.call('ria_memory', {
+    action: 'replace',
+    entries: [{ text: 'one' }, { text: 'two' }, { text: 'three' }],
+  })
+  assert.equal(tooManyReplaced.ok, false)
+  assert.equal(tooManyReplaced.code, 'memory_over_budget')
+  assert.match(tooManyReplaced.message, /3\/2 entries \(\+1\)/)
+  assert.equal(tooManyReplaced.diagnostics.overEntries, 1)
+  assert.equal(store.readMemory(), 'BEFORE\n')
+
+  resetMemory({ maxEntryChars: 50 })
+  writeFileSync(memoryFile, 'BEFORE\n', { mode: 0o600 })
+  const longLine = '- **long**: ' + 'a'.repeat(60)
+  const overlongReplaced = await fixture.call('ria_memory', {
+    action: 'replace',
+    entries: [{ key: 'long', text: 'a'.repeat(60) }],
+  })
+  assert.equal(overlongReplaced.ok, false)
+  assert.equal(overlongReplaced.diagnostics.longestEntryKey, 'long')
+  assert.equal(overlongReplaced.diagnostics.overEntryDetails[0].key, 'long')
+  assert.equal(overlongReplaced.diagnostics.overEntryDetails[0].chars, measureText(longLine).chars)
+  assert.match(overlongReplaced.message, /Over-limit entries: "long" \d+\/50 chars \(\+\d+\)/)
+  assert.equal(store.readMemory(), 'BEFORE\n')
+
+  resetMemory({ maxChars: 500, maxEntryChars: 2000 })
+  writeFileSync(memoryFile, 'BEFORE\n', { mode: 0o600 })
+  const totalReplaced = await fixture.call('ria_memory', { action: 'replace', content: 'a'.repeat(600) })
+  assert.equal(totalReplaced.ok, false)
+  assert.match(totalReplaced.message, /600\/500 chars \(\+100\)/)
+  assert.match(totalReplaced.message, /total only/)
+  assert.equal(totalReplaced.diagnostics.totalOnly, true)
+  assert.equal(store.readMemory(), 'BEFORE\n')
+
+  // Invalid replacement payloads are rejected before any write.
+  const bothShapes = await fixture.call('ria_memory', { action: 'replace', content: 'x', entries: [] })
+  assert.equal(bothShapes.code, 'invalid_argument')
+  const noShape = await fixture.call('ria_memory', { action: 'replace' })
+  assert.equal(noShape.code, 'invalid_argument')
+  const multiline = await fixture.call('ria_memory', { action: 'replace', entries: [{ text: 'a\nb' }] })
+  assert.equal(multiline.code, 'invalid_argument')
+  assert.equal(store.readMemory(), 'BEFORE\n')
+
   // A manual edit may bypass writeMemory. The prompt gets only complete lines
   // that fit, plus an explicit over-budget notice in the same turn.
   resetMemory({ maxEntries: 1 })
@@ -123,7 +215,6 @@ try {
 
   // Archive read/list: 4000 chars per page, offset continuation, slug checks.
   resetMemory()
-  mkdirSync(archiveDir, { recursive: true, mode: 0o700 })
   writeFileSync(join(archiveDir, 'worker-lessons.md'), 'x'.repeat(4500), { mode: 0o600 })
   const page1 = await fixture.call('ria_memory', { action: 'read', scope: 'archive', path: 'worker-lessons' })
   assert.equal(page1.ok, true)
@@ -150,7 +241,8 @@ try {
     /memory archive not found/,
   )
 
-  // POST /settings validates ranges and persists a partial update.
+  // POST /settings validates ranges and persists a partial update. Saving only
+  // maxEntries must not clear or rewrite maxChars / maxEntryChars.
   const badSettings = await request('POST', '/plugins/dsh-ria/api/settings', { memory: { maxChars: 400 } })
   assert.equal(badSettings.status, 400)
   assert.match(badSettings.body.error, /body\.memory\.maxChars must be an integer from 500 to 20000/)
@@ -163,19 +255,35 @@ try {
   assert.equal(savedMemory.status, 200)
   assert.deepEqual(savedMemory.body.memory, { maxChars: 1800, maxEntries: 8, maxEntryChars: 220 })
   assert.deepEqual(savedMemory.body.memoryStatus.maxChars, 1800)
+  const onlyEntries = await request('POST', '/plugins/dsh-ria/api/settings', { memory: { maxEntries: 9 } })
+  assert.equal(onlyEntries.status, 200)
+  assert.deepEqual(onlyEntries.body.memory, { maxChars: 1800, maxEntries: 9, maxEntryChars: 220 })
+  assert.equal(onlyEntries.body.memoryStatus.maxChars, 1800)
+  assert.equal(onlyEntries.body.memoryStatus.maxEntryChars, 220)
 
-  // Settings UI must expose the same three budgets with explicit units.
+  // Settings UI exposes exactly one editable field. The helper block is plain
+  // browser code, so evaluate it directly instead of grepping the rendered JSX.
   const clientSource = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
-  assert.ok(clientSource.includes('"data-ria-memory": "section"'))
-  assert.ok(clientSource.includes('"data-ria-memory-field": key'))
-  for (const key of ['maxChars', 'maxEntries', 'maxEntryChars']) {
-    assert.ok(clientSource.includes(key + ': { min:'), key)
-  }
-  assert.ok(clientSource.includes('data-ria-memory-usage'))
+  const blockStart = clientSource.indexOf('/* memory-budget:start */')
+  const blockEnd = clientSource.indexOf('/* memory-budget:end */')
+  assert.ok(blockStart >= 0 && blockEnd > blockStart)
+  const memoryUi = new Function(clientSource.slice(blockStart, blockEnd) +
+    '\nreturn { MEMORY_UI_DEFAULTS, MEMORY_UI_FIELDS, MEMORY_UI_RANGES, memoryDraftFrom, memoryDraftValues, memoryDraftDirty };')()
+  assert.deepEqual(memoryUi.MEMORY_UI_FIELDS, ['maxEntries'])
+  assert.deepEqual(Object.keys(memoryUi.MEMORY_UI_RANGES), ['maxEntries'])
+  assert.deepEqual(memoryUi.memoryDraftFrom({ maxChars: 1800, maxEntries: 9, maxEntryChars: 220 }), { maxEntries: '9' })
+  assert.deepEqual(memoryUi.memoryDraftValues({ maxEntries: '8' }), { values: { maxEntries: 8 } })
+  assert.deepEqual(memoryUi.memoryDraftValues({ maxEntries: '8', maxChars: '', maxEntryChars: '' }), { values: { maxEntries: 8 } })
+  assert.match(memoryUi.memoryDraftValues({ maxEntries: '0' }).error, /条数上限/)
+  assert.equal(memoryUi.memoryDraftDirty({ maxEntries: '8' }, { maxEntries: 12 }), true)
+  assert.equal(memoryUi.memoryDraftDirty({ maxEntries: '12' }, { maxEntries: 12 }), false)
+  assert.ok(clientSource.includes('MEMORY_UI_FIELDS.map(function (key)'))
+  assert.ok(!clientSource.includes('Object.keys(MEMORY_UI_RANGES).map'))
+  assert.ok(clientSource.includes('data-ria-memory-field'))
   assert.ok(clientSource.includes('data-ria-memory-save'))
-  assert.ok(clientSource.includes('总字符上限（字符）'))
   assert.ok(clientSource.includes('条数上限（条）'))
-  assert.ok(clientSource.includes('单条上限（字符）'))
+  assert.ok(!clientSource.includes('总字符上限（字符）'))
+  assert.ok(!clientSource.includes('单条上限（字符）'))
 } finally {
   fixture.cleanup()
 }

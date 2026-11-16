@@ -22,7 +22,7 @@ inbound-delivery 测试覆盖：微信「文件传输助手」、微信 Claw、Q
 
 channel-pause-notices 测试覆盖：文件传输助手、微信 Claw、QQ 三个通道自动暂停时各在自己的通道发一条 `channel_pause_notice`，文案点名本通道与触发来源；重复触发、手动暂停、未连接或无 peer 时不重发、不入队；Claw/QQ 在暂停态仍能绕过暂停发出（`prefix=false`），QQ 无目标时 durable 返回 `{deferred:true}`；同一 `stateDir` 重启重放同一 `pausedAt` 不重复。
 
-memory-budget 测试覆盖：`measureText` 的四个分叉样本（「阿汐」2 字符/6 字节、`e`+U+0301 2/3、😀 1/4、`abc` 3/3）；空 `memory.md` 的默认预算 2400 字符/12 条/300 字符；remember 后的 chars/bytes/entries；90% 预警；总字符、条数、单条三类硬拒绝且文件不变，错误带单位与 `No changes were made.`；bytes 超但 chars 未超时允许写入；条数只数顶格 `- `；手工超限时只注入完整条目并附告警；archive 默认 4000 字符分页、`offset` 续读、`list`、非法 path 与不存在；`POST /settings` 的 `body.memory` 非法/空对象/合法值回显；设置页源码断言三个带单位输入、用量行和保存按钮。
+memory-budget 测试覆盖：`measureText` 的四个分叉样本（「阿汐」2 字符/6 字节、`e`+U+0301 2/3、😀 1/4、`abc` 3/3）；空 `memory.md` 的默认预算 2400 字符/12 条/300 字符；remember 后的 chars/bytes/entries；90% 预警；总字符、条数、单条三类硬拒绝且文件不变，错误含当前/上限/超出量、最长条目、所有超限 key、`diagnostics` 与 `No changes were made.`；bytes 超但 chars 未超时允许写入；条数只数顶格 `- `；`replace` 的 content/entries 两种成功路径、三类超限整次拒绝且旧文件不变、content+entries/都不给/多行条目报 `invalid_argument`；手工超限时只注入完整条目并附告警；archive 默认 4000 字符分页、`offset` 续读、`list`、非法 path 与不存在；`POST /settings` 的 `body.memory` 非法/空对象/合法值回显，仅提交 `maxEntries` 时不清空 `maxChars`/`maxEntryChars`；设置页源码断言只有一个带单位输入、`MEMORY_UI_FIELDS` 只含 `maxEntries`、用量行和保存按钮。
 
 ## 本地开发与隔离验证
 

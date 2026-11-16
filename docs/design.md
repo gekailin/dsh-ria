@@ -327,7 +327,7 @@ stateDir/memory.md
 - 0600。预算按 Unicode code point：`maxChars` 默认 2400 字符（全文去末尾换行）、`maxEntries` 默认 12 条（只数顶格 `- `）、`maxEntryChars` 默认 300 字符（含 `- **key**: ` 前缀）。
 - 90% 时返回 warning 并建议归档；任一硬超限拒绝写入、不部分写入，错误列出当前值/上限/超出量、超限 key 与迁移路径，并以 `No changes were made.` 结尾。
 - 用户可以直接编辑；手工超限时注入只保留能完整放入预算的完整条目，并在末尾显式告警，不静默截断。
-- 设置页「记忆预算」可调三项（500–20000 字符 / 1–50 条 / 50–2000 字符），下一轮生效；Ria 不能通过工具改上限。
+- 设置页「记忆预算」只暴露条目数（`maxEntries` 1–50 条）；`maxChars` 2400 与 `maxEntryChars` 300 仍保留服务端配置路径，但界面不暴露，保存不会把它们清空。下一轮生效；Ria 不能通过工具改上限。
 
 细节放 archive：
 
@@ -689,7 +689,7 @@ Phase 30：任务看板重做与归档日志改名。看板改为单画布：按
 
 Phase 31：主题看板与 schema v5。ria.json 新增 topics/links，一个工单最多一个 primary；旧 v4 原样加载并在首次写入前备份。新增 ria_topic（create/update/link/unlink/merge/archive/list）与 test/topic-board.mjs。GET /board 增加 projects[]→topics[]→tickets[] 投影与每主题 counts/brief/lastUpdatedAt，GET /board/topic?topicId= 返回主题全部工单与主题内/跨主题依赖边；无 primary 的工单进入每项目合成的未分类桶。看板改为横轴项目、项目内主题瀑布最多 3 列、卡内待执行/执行中/已完成三段、「……」行点击打开主题页、行点击复制与执行者跳转，筛选只灰化不重排。视觉迭代：主题卡 300→240→200px，卡内条目与弹窗共用 160×58 工单卡，超出条数上限时以「……」收尾；主题弹窗改为 2D 画布（按 createdAt 逆序、每列最多 4 张、依赖右移遇满列继续向右、跨主题胶囊跳转），筛选从看板头移入弹窗头、只淡化不重排；筛选时在弹窗上下显示完全藏在视口外的匹配数气泡，点气泡平滑滚动到最近匹配卡并高亮 1 秒。
 
-Phase 32：memory 容量预算与 archive。core 改为 Unicode code point 计量（`maxChars` 2400 字符 / `maxEntries` 12 条 / `maxEntryChars` 300 字符），90% 预警、硬超限拒绝且不部分写入；`ria_memory` 增加 `list`、`scope=archive`、`path`、`offset`，archive 存 `stateDir/memory-archive/<slug>.md`（0600、16 KB 软上限、默认 4000 字符分页、绝不注入 prompt）；读侧手工超限只注入完整条目并显式告警；设置页新增「记忆预算」三项即时可调；`lib/reflection.mjs` 的 `memoryBytes` 改为 `memoryChars`，所有大小判断统一走 `lib/text-size.mjs` 的 `measureText()`。
+Phase 32：memory 容量预算与 archive。core 改为 Unicode code point 计量（`maxChars` 2400 字符 / `maxEntries` 12 条 / `maxEntryChars` 300 字符），90% 预警、硬超限拒绝且不部分写入；`ria_memory` 增加 `list`、`scope=archive`、`path`、`offset`，archive 存 `stateDir/memory-archive/<slug>.md`（0600、16 KB 软上限、默认 4000 字符分页、绝不注入 prompt）；读侧手工超限只注入完整条目并显式告警；设置页新增「记忆预算」，只暴露条目数（总字符与单条上限保留服务端路径）；`ria_memory` 增加 `replace` 整体重写（content/entries 二选一、原子写入、失败返回逐条 diagnostics），写入失败统一返回 `ok:false`、完整数字与 `No changes were made.`；`lib/reflection.mjs` 的 `memoryBytes` 改为 `memoryChars`，所有大小判断统一走 `lib/text-size.mjs` 的 `measureText()`。
 
 Phase 33：主题摘要自动归纳。GET /board 的主题卡 brief 优先保留人工值（`summaryAuto=false`）；为空时由 `lib/topics.mjs` 的 `topicSummaryInfo` 从该主题 primary 工单里取 `updatedAt` 最新的一张，生成「「goal 最多 60 字」状态词 · 待执行 N · 执行中 M · 已完成 K」，计数为 0 的段省略，goal 超出 60 个 code point 补 `…`；未分类桶为「N 张待分类 · 最近：「goal」」/「暂无工单」，自动生成时 `summaryAuto=true`。manager prompt 新增规则：派发、收口或标 blocked 后，主题进展句变化时用 `ria_topic {action:"update", brief}` 写最多 120 字符，没变不写，同主题 10 分钟内不重复写，没挂主题不写。
 
@@ -744,7 +744,7 @@ Phase 28：会话改名工具。新增 `ria_title({ sessionId, title })`，走�
 
 44. ria_title 只改会话名：不发消息、不建 ticket、不唤醒 worker、不改其它状态；预检覆盖 session_missing/not_top_level/session_archived/workspace_missing，subagent 拒绝，允许改 Ria 自己；空标题或宿主 `session/title-invalid` 返回 title_invalid 并带宿主原始 message；成功返回 accepted title，已知 previous 时附上。
 
-45. memory.md 的 core 预算按 Unicode code point 计：默认 2400 字符 / 12 条 / 单条 300 字符；任一项超限拒绝写入且不部分写入，错误列当前值、上限、超出量、超限 key 和 archive 路径，并写 `No changes were made.`；90% 只预警；手工超限时只注入完整条目并显式告警；archive 存在 `stateDir/memory-archive/<slug>.md`，默认 4000 字符分页读取、不自动删除、不注入 prompt；三项预算可在设置页调整，应用后下一轮生效。
+45. memory.md 的 core 预算按 Unicode code point 计：默认 2400 字符 / 12 条 / 单条 300 字符；任一项超限拒绝写入且不部分写入，错误列当前值、上限、超出量、超限 key 和 archive 路径，并写 `No changes were made.`；90% 只预警；手工超限时只注入完整条目并显式告警；archive 存在 `stateDir/memory-archive/<slug>.md`，默认 4000 字符分页读取、不自动删除、不注入 prompt；条目数可在设置页调整，总字符与单条上限保留服务端配置路径，应用后下一轮生效；`replace` 整体重写同样一次校验、原子写入。
 
 ## 17. 已确认
 

@@ -2,7 +2,7 @@
 
 > **结论先行**：把「4 KB 字节」改成「字符 + 条数 + 单条」的 core 预算，并增加不注入的 archive。建议 **core 2400 字符 / 12 条 / 单条 300 字符**；到 **2160 字符、11 条或任一条达到 270 字符**时先提示归档；硬超限拒绝写入，错误里写清当前值、上限、超出量和可执行的迁移路径。推荐 **方案 C（分层 core + archive）**，core 的计量采用 **方案 B（字符 + 条数）**。
 >
-> **实现状态（2026-11-16）**：§4 的 core 预算、设置页三项可调、`ria_memory` 的 `list` / `scope=archive` 与读侧告警已落地；代码在 `lib/text-size.mjs`、`lib/memory.mjs`、`lib/index.js`、`lib/reflection.mjs`、`lib/client.js`，测试在 `test/memory-budget.mjs`。真实 `~/.dsh/state/ria/memory.md` **尚未迁移**，本文和代码都没有自动改写它；§5 的迁移步骤仍需人工执行。
+> **实现状态（2026-11-16）**：§4 的 core 预算、设置页条目数可调（总字符与单条上限保留服务端路径）、`ria_memory` 的 `replace` 整体重写与结构化诊断、`list` / `scope=archive` 与读侧告警已落地；代码在 `lib/text-size.mjs`、`lib/memory.mjs`、`lib/index.js`、`lib/reflection.mjs`、`lib/client.js`，测试在 `test/memory-budget.mjs`。真实 `~/.dsh/state/ria/memory.md` **尚未迁移**，本文和代码都没有自动改写它；§5 的迁移步骤仍需人工执行。
 >
 > 下文保留调研与方案原文作为设计依据；与实际实现不一致处，以本节和 §4.3/§4.4 的「已实现」标注为准。
 >
@@ -128,25 +128,28 @@
 | archive 读取 | `ria_memory action=read scope=archive path=<slug>`；另加 `action=list` | 字符 | 默认每次返回 4000 字符，超出用 `offset` 续读；只在与当前工单相关时读；不自动注入 |
 | archive 单文件软上限 | 16 | KB（1024 字节） | 超过则按子主题拆分；不自动删除；过期内容标记而不是清空 |
 | 读路径保护 | 与 core 同一预算 | 字符 / 条 | 手工编辑导致超限时，只注入能完整放入预算的条目，并在末尾加一行显式告警；不静默截断、不无限注入 |
-| 可配置性 | 设置页「记忆预算」三项 | 字符 / 条 | 默认 2400/12/300；范围见 §4.3；保存后下一轮生效；Ria 不能通过工具改自己的上限 |
+| 可配置性 | 设置页「记忆预算」一项（条目数） | 条 | 默认 2400/12/300；界面只暴露 `maxEntries` 1–50，总字符与单条上限保留服务端配置路径（`body.memory` 仍接受三项）；保存后下一轮生效；Ria 不能通过工具改自己的上限 |
 | API 视图 | `ria_memory` 返回 `chars/bytes/entries/maxChars/maxEntries/maxEntryChars` | 字符 / 字节 / 条 | `bytes` 保留用于排查文件大小；`read` 同时返回是否超限、最长条目 key、archive 列表 |
 
 **计数口径的实现建议**：字符数用 code point（`[...text].length`，与 `lib/reflection.mjs:39-44` 的 `charsOf()` 一致），不要用 `String.length`（UTF-16 单元，emoji/部分汉字会算两个）。条数只数顶格 bullet，避免把 markdown 标题和代码块里的 `-` 算进去。
 
 ### 4.2 超限错误信息
 
-错误信息至少要回答四个问题：**现在多少、上限多少、超了哪一项、下一步怎么做**。建议格式：
+错误信息至少要回答四个问题：**现在多少、上限多少、超了哪一项、下一步怎么做**。实现格式：
 
 ~~~text
-memory.md not written: 2430/2400 chars (+30), 13/12 entries (+1), entry "restart" 314/300 chars (+14).
-Shorten "restart" or move its detail to memory-archive/restart.md, then retry.
+memory.md not written: 2430/2400 chars (+30), 13/12 entries (+1), 1 entry over 300 chars.
+Longest entry "restart": 314/300 chars (+14).
+Over-limit entries: "restart" 314/300 chars (+14).
+Shorten "restart" to at most 300 chars or move the detail to memory-archive/restart.md. Run ria_memory action="read" to inspect the current file, then retry.
 No changes were made.
 ~~~
 
 要求：
 
-- 三项预算分别列出当前值/上限/超出量，不只报总量。
-- 点名超限的条目 key；如果超限来自总字符但单条都合规，明确说「total only」。
+- 三项预算分别列出当前值/上限/超出量，不只报总量；最长条目无论是否超限都单独一行（key 与 chars/上限/超出量）。
+- 逐个列出所有超长条目的 key 与 chars/上限/超出量，不截断；如果超限来自总字符但单条都合规，明确说「total only」。
+- 工具返回 `ok:false`、`code:"memory_over_budget"`，`message` 与 `error` 都是完整文本，`diagnostics` 带同一组数字与 `overEntryDetails`，模型不需要再猜。
 - 明确写 **No changes were made**，避免调用方以为部分写入成功。
 - 给出具体动作：缩短哪条、移到哪个 archive 文件、怎么查看当前内容（`ria_memory action=read`）。
 - 保留 `bytes` 作为附加信息（如 `3724 bytes`），但主判断用字符/条数，避免再次把单位搞混。
@@ -154,24 +157,25 @@ No changes were made.
 
 ### 4.3 可配置性（已实现）
 
-用户在 2026-11-16 明确要求把条数上限做成设置页可调，因此不再采用「profile 级、隐藏配置」的建议。实际行为：
+用户先要求把条数上限做成设置页可调；随后又要求界面只保留一个输入，避免在存量已超 300 字符单条上限时让用户误以为改两个数字就能放行。实际行为：
 
-- 设置页「记忆预算」段三个数字输入：`maxChars` 500–20000 字符、`maxEntries` 1–50 条、`maxEntryChars` 50–2000 字符；输入必须是整数，非法值直接提示且不提交。
-- 保存走 `POST /settings` 的 `body.memory`；服务端逐项校验范围，合法值写入 `ria.json` 的 `settings.memory`，下一轮 prompt 生效，不需要重启。
+- 设置页「记忆预算」段只有一个数字输入：`maxEntries` 1–50 条；输入必须是整数，非法值直接提示且不提交。`maxChars` 与 `maxEntryChars` 不出现在界面上。
+- 保存走 `POST /settings` 的 `body.memory`，只提交 `{ maxEntries }`；服务端合并到现有 `settings.memory`，不会把 `maxChars`/`maxEntryChars` 写成空值或 0。总字符 2400、单条 300 仍是服务端默认，也仍可通过 API 配置（`body.memory` 接受三项，范围 500–20000 / 1–50 / 50–2000），只是界面不暴露。
 - `GET /settings` 返回 `settings.memory` 与 `settings.memoryStatus`（当前 chars/bytes/entries/最长条目/overBudget/warnings）。
-- 设置页同时显示当前用量和百分比；达到 90% 用橙色提示，超限用红色提示。
+- 设置页同时显示当前用量和百分比；达到 90% 用橙色提示，超限用红色提示。界面上另有一行说明：只调整条目数，总字符与单条按服务端配置。
 - Ria 不能通过 `ria_memory` 或其它工具改自己的上限；上限只由用户在设置页（或 profile 配置）决定。
 - 仍不建议按会话覆盖：memory 是全局一份，按会话改上限会让「同一条偏好为什么在这个会话不生效」不可解释。
 
 ### 4.4 实现状态（2026-11-16）
 
 - **测量**：`lib/text-size.mjs` 的 `measureText(value)` 返回 `{ chars, bytes }`；`chars` 用 `[...text].length`，`bytes` 用 `Buffer.byteLength(text, "utf8")`。预算、archive 分页、反思报告大小都走它。
-- **预算**：`lib/memory.mjs` 的 `MEMORY_SETTINGS_DEFAULTS` 为 2400/12/300；`inspectMemory` 统计 chars/bytes/entries/最长条目/超限项/90% warning；`memoryBudgetError` 生成带单位、key、archive 指针和 `No changes were made.` 的错误；`memoryPromptPayload` 处理手工超限的读侧降级。
-- **写入**：`RiaStore.writeMemory` 先 `inspectMemory`，`overBudget` 直接抛错，文件不变；`ria_memory` 的 remember/forget 都返回写入后的预算视图。
+- **预算**：`lib/memory.mjs` 的 `MEMORY_SETTINGS_DEFAULTS` 为 2400/12/300；`inspectMemory` 统计 chars/bytes/entries/最长条目/超限项/90% warning，并给出 `overEntryDetails`；`memoryBudgetReport` 生成结构化 diagnostics，`memoryBudgetFailure` 生成 `{ ok:false, code:"memory_over_budget", message, error, diagnostics }`；`memoryBudgetError` 生成带单位、最长条目、所有超限 key、archive 指针和 `No changes were made.` 的完整文本；`memoryPromptPayload` 处理手工超限的读侧降级。
+- **写入**：`RiaStore.writeMemory` 先 `inspectMemory`，`overBudget` 直接抛错，文件不变；工具层在调用前预检，失败返回完整诊断而不是只给 code。remember/forget/replace 都返回写入后的预算视图。
+- **整体重写**：`ria_memory action=replace`；`content`（原样全文）或 `entries`（`{ key?, text }` 数组，逐项生成顶格 bullet）二选一，一次校验、一次原子写入。任一条目超长、条数超出或总字符超出都整次拒绝，逐条返回 key/chars/上限/超出量，旧文件不变。replace 只改 core，不删除、不改写 archive；长细节仍按现有规则先写 `memory-archive/<slug>.md`，core 留指针。
 - **归档**：`RiaStore.memoryArchiveFile/listMemoryArchives/readMemoryArchive`；`ria_memory` 支持 `action=list`、`scope=archive`、`path`、`offset`；archive 不在 manager prompt 中。
 - **反思**：`REFLECTION_DEFAULTS.memoryBytes` 改名 `memoryChars`；`ria_reflect_status` 的 `limits.memoryChars` 与顶层 `memoryChars` 同口径；报告/上下文大小统一用 `measureText().bytes`。
-- **设置页**：`lib/client.js` 的「记忆预算」段、`settings.memory` / `memoryStatus`、`POST /settings` 校验。
-- **测试**：`test/memory-budget.mjs` 锁定「阿汐 2 字符/6 字节、e+U+0301 2/3、😀 1/4、abc 3/3」、三类硬拒绝、90% 预警、bytes 超但 chars 未超允许写入、只数顶格 bullet、手工超限读侧告警、archive 分页/list/非法 path、设置范围校验。
+- **设置页**：`lib/client.js` 的「记忆预算」段只保留条目数输入，保存只提交 `maxEntries`；服务端 `POST /settings` 仍接受三项并逐项校验，未提交的字段保持原值。
+- **测试**：`test/memory-budget.mjs` 锁定「阿汐 2 字符/6 字节、e+U+0301 2/3、😀 1/4、abc 3/3」、三类硬拒绝、结构化错误数字、90% 预警、bytes 超但 chars 未超允许写入、只数顶格 bullet、replace 成功与三类超限整次拒绝且无部分写入、手工超限读侧告警、archive 分页/list/非法 path、设置范围校验与仅 maxEntries 保存不清空其它字段、设置页单输入。
 - **线上 memory**：**未迁移**。§5 的步骤仍需用户确认后执行；代码不会自动移动或删除现有条目。
 
 ## 5. 迁移步骤

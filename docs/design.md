@@ -697,6 +697,8 @@ Phase 33：主题摘要自动归纳。GET /board 的主题卡 brief 优先保留
 
 Phase 34：反思会话命名与路径统一。worker 标题改为 `反思 YYYY-MM-DD`（YYYY-MM-DD 为被反思日，Asia/Shanghai 口径）；同日第 2 次及以后为 `反思 YYYY-MM-DD（第N次）`，N 从 2 起，手动触发同样适用；ordinal 由 `reflectionRunOrdinal` 扫描同日 run.json 得到并写入 run/title。runId 统一为 `refl-YYYYMMDD-<6hex>`（YYYYMMDD 取 forDate）；路径集中到 `reflectionPaths`：正式报告 `reflections/YYYY-MM-DD.md`、partial `reflections/YYYY-MM-DD.partial.md`、同日重跑 `reflections/YYYY-MM-DD.manual-HHMM.md`、中间稿 `reflections/runs/<runId>/report.partial.md`、元数据 `runs/<runId>/run.json`/`state.json`/`.lock`。对外只引用 finish 返回的 reportPath；begin 的 reportPath 是计划路径，worker status 的 reportPath/draftPath 是草稿。`test/reflection-naming.mjs` 覆盖标题、路径、ordinal 与 manual/partial。
 
+Phase 35：自动归主题。`ria_topic` 新增只读 `suggest`：goal 必填、limit 默认 5（1–20），按 NFKC/小写后的汉字 2-gram 与拉丁 token 交集 Dice 给活跃主题（title+brief+已链接票 goal）和未挂 active primary 的热票打分，score>0 才返回，按 score 降序、同分按 id 稳定排序；不建主题、不 link、不改历史。`ria_ticket create` 接受可选 topicId，在同一 store 写入里原子挂 primary；主题缺失/已归档/已合并整单拒绝（topic_missing/topic_archived），不落票；创建结果与 ria_status 单票带 primaryTopicId，未挂主题带 topicMissingHint。manager prompt 要求每张新 work 工单（`ria_ticket create` 或 `ria_resolve` 转 work）创建后、派发前先 suggest，相近就 link，没有就立即 create（一张票即可，title ≤40 字、brief 一句话）再 link；存量票不回溯。`test/topic-suggest.mjs` 覆盖评分、候选排序/上限、只读、原子挂主题与失败回滚、更新拒绝、prompt 与 schema。
+
 Phase 28：会话改名工具。新增 `ria_title({ sessionId, title })`，走宿主 `sessionController.rename`，只改会话名，不发消息、不建 ticket、不唤醒 worker；预检复用 `sessionProblem`（存在、顶层、未归档、cwd 可用），允许改 Ria 自己，subagent 一律拒绝；空标题或宿主 `session/title-invalid` 映射为 `title_invalid` 并保留宿主原始 message；成功返回 accepted title 与已知 previous。`ria_spawn` 的 title 设置复用同一 helper，返回值语义不变（失败仍只写 `titleError`）。
 
 ## 16. 验收

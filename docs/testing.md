@@ -24,6 +24,8 @@ channel-pause-notices 测试覆盖：文件传输助手、微信 Claw、QQ 三�
 
 memory-budget 测试覆盖：`measureText` 的四个分叉样本（「阿汐」2 字符/6 字节、`e`+U+0301 2/3、😀 1/4、`abc` 3/3）；空 `memory.md` 的默认预算 2400 字符/12 条/300 字符；remember 后的 chars/bytes/entries；90% 预警；总字符、条数、单条三类硬拒绝且文件不变，错误含当前/上限/超出量、最长条目、所有超限 key、`diagnostics` 与 `No changes were made.`；bytes 超但 chars 未超时允许写入；条数只数顶格 `- `；`replace` 的 content/entries 两种成功路径、三类超限整次拒绝且旧文件不变、content+entries/都不给/多行条目报 `invalid_argument`；手工超限时只注入完整条目并附告警；archive 默认 4000 字符分页、`offset` 续读、`list`、非法 path 与不存在；`POST /settings` 的 `body.memory` 非法/空对象/合法值回显，仅提交 `maxEntries` 时不清空 `maxChars`/`maxEntryChars`；设置页源码断言只有一个带单位输入、`MEMORY_UI_FIELDS` 只含 `maxEntries`、用量行和保存按钮。
 
+topic-suggest 测试覆盖：`topicMatchTerms` 的 NFKC/大小写/标点归一、汉字 2-gram 与拉丁 token、空文本；`topicMatchScore` 完全相同为 1、无交集为 0、聚焦候选高于宽泛候选；`topicSuggestions` 排除 archived/merged、按 linked ticket goal 与 counts 打分、已挂 active primary 的热票不重复、score 降序与 topicId/ticketId 稳定 tie-break、默认 5 条与 limit 1/20、空 goal 返回空数组。fixture 覆盖 `ria_ticket create` 带 topicId 的原子挂 primary 与 `primaryTopicId`、无主题时的 `topicMissingHint`、`ria_status` 单票的 `primaryTopicId`；`ria_topic suggest` 的只读、命中/不命中、limit 校验与错误码；topic_missing/topic_archived 整单失败且 `store.tickets()` 不变、目标 goal 未落库、空 topicId 与更新已有票带 topicId 的拒绝；manager prompt 的 suggest/create/link（含 ria_resolve 转 work）、10 分钟与不回溯规则，以及 `ria_topic`/`ria_ticket` schema 的 suggest、goal、limit、topicId。
+
 ## 本地开发与隔离验证
 
 开发时也可以不改 profile，直接用 patch 叠加：

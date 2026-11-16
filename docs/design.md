@@ -174,7 +174,8 @@ ticket 是 Ria 的管理单位；一个 ticket 只对应一个 executor。完整
 - 一个工单最多一个 primary link；第二次设 primary 时旧的 primary 自动降为 related。卡片只按 primary 归组，related 只在主题页出现。
 - 项目直接复用现有 workspace（以及 Ria、未分配、cwd 回退），主题是项目内的一级分组；主题归属按它链接工单所属项目的多数决定，平局取最近更新。没有 primary 的工单进入所属项目的「未分类」桶，桶是看板即时合成的，不落库。
 - `ria_topic` 提供 create/update/link/unlink/merge/archive/list；merge 把源主题链接改指目标并写 mergedInto+archivedAt；archive 只在主题没有未完成工单时允许，否则返回 topic_unfinished。主题操作不派发、不唤醒、不改工单状态。
-- `GET /board` 在原 counts/page/lanes/tickets 之外新增 `projects[]`：项目含 topics，主题含 counts（open/working/blocked/done）、lastUpdatedAt、brief 与内联工单（待执行最多 6、执行中最多 6）。`GET /board/topic?topicId=` 返回该主题全部工单（updatedAt 倒序）与依赖边：主题内边给 from/to，跨主题边给 ticketId/dependsOn/topicId/topicTitle。未分类桶用 `unclassified:<laneId>` 作为合成 topicId。
+- `GET /board` 在原 counts/page/lanes/tickets 之外新增 `projects[]`：项目含 topics，主题含 counts（open/working/blocked/done）、lastUpdatedAt、brief、summaryAuto 与内联工单（待执行最多 6、执行中最多 6）。`GET /board/topic?topicId=` 返回该主题全部工单（updatedAt 倒序）与依赖边：主题内边给 from/to，跨主题边给 ticketId/dependsOn/topicId/topicTitle。未分类桶用 `unclassified:<laneId>` 作为合成 topicId。
+- 主题卡的 brief 是投影而非只有手写值：人工 brief 优先，`summaryAuto=false`；为空时 `topicSummaryInfo` 取该主题 primary 工单中 `updatedAt` 最新的一张，生成「「goal 最多 60 字」状态词 · 待执行 N · 执行中 M · 已完成 K」，计数为 0 的段省略，goal 超过 60 个 code point 补 `…`。未分类桶为「N 张待分类 · 最近：「goal」」，空桶为「暂无工单」；自动生成时 `summaryAuto=true`。客户端只显示这个字段，不在浏览器里重复拼接。
 
 ## 5. 工具
 
@@ -689,6 +690,8 @@ Phase 30：任务看板重做与归档日志改名。看板改为单画布：按
 Phase 31：主题看板与 schema v5。ria.json 新增 topics/links，一个工单最多一个 primary；旧 v4 原样加载并在首次写入前备份。新增 ria_topic（create/update/link/unlink/merge/archive/list）与 test/topic-board.mjs。GET /board 增加 projects[]→topics[]→tickets[] 投影与每主题 counts/brief/lastUpdatedAt，GET /board/topic?topicId= 返回主题全部工单与主题内/跨主题依赖边；无 primary 的工单进入每项目合成的未分类桶。看板改为横轴项目、项目内主题瀑布最多 3 列、卡内待执行/执行中/已完成三段、「……」行点击打开主题页、行点击复制与执行者跳转，筛选只灰化不重排。视觉迭代：主题卡 300→240→200px，卡内条目与弹窗共用 160×58 工单卡，超出条数上限时以「……」收尾；主题弹窗改为 2D 画布（每列 4 张、依赖右移、跨主题胶囊跳转），筛选从看板头移入弹窗头、只淡化不重排。
 
 Phase 32：memory 容量预算与 archive。core 改为 Unicode code point 计量（`maxChars` 2400 字符 / `maxEntries` 12 条 / `maxEntryChars` 300 字符），90% 预警、硬超限拒绝且不部分写入；`ria_memory` 增加 `list`、`scope=archive`、`path`、`offset`，archive 存 `stateDir/memory-archive/<slug>.md`（0600、16 KB 软上限、默认 4000 字符分页、绝不注入 prompt）；读侧手工超限只注入完整条目并显式告警；设置页新增「记忆预算」三项即时可调；`lib/reflection.mjs` 的 `memoryBytes` 改为 `memoryChars`，所有大小判断统一走 `lib/text-size.mjs` 的 `measureText()`。
+
+Phase 33：主题摘要自动归纳。GET /board 的主题卡 brief 优先保留人工值（`summaryAuto=false`）；为空时由 `lib/topics.mjs` 的 `topicSummaryInfo` 从该主题 primary 工单里取 `updatedAt` 最新的一张，生成「「goal 最多 60 字」状态词 · 待执行 N · 执行中 M · 已完成 K」，计数为 0 的段省略，goal 超出 60 个 code point 补 `…`；未分类桶为「N 张待分类 · 最近：「goal」」/「暂无工单」，自动生成时 `summaryAuto=true`。manager prompt 新增规则：派发、收口或标 blocked 后，主题进展句变化时用 `ria_topic {action:"update", brief}` 写最多 120 字符，没变不写，同主题 10 分钟内不重复写，没挂主题不写。
 
 Phase 28：会话改名工具。新增 `ria_title({ sessionId, title })`，走宿主 `sessionController.rename`，只改会话名，不发消息、不建 ticket、不唤醒 worker；预检复用 `sessionProblem`（存在、顶层、未归档、cwd 可用），允许改 Ria 自己，subagent 一律拒绝；空标题或宿主 `session/title-invalid` 映射为 `title_invalid` 并保留宿主原始 message；成功返回 accepted title 与已知 previous。`ria_spawn` 的 title 设置复用同一 helper，返回值语义不变（失败仍只写 `titleError`）。
 

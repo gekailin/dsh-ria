@@ -9,7 +9,7 @@
 - 横轴按项目排列；项目头显示项目名和「N 个主题 · 活跃 X · 阻塞 Y」。项目之间留间距，项目底色交替。
 - 每个项目内最多 3 列主题卡。主题按 `lastUpdatedAt` 倒序，依次放进当前已用高度最小的列（瀑布贪心），因此越新的主题越靠前，列高保持接近。
 - 主题卡固定 200px 宽，卡片间距 14px；卡内 160px 宽的工单卡左右各留 20px。卡头第一行是主题标题，第二行是「更新于 MM-DD HH:MM · done/total」。
-- 卡头下面是 summary：优先用主题的 `brief`；为空时取该主题最近一张未完成工单的 goal，截断到 40 字并补上状态。
+- 卡头下面是 summary：优先用主题的 `brief`；为空时取该主题 `updatedAt` 最新的一张工单（不再只限未完成），生成「「goal 最多 60 字」状态词 · 待执行 N · 执行中 M · 已完成 K」，为 0 的段省略，goal 超出 60 字补「…」。未分类桶显示「N 张待分类 · 最近：「goal」」，空桶显示「暂无工单」。
 - 卡内只有三段：
   - 待执行：计数，最多列 2 条；超过 2 条时末尾补一行「……」。blocked 归入待执行，但卡片上有红点和「等拍板」标签。
   - 执行中：计数，最多列 3 条；超过 3 条时末尾补一行「……」。
@@ -43,7 +43,7 @@ curl -s "http://127.0.0.1:3080/plugins/dsh-ria/api/board?limit=200"
 响应在原有 `counts` / `page` / `lanes` / `tickets` 之外新增 `projects`：
 
 - `projects[]`：`projectId`、`title`、`kind`、`cwd`、`sessionId`、`counts`、`lastUpdatedAt`、`topics[]`。
-- 每个 topic：`topicId`、`title`、`brief`、`level`、`parentId`、`unclassified`、`counts{open,working,blocked,done,total}`、`lastUpdatedAt`、`tickets`（待执行，最多 6 条）、`working`（执行中，最多 6 条）。
+- 每个 topic：`topicId`、`title`、`brief`、`summaryAuto`、`level`、`parentId`、`unclassified`、`counts{open,working,blocked,done,total}`、`lastUpdatedAt`、`tickets`（待执行，最多 6 条）、`working`（执行中，最多 6 条）。`brief` 是最终展示文本：人工摘要时 `summaryAuto=false`，为空则由宿主按最近工单自动拼接，`summaryAuto=true`。
 - 每张票带 `primaryTopicId`。一票最多一个 primary；`related` 链接不会把同一张票重复放到另一张主题卡上。
 
 主题页：

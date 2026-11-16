@@ -4,7 +4,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createFixture } from './support/ria-fixture.mjs'
-import { linkTopic, mergeTopicLinks, normalizeLink, normalizeLinks, normalizeTopic, normalizeTopics } from '../lib/topics.mjs'
+import { managerPrompt } from '../lib/index.js'
+import { linkTopic, mergeTopicLinks, normalizeLink, normalizeLinks, normalizeTopic, normalizeTopics, topicProgressCounts, topicSummaryInfo } from '../lib/topics.mjs'
 
 // Topic records are tolerant on load: missing optional fields are fine, bad
 // records are dropped, and only the first primary link of a ticket survives.
@@ -39,6 +40,48 @@ import { linkTopic, mergeTopicLinks, normalizeLink, normalizeLinks, normalizeTop
   const merged = mergeTopicLinks(promoted.links, 'topic_b', 'topic_c', 200)
   assert.ok(merged.links.every(item => item.topicId !== 'topic_b'))
   assert.equal(merged.links.filter(item => item.topicId === 'topic_c' && item.ticketId === 'ticket_1').length, 1)
+}
+
+// A hand-written brief wins; otherwise the board derives a single sentence
+// from the newest ticket and the same counts the card renders.
+{
+  assert.deepEqual(topicSummaryInfo({ brief: '  Human brief  ' }, []), { text: 'Human brief', auto: false })
+
+  const views = [
+    { ticketId: 'ticket_old', goal: 'older goal', status: 'open', updatedAt: 10 },
+    { ticketId: 'ticket_new', goal: 'newest goal', status: 'blocked', updatedAt: 30 },
+    { ticketId: 'ticket_done', goal: 'finished goal', status: 'done', updatedAt: 20 },
+  ]
+  assert.deepEqual(topicProgressCounts(views), { total: 3, open: 2, working: 0, blocked: 1, done: 1 })
+  assert.deepEqual(topicSummaryInfo({}, views), { text: '「newest goal」卡住 · 待执行 2 · 已完成 1', auto: true })
+
+  const statuses = [
+    ['open', '待执行', '待执行 1'],
+    ['working', '进行中', '执行中 1'],
+    ['blocked', '卡住', '待执行 1'],
+    ['done', '已完成', '已完成 1'],
+    ['cancelled', '已取消', '已完成 1'],
+  ]
+  for (const [status, word, counts] of statuses) {
+    const info = topicSummaryInfo({}, [{ goal: 'goal', status, updatedAt: 1 }])
+    assert.equal(info.text, '「goal」' + word + ' · ' + counts)
+    assert.equal(info.auto, true)
+  }
+
+  const mixed = topicProgressCounts(['open', 'working', 'blocked', 'done', 'failed', 'cancelled'].map(status => ({ status })))
+  assert.deepEqual(mixed, { total: 6, open: 2, working: 1, blocked: 1, done: 3 })
+
+  const longGoal = '很'.repeat(61)
+  const truncated = topicSummaryInfo({}, [{ goal: longGoal, status: 'open', updatedAt: 1 }])
+  assert.equal(truncated.text, '「' + '很'.repeat(60) + '…」待执行 · 待执行 1')
+  assert.equal(truncated.text.includes(longGoal), false, 'the 61st character is dropped')
+  assert.equal(topicSummaryInfo({}, []).text, '暂无工单')
+
+  assert.deepEqual(topicSummaryInfo({ unclassified: true }, []), { text: '暂无工单', auto: true })
+  assert.deepEqual(topicSummaryInfo({ unclassified: true }, [
+    { goal: 'older loose idea', status: 'open', updatedAt: 3 },
+    { goal: 'newest loose idea', status: 'open', updatedAt: 7 },
+  ]), { text: '2 张待分类 · 最近：「newest loose idea」', auto: true })
 }
 
 const fixture = await createFixture()
@@ -111,7 +154,10 @@ try {
   assert.deepEqual(cardB.counts, { total: 3, open: 2, working: 0, blocked: 0, done: 1 })
   assert.deepEqual(cardB.tickets.map(ticket => ticket.ticketId).sort(), [t2.ticketId, t4.ticketId].sort())
   assert.equal(cardB.done, 1)
-  assert.equal(cardB.brief, '')
+  assert.equal(cardB.brief, '「collect references」已完成 · 待执行 2 · 已完成 1')
+  assert.equal(cardB.summaryAuto, true)
+  assert.equal(cardA.brief, 'Updated brief')
+  assert.equal(cardA.summaryAuto, false)
   const riaProject = board.projects.find(item => item.kind === 'ria')
   assert.ok(riaProject, 'Ria project exists')
   const unclassified = riaProject.topics.find(topic => topic.unclassified)
@@ -119,6 +165,8 @@ try {
   assert.equal(unclassified.title, '未分类')
   assert.equal(unclassified.topicId, 'unclassified:ria')
   assert.equal(unclassified.tickets[0].ticketId, t5.ticketId)
+  assert.equal(unclassified.brief, '1 张待分类 · 最近：「loose idea without a topic」')
+  assert.equal(unclassified.summaryAuto, true)
 
   const topicPage = await get('/plugins/dsh-ria/api/board/topic?topicId=' + encodeURIComponent(topicB.topic.topicId))
   assert.equal(topicPage.status, 200)
@@ -200,6 +248,11 @@ try {
 // the modal-only filter, the brief fallback, and the click behavior.
 {
   const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const promptText = managerPrompt('session-ria', '')
+  assert.match(promptText, /ria_topic with action="update"/)
+  assert.match(promptText, /at most 120 characters/)
+  assert.match(promptText, /within 10 minutes/)
+  assert.match(promptText, /primary topic/)
   const start = source.indexOf('/* board-layout:start */')
   const end = source.indexOf('/* topic-board:end */')
   assert.ok(start >= 0 && end > start, 'client board markers')
@@ -305,14 +358,11 @@ try {
 
   const briefed = card('briefed', 1, idleCounts, { brief: '  The written brief  ' })
   assert.equal(api.topicBriefText(briefed), 'The written brief')
-  const longGoal = '这是一个很长很长的目标'.repeat(6)
   const fallback = card('fallback', 1, { total: 1, open: 1, working: 0, blocked: 0, done: 0 }, {
-    tickets: [{ ticketId: 'ticket_old', goal: 'older goal', status: 'open', updatedAt: 1 }, { ticketId: 'ticket_new', goal: longGoal, status: 'blocked', updatedAt: 9 }],
+    tickets: [{ ticketId: 'ticket_new', goal: 'server owns the fallback', status: 'blocked', updatedAt: 9 }],
   })
-  const fallbackText = api.topicBriefText(fallback)
-  assert.match(fallbackText, /^.*… · 卡住$/)
-  assert.equal(fallbackText.length <= 46, true)
-  assert.equal(api.topicBriefText(card('empty', 1, idleCounts)), '还没有关联工单')
+  assert.equal(api.topicBriefText(fallback), '暂无工单', 'the client does not rebuild the server summary')
+  assert.equal(api.topicBriefText(card('empty', 1, idleCounts)), '暂无工单')
   assert.equal(api.topicMatchesQuery(briefed, 'written brief'), true)
   assert.equal(api.topicMatchesQuery(briefed, 'missing'), false)
 

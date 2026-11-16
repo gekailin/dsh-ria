@@ -99,6 +99,8 @@ Ria 通过 run_code SDK 调用 15 个 `ria_*` 工具（含反思编排 `ria_refl
 - `archive`：仅当主题链接到的所有工单都已终态时允许；还有未完成工单返回 topic_unfinished，message 会列出前几个 ticketId。
 - `list`：默认隐藏已归档/已合并主题，includeArchived=true 全部返回；每项带 counts（total/open/working/blocked/done）。
 
+主题卡的 summary 先用手写的 `brief`；brief 为空（包括 update 时清空）时，宿主自动取该主题 `updatedAt` 最新的 primary 工单，拼成「「goal 最多 60 字」状态词 · 待执行 N · 执行中 M · 已完成 K」，为 0 的段省略；未分类桶显示「N 张待分类 · 最近：「goal」」，空桶显示「暂无工单」。看板返回的 `brief` 始终是最终展示文本，并带 `summaryAuto` 区分人工（false）与自动（true）；`ria_topic` 的 brief 描述也提示了这一点。Ria 在派发、收口或标 blocked 后若主题进展句变化，应用 `action=update` 写最多 120 字符；没变、10 分钟内已写过或工单没挂主题时不写。
+
 主题与链接存 ria.json 的 `topics`、`links`，schema v5 起存在；旧 v4 文件原样加载，缺字段视为空数组，首次写入前备份 `ria.json.v4.bak`。看板的主题卡最多显示待执行 2 条、执行中 3 条，超出时末尾显示「……」；已完成只显示计数。点「……」打开主题页，不在卡内展开。主题页列出该主题全部工单（updatedAt 倒序），主题内依赖画连线，跨主题依赖标出「↗ 在 <主题名>」。
 
 ## 排队消息（ria_queue）

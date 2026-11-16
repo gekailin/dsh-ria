@@ -258,7 +258,7 @@ try {
   const start = source.indexOf('/* board-layout:start */')
   const end = source.indexOf('/* topic-board:end */')
   assert.ok(start >= 0 && end > start, 'client board markers')
-  const api = new Function(source.slice(start, end) + '\nreturn { boardLayout, boardCanOpenSession, topicWaterfall, topicBoardLayout, topicTicketLayout, topicTicketTerminal, topicGridColumns, projectTicketTotal, topicCardHeight, topicSectionOmitted, topicTicketMatchesFilter, topicClockText, topicFilterOutside, topicFilterBubbleState, topicFilterScrollTop, topicBriefText, topicMatchesQuery, ticketSearchResults, ticketMatchesQuery, ticketSearchRank, TICKET_SEARCH_LIMIT, TOPIC_CARD_WIDTH, TOPIC_CARD_GAP, TOPIC_PROJECT_GAP, TOPIC_TICKET_INSET, TOPIC_MAX_COLUMNS, TOPIC_FILTERS, TOPIC_DEFAULT_FILTER, TOPIC_GRID_MAX_HEIGHT, TOPIC_GRID_GAP, TOPIC_GRID_MIN_CARD_WIDTH, TOPIC_FILTER_BUBBLE_MARGIN };')()
+  const api = new Function(source.slice(start, end) + '\nreturn { boardLayout, boardCanOpenSession, topicWaterfall, topicBoardLayout, topicTicketLayout, topicTicketTerminal, topicGridColumns, projectTicketTotal, projectBoardStats, projectStatsText, boardStatsSummary, boardUpdatedAt, topicCardHeight, topicSectionOmitted, topicTicketMatchesFilter, topicClockText, topicFilterOutside, topicFilterBubbleState, topicFilterScrollTop, topicBriefText, topicMatchesQuery, ticketSearchResults, ticketMatchesQuery, ticketSearchRank, TICKET_SEARCH_LIMIT, TOPIC_CARD_WIDTH, TOPIC_CARD_GAP, TOPIC_PROJECT_GAP, TOPIC_PROJECT_HEADER, TOPIC_TICKET_INSET, TOPIC_MAX_COLUMNS, TOPIC_FILTERS, TOPIC_DEFAULT_FILTER, TOPIC_GRID_MAX_HEIGHT, TOPIC_GRID_GAP, TOPIC_GRID_MIN_CARD_WIDTH, TOPIC_FILTER_BUBBLE_MARGIN };')()
   const card = (topicId, lastUpdatedAt, counts, extra = {}) => ({
     topicId,
     title: topicId,
@@ -326,7 +326,25 @@ try {
   assert.equal(projects.projects[1].x, projects.projects[0].width + api.TOPIC_PROJECT_GAP)
   assert.equal(projects.width, projects.projects[0].width + api.TOPIC_PROJECT_GAP + projects.projects[1].width)
   assert.equal(projects.projects[0].positions.get('a').x, 18)
-  assert.equal(projects.projects[0].positions.get('a').y, 48 + 18)
+  assert.equal(projects.projects[0].positions.get('a').y, api.TOPIC_PROJECT_HEADER + 18)
+
+  // The workspace header and the board header share one sentence: topics are
+  // active/blocked by whether they hold such a ticket, tickets by status.
+  assert.equal(api.projectStatsText({
+    counts: { topics: 5, topicsActive: 3, topicsBlocked: 2, total: 135, working: 1, blocked: 2 },
+  }), '5 个主题（活跃 3 · 阻塞 2） · 135 张工单（活跃 1 · 阻塞 2）')
+  assert.equal(api.projectStatsText({ counts: {}, topics: [] }),
+    '0 个主题（活跃 0 · 阻塞 0） · 0 张工单（活跃 0 · 阻塞 0）')
+  assert.equal(api.projectStatsText({
+    counts: {},
+    topics: [{ counts: { total: 2, open: 1, working: 1, blocked: 0, done: 0 } }],
+  }), '1 个主题（活跃 1 · 阻塞 0） · 2 张工单（活跃 1 · 阻塞 0）')
+  assert.equal(api.boardStatsSummary({
+    counts: { projects: 4, topics: 16, topicsActive: 6, topicsBlocked: 5, total: 221, working: 2, blocked: 5 },
+    projects: [],
+    searchIndex: [],
+  }), '4 个项目 · 16 个主题（活跃 6 · 阻塞 5） · 221 张工单（活跃 2 · 阻塞 5）')
+  assert.equal(api.boardUpdatedAt(Date.UTC(2026, 10, 16, 9, 8, 7)).length, 14, 'timestamp is MM-DD HH:MM:SS')
 
   const day = (date, hour, minute = 0) => new Date(2026, 10, date, hour, minute, 0).getTime()
   assert.equal(api.topicClockText(day(16, 11, 8)), '11-16 11:08')

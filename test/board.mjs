@@ -101,6 +101,55 @@ try {
   assert.equal(ghost.laneId, 'unassigned')
   assert.equal(ghost.laneLabel, '未分配')
 
+  // The summary line counts topics by whether they hold working/blocked
+  // tickets, while tickets count by their own status. A project exposes the
+  // same numbers so the workspace header can render one consistent sentence.
+  const statsFixture = await createFixture()
+  try {
+    const alpha = await statsFixture.call('ria_topic', { action: 'create', title: 'Alpha', brief: 'active topic', level: 1, executor: 'session-worker' })
+    const beta = await statsFixture.call('ria_topic', { action: 'create', title: 'Beta', brief: 'finished topic', level: 1, executor: 'session-worker' })
+    const alphaWorking = await statsFixture.call('ria_ticket', { goal: 'alpha working', executor: 'session-worker' })
+    const alphaBlocked = await statsFixture.call('ria_ticket', { goal: 'alpha blocked', executor: 'session-worker', status: 'blocked', blockedReason: 'waiting' })
+    const betaDone = await statsFixture.call('ria_ticket', { goal: 'beta done', executor: 'session-worker' })
+    await statsFixture.call('ria_topic', { action: 'link', topicId: alpha.topic.topicId, ticketId: alphaWorking.ticket.ticketId })
+    await statsFixture.call('ria_topic', { action: 'link', topicId: alpha.topic.topicId, ticketId: alphaBlocked.ticket.ticketId })
+    await statsFixture.call('ria_topic', { action: 'link', topicId: beta.topic.topicId, ticketId: betaDone.ticket.ticketId })
+    const statsStore = statsFixture.service.store
+    assert.equal(statsStore.transitionTicket(alphaWorking.ticket.ticketId, 'working', { executor: 'session-worker' }).ok, true)
+    assert.equal(statsStore.transitionTicket(betaDone.ticket.ticketId, 'working', { executor: 'session-worker' }).ok, true)
+    assert.equal(statsStore.transitionTicket(betaDone.ticket.ticketId, 'done', {
+      resolution: { kind: 'answered', summary: 'done' },
+    }).ok, true)
+
+    const statsBoard = await statsFixture.service.boardData()
+    assert.equal(statsBoard.counts.total, 3)
+    assert.equal(statsBoard.counts.working, 1)
+    assert.equal(statsBoard.counts.blocked, 1)
+    assert.equal(statsBoard.counts.projects, 1)
+    assert.equal(statsBoard.counts.topics, 2)
+    assert.equal(statsBoard.counts.topicsActive, 1)
+    assert.equal(statsBoard.counts.topicsBlocked, 1)
+
+    const alphaCard = statsBoard.projects.flatMap(project => project.topics)
+      .find(topic => topic.topicId === alpha.topic.topicId)
+    assert.equal(alphaCard.counts.working, 1)
+    assert.equal(alphaCard.counts.blocked, 1)
+    const betaCard = statsBoard.projects.flatMap(project => project.topics)
+      .find(topic => topic.topicId === beta.topic.topicId)
+    assert.equal(betaCard.counts.working, 0)
+    assert.equal(betaCard.counts.blocked, 0)
+
+    const statsProject = statsBoard.projects[0]
+    assert.equal(statsProject.counts.topics, 2)
+    assert.equal(statsProject.counts.topicsActive, 1)
+    assert.equal(statsProject.counts.topicsBlocked, 1)
+    assert.equal(statsProject.counts.working, 1)
+    assert.equal(statsProject.counts.blocked, 1)
+    assert.equal(statsProject.counts.total, 3)
+  } finally {
+    statsFixture.cleanup()
+  }
+
   const lanes = board.lanes.map(lane => lane.id)
   assert.ok(lanes.includes('unassigned'))
   assert.equal(board.lanes.find(lane => lane.id === 'unassigned').total, 1)
@@ -385,7 +434,12 @@ try {
 
   // User-facing copy calls a ticket a 工单, while ids and API fields stay unchanged.
   assert.match(layoutApi.source, /正在加载更早的工单…/)
-  assert.match(layoutApi.source, /counts\.total \+ " 张工单 · 活跃 "/)
+  assert.match(layoutApi.source, /个主题（活跃 /)
+  assert.match(layoutApi.source, /张工单（活跃 /)
+  assert.match(layoutApi.source, /data-ria-board-refresh/)
+  assert.match(layoutApi.source, /data-ria-board-updated/)
+  assert.match(layoutApi.source, /function ProjectHeader/)
+  assert.match(layoutApi.source, /data-ria-project-stats/)
   assert.match(layoutApi.source, /向左滚动加载更早的工单/)
   assert.match(layoutApi.source, /搜索目标或工单 ID/)
   assert.match(layoutApi.source, /\["工单", ticket\.ticketId\]/)

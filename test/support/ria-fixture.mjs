@@ -32,6 +32,7 @@ export async function createFixture(options = {}) {
   const agentTools = new Map()
   const prompts = []
   const steered = []
+  const followups = []
   const creates = []
   const renames = []
   const effects = []
@@ -84,6 +85,7 @@ export async function createFixture(options = {}) {
     },
     model: { current() { return models.get(String(riaAgent.id)) } },
     steer(message) { steered.push(message) },
+    followup(message) { followups.push(message) },
     session: {
       snapshotEvents() { return options.sessionEvents && options.sessionEvents[riaId] ? options.sessionEvents[riaId].slice() : [] },
       append() { return { seq: 0, time: 1 } },
@@ -450,6 +452,9 @@ export async function createFixture(options = {}) {
 
   const service = apply(ctx, { stateDir })
   await service.ensure()
+  // Automation changes the approval waterfall, so every existing test runs
+  // with the host-native behaviour unless it opts in explicitly.
+  service.store.setSettings({ approvalAutomation: options.approvalAutomation === true })
   const call = async (name, args) => {
     const definition = installed.get(name)
     if (!definition) throw new Error('tool not installed: ' + name)
@@ -475,6 +480,7 @@ export async function createFixture(options = {}) {
     agentTools,
     prompts,
     steered,
+    followups,
     emit,
     creates,
     renames,

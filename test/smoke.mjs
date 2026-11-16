@@ -246,6 +246,7 @@ function expectedSettings(patch = {}) {
     dispatchGuard: true,
     progressCards: false,
     wechatAutoPause: true,
+    approvalAutomation: true,
     wechatClawImage: { inbound: true, outbound: true },
     style: { ...STYLE_SETTINGS_DEFAULTS, ...(style || {}), effectiveText: (style && style.effectiveText) || '' },
     reflection: { ...REFLECTION_DEFAULTS, ...(reflection || {}) },
@@ -334,6 +335,12 @@ assert.deepEqual(autoPauseOff.body, expectedSettings({ wechatAutoPause: false })
 const autoPauseOn = await request('POST', '/plugins/dsh-ria/api/settings', { wechatAutoPause: true })
 assert.equal(autoPauseOn.status, 200)
 assert.deepEqual(autoPauseOn.body, expectedSettings())
+const approvalOff = await request('POST', '/plugins/dsh-ria/api/settings', { approvalAutomation: false })
+assert.equal(approvalOff.status, 200)
+assert.deepEqual(approvalOff.body, expectedSettings({ approvalAutomation: false }))
+const approvalOn = await request('POST', '/plugins/dsh-ria/api/settings', { approvalAutomation: true })
+assert.equal(approvalOn.status, 200)
+assert.deepEqual(approvalOn.body, expectedSettings())
 // Claw image transfer is fixed on. Older clients may still try to turn it off;
 // the field is accepted and ignored so their save does not fail.
 const clawImageOff = await request('POST', '/plugins/dsh-ria/api/settings', { wechatClawImage: { inbound: false, outbound: false } })

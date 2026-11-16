@@ -29,7 +29,7 @@ executor 要么是 worker 的 sessionId，要么是 `self`：Ria 默认把任务
 不做的部分：
 
 - 不轮询 worker 进度，不维护独立 bridge，不额外占端口；只监听宿主事件与 worker idle。
-- 不替用户批准 worker 的权限请求，只把审批暴露给用户；不自动放宽 worker 权限。
+- 默认按风险代批 worker 的权限请求：低风险只放行本次调用，高风险只能转给用户或拒绝；只有在用户明确要求时才通过 `ria_grant` 放宽，从不自动放宽长期权限。
 - 不把 subagent 当 worker；派发目标必须是顶层会话。
 - 不写 transcript；Ria 与 worker 的会话日志仍由 DSH 管理。
 
@@ -56,7 +56,7 @@ executor 要么是 worker 的 sessionId，要么是 `self`：Ria 默认把任务
 - **waitingOn**：`ria`、`worker`、`user`、`approval`、`environment`、`children`、`dependency`、`none`。它回答“现在卡在谁”。
 - **dependsOn**：最多 8 个上游，DAG，可跨 root。未全部 `done` 时工单停在 `open + waitingOn=dependency`，不可派发；上游 `failed`/`cancelled` 不自动跳过，写 `dependencyAlerts` 并告警。全部 `done` 后写 `readyAt`，生成 `queueToken = ticketId:readyAt:revision`。token 不入库，派发时校验，保证一次就绪最多派发一次。
 - **checklist**：有序步骤，最多 50 条；status 与看板显示 `done/total`；终态后视为最终结果，不再改勾。
-- **attention**：结构化等待项 `{kind, question, options?}`；`blocked + user` 放问题与选项，`blocked + approval` 放审批引用。审批本身由独立的只读观察器处理，不由 Ria 批准。
+- **attention**：结构化等待项 `{kind, question, options?}`；`blocked + user` 放问题与选项，`blocked + approval` 放审批引用。审批默认由插件按风险规则加 Ria 裁决处理；Ria 只能放行本次调用，不能改持久权限。
 - **revision / history**：每次状态变更 revision 递增，按 revision 做乐观并发；非法转移返回 `invalid_transition`，不静默改写。只有 `RiaStore.transitionTicket` 能改 status，22 条不变量在写入时校验。
 
 ## 3. 主流程
@@ -105,9 +105,9 @@ outbox 与 `ria.json` 不是同一个事务：派发已被接受、但 outbox �
 
 启动时只恢复 `intake`、`open`、`working`；`forked` 递归恢复子工单，`blocked` 不自动续跑。每个工单最多恢复 3 次，超过则转 `blocked` 并标 `recovery_exhausted`。pending request 按原 requestId 重试；startup 只向 Ria 发一条恢复提示，避免重复唤醒。
 
-### 4.4 审批可见性
+### 4.4 审批自动化
 
-插件只读监听 `approval/request`：若等待审批的是某个活跃工单的 executor，就把工单迁到 `blocked + waitingOn=approval`，写 attention，并立即 `next()` 把决定权交回原有 UI answerer。插件从不批准或拒绝。审批结束、abort 或 15 分钟 TTL 到期后，工单从 `blocked` 经 `open` 回到 `working`；重启时清理已失效的审批引用，避免永久卡住。
+插件监听 `approval/request`，用 `lib/approval-policy.mjs` 对缓存的工具参数做保守分类。低风险直接返回 `allowed-once`（仅本次），硬拒绝直接 `rejected`；中/高风险把工单迁到 `blocked + waitingOn=approval`，写 attention，唤醒 Ria，并等待 `ria_approval_decision`。Ria 只能 allow 中/低风险；高风险只能 `ask-user` 或 `deny`。2 分钟无决定、唤醒失败或审计失败一律按拒绝处理并通知用户。`ask-user` 调用宿主原生 UI，用户的结果同样入审计。审批结束、abort 或 TTL 到期后，工单从 `blocked` 经 `open` 回到 `working`；重启时清理已失效的审批引用，避免永久卡住。关闭设置开关后回到只读观察 + 原生 UI 的旧行为。
 
 ### 4.5 依赖与忙碌
 

@@ -17,7 +17,8 @@ Ria 通过 run_code SDK 调用 15 个 `ria_*` 工具（含反思编排 `ria_refl
 | ria_send_file | 把本机一个文件发到最近活跃的手机通道（微信 Claw、QQ 或微信「文件传输助手」）。path 必须是绝对路径，realpath 解析后须是普通文件、非空、扩展名在 allowlist 内且不超过通道上限；note 可选、最多 500 字。通道暂停时 durable 排队并返回 queued=true；没有回复目标返回 no_target；成功或失败都记 lastFileSend。只发文件，不建工单、不唤醒 worker、不改任务状态。 |
 | ria_read | 读某个 Session 的近期消息。live 用 snapshotEvents，冷会话用持久化 events，不 resume。返回值还带 queue：与 ria_queue list 相同的 pending 视图，冷会话为 null。 |
 | ria_queue | 列出或撤回一个顶层 worker 尚未执行的消息。action=list 返回 running 与 queue（id、placement=queued/steering/context、可选 rpcId、preview）；冷会话 queue=null。action=remove 接受 itemId 或 rpcId（rpcId 来自 ria_request 的 requestId；两者都给时 itemId 优先），不可恢复，只删 pending，不停止当前 turn、不改工单、不影响 recentWorkers。失败码 queue_item_not_found、queue_remove_failed；预检同 ria_request。 |
-| ria_approval | 列出正在等待审批的 worker（仅限有 active 工单的 executor）。每项带 approvalId、workerSessionId、ticketId、toolName、callId/reason、createdAt、expiresAt、expiresInMs。捕获审批时会把对应工单标成 blocked+waitingOn=approval、写 kind=approval 的 attention，并排一张 approval_note 卡片与一条微信提醒。只读：不批准、不拒绝、不替 UI answerer 作答。 |
+| ria_approval | 列出正在等待 Ria 裁决的 worker 审批（仅限有 active 工单的 executor）。每项带 approvalId、workerSessionId、ticketId、toolName、callId/reason、risk、argsPreview、decisionBy、createdAt、expiresAt、expiresInMs。低风险已被宿主规则直接放行，不会出现在列表里。只读：不批准、不拒绝。 |
+| ria_approval_decision | 裁决一条待批请求。decision=allow 只放行本次调用（allowed-once）；deny 拒绝；ask-user 交给用户原生审批 UI。只有 low/medium 可 allow，high 只接受 ask-user/deny（否则 code=risk_requires_user）。必须 2 分钟内决定，否则宿主按拒绝处理并通知用户；每次决定写 audit.jsonl。不能用来放宽 sandbox/approval policy，那只能由用户明确要求后走 ria_grant。 |
 | ria_grant | 临时调整一个 worker 的 sandbox mode 和/或 approval policy。action=set/list/reset；set 必须带 userConfirmed=true，并记录原值、到期时间、审计，任务结束或 reset 时恢复。 |
 | ria_memory | 读/写 memory.md 与归档记忆。core 预算默认 2400 字符 / 12 条 / 单条 300 字符，按 Unicode code point 计；超限拒绝写入；archive 按主题存 `memory-archive/<slug>.md`，不注入 prompt。 |
 
@@ -126,15 +127,16 @@ Ria 通过宿主模型注册表（`ctx.get('llm').listProviders()/listModels(pro
 - 近期列表为空、没有一个明显合适、或 Ria 自己判断不清时，先问用户选哪个会话，不猜，也不退回“遍历全部会话”。
 - title 来自 DSH 的 title projection；没有标题、没有 cwd 或不是近期用过的 worker，对应字段不输出。
 
-## 审批可见性
+## 审批自动化与可见性
 
-- 插件在根上下文监听 `approval/request`，只记录有 open/working 工单的 executor 的待审批请求：worker session、工单、工具、callId、原因、时间。
-- 捕获时立刻把对应工单从 open/working 迁到 `blocked` + `waitingOn=approval`，写入 `attention={kind:'approval', question, askedBy:'worker', ref:approvalId}`；`blockedReason` 是同一句中文问题。这样 `ria_status` 的 `attentionOverview.waitingOnApproval` 与 items 能直接看到卡在哪。
-- 同时经 outbox 排两条可见副作用：`approval_note` 卡片（在 Ria 当前 turn 末尾显示，没有活跃 turn 时等下一次 turn/start）和 `wechat_approval_note` 微信提醒（`🔐 等待权限审批：...`）。两条都用 `approvalId` 做 dedupeKey。
-- 记录后立即调用 `next()`，把决定权交回原有 UI answerer；插件从不改变审批结果。
-- 审批结束（允许/拒绝/取消）、AbortSignal abort 或 15 分钟 TTL 到期时，工单走 `blocked -> open -> working`，`waitingOn=worker` 并清空 attention。同一工单有多个 pending 审批时，等最后一个结束再恢复。
+- 插件在根上下文监听 `approval/request`。开启 `approvalAutomation`（默认）时，先用 `tools/pre-execute` 缓存的参数按 `lib/approval-policy.mjs` 分类：低风险直接返回 `allowed-once`；硬拒绝直接返回 `rejected`；中/高风险进入 Ria 裁决。
+- 中/高风险会立刻把对应工单从 open/working 迁到 `blocked` + `waitingOn=approval`，写入 `attention={kind:'approval', question, askedBy:'worker', ref:approvalId}`；`blockedReason` 是同一句中文问题。这样 `ria_status` 的 `attentionOverview.waitingOnApproval` 与 items 能直接看到卡在哪。
+- 同时经 outbox 排两条可见副作用：`approval_note` 卡片（在 Ria 当前 turn 末尾显示，没有活跃 turn 时等下一次 turn/start）和 `wechat_approval_note` 微信提醒（`🔐 等待权限审批：...`）。两条都用 `approvalId` 做 dedupeKey；后续 allow/deny/timeout 结果用 `approvalId:event` 另发一条。
+- Ria 通过 `source.kind=ria-approval` 的 `agent.followup` 消息被唤醒，不经过 `sessionController.prompt`，所以不会污染 intake 或手机渠道的人类消息锚点。消息里带工单目标/验收、工具、风险、脱敏参数和 2 分钟 TTL。
+- `ria_approval_decision` 在 TTL 内回填：allow → `allowed-once`，deny → `rejected`，ask-user → 调用原生 UI 的 `next()` 并以用户结果收尾。超时、唤醒失败、审计写入失败 → `rejected` 并通知用户。每次决定都写 `stateDir/audit.jsonl` 的 `approval/decision`。
+- 审批结束（允许/拒绝/取消）、AbortSignal abort 或 TTL 到期时，工单走 `blocked -> open -> working`，`waitingOn=worker` 并清空 attention。同一工单有多个 pending 审批时，等最后一个结束再恢复。
 - 审批队列只在内存里。startup 会把「blocked+waitingOn=approval 但 ref 已不在 pending」的工单恢复为 working，避免重启后永久卡住。
-- `ria_approval` 返回当前 pending 列表及每项的 `ticketId`、`expiresAt`、`expiresInMs`（剩余毫秒）；pending 在审批结束、abort、15 分钟超时或 DSH 重启后清除。
+- 关闭 `approvalAutomation` 后回退旧行为：只记录、block、通知，然后 `next()` 交给原生 UI，15 分钟 TTL；Ria 不能代批。`ria_approval` 返回当前 pending 列表及每项的 `ticketId`、`risk`、`argsPreview`、`expiresAt`、`expiresInMs`。
 - 用户要批准/拒绝时，仍需打开对应 worker 会话操作；Ria 只能转告是哪个 worker、哪个工具、什么原因，不能代替用户决定。
 
 ## 临时 worker 权限（阶段二）

@@ -23,13 +23,12 @@ function assertLossless(value, path = 'value') {
 }
 
 function setup(overrides = {}) {
-  let handler
+  const handlers = new Map()
   let disposed = false
   const ctx = {
     on(event, fn) {
-      assert.equal(event, 'approval/request')
-      handler = fn
-      return () => { disposed = true; handler = undefined }
+      handlers.set(event, fn)
+      return () => { disposed = true; handlers.delete(event) }
     },
   }
   const store = {
@@ -38,7 +37,12 @@ function setup(overrides = {}) {
   }
   const observer = new ApprovalObserver({ ctx, store, ttlMs: 10000, ...overrides })
   const dispose = observer.subscribe()
-  return { observer, dispose, invoke: (request, next) => handler(request, next), isDisposed: () => disposed }
+  return {
+    observer,
+    dispose,
+    invoke: (request, next) => handlers.get('approval/request')(request, next),
+    isDisposed: () => disposed,
+  }
 }
 
 {

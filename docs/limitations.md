@@ -14,7 +14,7 @@
 - QQ 群消息必须 @ 机器人；QQ 机器人还需要开放平台的消息权限，否则网关已连接也可能收不到消息。
 - 多通道同时登录时，DSH 重启后各自恢复暂停状态；在第一条新入站消息把其他通道自动暂停之前，可能短暂重复推送。
 - 手机渠道入站在 Ria 有运行中 turn 时用 steer 插入当前轮，因此长任务期间发来的话可能被当成补充信息、回复延后；steer 失败会回退一次 queue。忙碌判定用插件自己的 `currentRiaTurn`（`turn/start` 置位、`turn/end` 清除），不额外轮询宿主状态。
-- 审批可见性会主动把工单标成 blocked+approval、排卡片/微信提醒并支持 TTL 与重启对账，但仍不代批、不自动批准；临时权限需要用户明确指令，Ria 不能自行判断后提权。
+- 审批自动化默认开启，但它是「收紧」而不是「放开」：Ria 只能放行本次调用（allowed-once），不能改 sandbox/approval policy；高风险只能转用户或拒绝；超时、唤醒失败、审计失败一律按拒绝。风险分类是保守的字符串/规则启发式，仍可能把安全命令判成中风险（多一次询问），或把少见写法误判为低风险；硬拒绝清单不覆盖所有危险组合。临时权限仍需用户明确指令并通过 ria_grant 下发。
 - worker 自动唤醒由 `agent/status` 的 `idle` 触发，能读到最后一轮 `turn/end` 的 reason（含 `aborted(user)`），但“明确拒绝”只能由 Ria 读消息判断；提示措辞不假设完成，需要 Ria 再 read。
 - 不做 needs_input/failed 的独立事件级唤醒；需要时用官方 schedule 或用户回来问。
 - worker-idle 通知没有在真实 worker 会话里触发过，只用 mock 事件验证。
@@ -27,7 +27,7 @@
 - note 卡片已在隔离 DSH 的真实 Web UI 中验证渲染：`[data-ria-dispatch-note="ticket"]` 出现在轮次末尾，标题“任务已派发”。该截图用手工写入 ria.json 的 note 验证 UI；真实 `ria_request` 写入路径由 smoke 覆盖。截图：`docs/assets/screenshots/ui-dispatch-note.png`。
 - note 只保留最近 100 条；更早的卡片不会再显示。
 - note 缺失/空白/超长是 Host 硬报错；note 展示失败只记 warn，不阻断已经成功的派发。
-- 临时权限只在单元测试和 smoke 中验证过，还没有在真实 worker 会话里触发；首次使用时需要确认 DSH 的 sandbox/approval 事件投影和恢复行为。
+- 审批自动化的判断链路只在单元测试和 fixture 中验证过（模拟 approval/request、真实 observer/policy/decision/audit），还没有在真实 worker 会话里触发；首次使用时需要确认 DSH 的 sandbox/approval 事件投影、agent.followup 唤醒和恢复行为。
 - “近期 worker”只记录 Ria 成功派发过的会话；用户手工在其他会话里做的使用不会计入。挑选本身是 prompt 行为约束，不是 Host 强制，模型仍可能违背；尚未用真实模型验证。
 - DSH 的 sandbox override 无法清除；恢复会写回原 effective mode，因此可能留下一个同值 override。
 - 工单依赖由 Host 计算并写持久信号，但实际派发仍只由 Ria 通过 ria_request 完成；没有第二调度器，Ria 不响应 [Queue ready] 时工单会停在 ready。
@@ -42,7 +42,8 @@
 - 微信凭据只在本地 stateDir；没有额外的 loopback API，UI API 校验 DSH 同源。
 - 不自动上传、不遥测。
 - Ria 可以读 Session、发消息、建任务；这些能力只在用户明确要求时使用。
-- `approval/request` 监听器只读：记录 pending 后调用 next()，从不返回审批结果。
+- `approval/request` 监听器在自动代批开启时会返回审批结果：低风险 `allowed-once`、硬拒绝 `rejected`、中/高风险由 Ria 在 2 分钟内裁决；超时、唤醒失败、审计失败一律 `rejected`。关闭开关后回到只读 + `next()`。
+- 自动代批只放行单次调用（`allowed-once`），不写 sandbox override、不改 approval policy；`ask-user` 才进入原生 UI。
 - `agent/status` 监听器只读 worker 的 id 和状态，只向 Ria 发通知；不 resume、不写 worker。
-- 临时权限只写当前 session 的 sandbox/mode 和 approval policy 投影，不改全局默认，也不改 worker 的 tools/prompt/preset；所有变更写入 audit.jsonl 0600。
+- 临时权限只写当前 session 的 sandbox/mode 和 approval policy 投影，不改全局默认，也不改 worker 的 tools/prompt/preset；所有变更写入 audit.jsonl 0600。审批决定也写同一份 audit.jsonl，参数摘要做脱敏。
 - 删除 Ria 不会自动删除工单、memory 和 Workspace；需要时手动清理。

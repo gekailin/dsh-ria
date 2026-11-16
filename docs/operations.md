@@ -135,4 +135,13 @@ Host 启动后延迟 1.5 秒：
 
 ## 审批等待
 
-worker 触发 `approval/request` 时，Host 会把它的 active 工单标成 `blocked`、`waitingOn=approval`，并把一句中文问题写进 `attention`（kind=approval，askedBy=worker，ref=approvalId）。同时排一张 `approval_note` 卡片和一条微信提醒；审批结束、abort 或 15 分钟超时后工单回到 `working`，`waitingOn=worker`，attention 清空。审批队列只在内存中，重启后 startup 会把没有对应 pending 的 blocked+approval 工单恢复为 working，不会永久卡住。Ria 仍然只能查看（`ria_approval`），不能代批。
+默认开启「审批自动代批」。worker 触发 `approval/request` 时，宿主先查设置项 `approvalAutomation`，再按风险规则决定：
+
+- **低风险**：只读命令、工作区内的构建与测试等，直接把本次调用放行（`allowed-once`），不唤醒 Ria、不阻塞工单，只写一条 `audit.jsonl`。
+- **中风险**：工作区内写文件、无法归类的调用等，把 active 工单标成 `blocked` + `waitingOn=approval`，写 kind=approval 的 attention，排一张 `approval_note` 卡片和一条微信提醒，并用 `source.kind=ria-approval` 的消息唤醒 Ria。Ria 必须在 2 分钟内用 `ria_approval_decision` 选择 `allow` / `deny` / `ask-user`。
+- **高风险**：网络、删除/覆盖、工作区外写入、系统目录、密钥/凭据等，只允许 Ria 选择 `ask-user` 或 `deny`；`allow` 会被工具拒绝。
+- **硬拒绝**：`sudo`、`rm -rf /`、`~/.ssh`、`~/.dsh` 核心状态、`dsh-daemon stop/uninstall` 等直接拒绝，不唤醒 Ria。
+
+`allow` 只对当前这次调用生效，不会改变 sandbox 或 approval policy。超时、唤醒失败、审计写入失败都按拒绝处理（fail closed），并给用户发一条结果通知。`ask-user` 会调用宿主的原生审批 UI，用户最终决定同样写入审计。审批结束、abort 或超时后工单从 `blocked` 经 `open` 回到 `working`；多个审批同时挂在一个工单时，等最后一个结束再恢复。审批队列只在内存中，重启后 startup 会把没有对应 pending 的 blocked+approval 工单恢复为 working，不会永久卡住。
+
+关闭设置里的「审批自动代批」后，回到旧行为：插件只观察、把工单标成 blocked 并通知，由用户在 worker 会话或原生 UI 决定，15 分钟 TTL 后恢复；`ria_approval` 可查看，`ria_approval_decision` 会返回 `approval_automation_disabled`。

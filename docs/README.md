@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | [architecture.md](architecture.md) | 系统顶层地图：定位与边界、核心对象、主流程、可靠性、持久化、通道、记忆与反思、扩展点 | 现行 |
 | [tools.md](tools.md) | 15 个 `ria_*` 工具与 6 个只读 `ria_reflect_*` 的参数、返回、依赖和调用纪律 | 现行 |
-| [operations.md](operations.md) | 运行手册：入口、任务转述、60 秒确认、outbox、归档、重启恢复、worker 唤醒、审批等待 | 现行 |
+| [operations.md](operations.md) | 运行手册：入口、任务转述、60 秒确认、outbox、归档、重启恢复、worker 唤醒、审批自动化 | 现行 |
 | [channels.md](channels.md) | 三个手机通道的面板、协议、入站投递、暂停与状态文件 | 现行 |
 | [wechat.md](wechat.md) | 微信「文件传输助手」：扫码、暂停、长回复转 .md、图片与文件收发 | 现行 |
 | [board-preview.md](board-preview.md) | 看板与主题视图的 UI 行为、数据字段、`/ask` 与迁移 | 现行 |
@@ -26,7 +26,7 @@
 | [task-model.md](archive/task-model.md) | `docs/task-model-design.md`（1351 行） | 历史设计；P0 已落地，保留 8 态、不变量、捕获/去重与失败矩阵；P1 分叉未实现 |
 | [ticket-queue.md](archive/ticket-queue.md) | `docs/ticket-queue-design.md`（719 行） | 历史设计；P0 依赖/排队已落地，保留 queueToken、wake key、失败 hold 与 P1 缺口 |
 | [daily-reflection.md](archive/daily-reflection.md) | `docs/daily-reflection-design.md`（1395 行） | 历史设计；服务端/调度/API/设置页已实现，保留预算、幂等与未实现项 |
-| [approval-automation.md](archive/approval-automation.md) | `docs/approval-automation-design.md`（585 行） | 方案未实现；保留方案 C、规则匹配、缓存与待拍板项 |
+| [approval-automation.md](archive/approval-automation.md) | `docs/approval-automation-design.md`（585 行） | 旧方案稿；2026-11-16 用户拍板「默认从严代批」后已按新语义落地，本稿仅保留方案 C、规则匹配、参数缓存与待拍板项，不代表现行实现 |
 | [system-dispatch-guard.md](archive/system-dispatch-guard.md) | `docs/system-dispatch-guard.md`（265 行） | 已实施；保留 section 名/order、挂载点和「行为约束非硬拦截」 |
 | [superagent-borrow.md](archive/superagent-borrow.md) | `docs/superagent-borrow.md`（277 行） | 评估稿；保留采纳/拒绝清单（outbox、attention 已落地，idle 合并未实现） |
 | [memory-audit.md](archive/memory-audit.md) | `docs/memory-audit.md`（301 行） | 已落地（prompt 侧）；保留分流结论与未落地的路由/清理项 |

@@ -24,7 +24,7 @@
 - 额外创建一个 Ria Workspace 是当前 DSH UI 的硬要求。
 - 欢迎卡片由 client 插件渲染（`conversation.input.dock`），不写 session 日志、不占 turn。Host 侧曾用合成的 assistant turn 显示欢迎气泡；该 turn 排在真实 turn 的 system/message 之前，v4 校验报 `system/message requires a protected first surface head`，重启加载历史 corrupt，因此废弃。
 - 防误发提示是 agent system prompt 的行为约束，不是硬拦截；worker 仍可能直接执行明显无关的消息。设置页只开关该 section，不能保证模型遵守。
-- note 卡片已在隔离 DSH 的真实 Web UI 中验证渲染：`[data-ria-dispatch-note="ticket"]` 出现在轮次末尾，标题“任务已派发”。该截图用手工写入 ria.json 的 note 验证 UI；真实 `ria_request` 写入路径由 smoke 覆盖。截图：`docs/ui-dispatch-note.png`。
+- note 卡片已在隔离 DSH 的真实 Web UI 中验证渲染：`[data-ria-dispatch-note="ticket"]` 出现在轮次末尾，标题“任务已派发”。该截图用手工写入 ria.json 的 note 验证 UI；真实 `ria_request` 写入路径由 smoke 覆盖。截图：`docs/assets/screenshots/ui-dispatch-note.png`。
 - note 只保留最近 100 条；更早的卡片不会再显示。
 - note 缺失/空白/超长是 Host 硬报错；note 展示失败只记 warn，不阻断已经成功的派发。
 - 临时权限只在单元测试和 smoke 中验证过，还没有在真实 worker 会话里触发；首次使用时需要确认 DSH 的 sandbox/approval 事件投影和恢复行为。

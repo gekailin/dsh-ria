@@ -1,6 +1,6 @@
 # Ria 软件架构设计
 
-> 一页读懂当前系统：边界、对象、流程与可靠性。用户用法见 [README.md](../README.md)，历史设计与细节见 [docs/design.md](design.md)。
+> 一页读懂当前系统：边界、对象、流程与可靠性。用户用法见 [README.md](../README.md)，历史设计与细节见 [docs/archive/design-history.md](archive/design-history.md)。
 
 ## 目录
 
@@ -16,7 +16,7 @@
 
 ## 1. 定位与边界
 
-Ria（阿汐）是一个全局唯一的顶层 DSH Session，不是 subagent，也不是多 Agent 编排器。她以 PTC preset 运行，模型只直接看到 `run_code` 和生成的 SDK；12 个 `ria_*` 工具通过 SDK 注册。她的职责是**管理任务，不是替 worker 干活**：
+Ria（阿汐）是一个全局唯一的顶层 DSH Session，不是 subagent，也不是多 Agent 编排器。她以 PTC preset 运行，模型只直接看到 `run_code` 和生成的 SDK；15 个 `ria_*` 工具通过 SDK 注册。她的职责是**管理任务，不是替 worker 干活**：
 
 1. 听懂需求，不清楚就先问；
 2. 把可执行部分写成工单，定义验收标准；
@@ -123,10 +123,10 @@ outbox 与 `ria.json` 不是同一个事务：派发已被接受、但 outbox �
 
 | 文件 / 目录 | 职责 |
 |---|---|
-| `ria.json` | 热状态 schema v4：Ria session、tickets、pending deliveries、recentWorkers、grants、settings、dispatchNotes、feedback |
+| `ria.json` | 热状态 schema v5：Ria session、tickets、pending deliveries、recentWorkers、grants、settings、dispatchNotes、feedback |
 | `outbox.json` | 副作用待投递 / 失败 / 已送达记录；独立于 ria.json |
 | `tickets.log.jsonl` | 终态工单归档；按月文件保留 12 个月 |
-| `memory.md` | 稳定偏好，≤4 KB，0600 |
+| `memory.md` | 稳定偏好，默认 2400 字符 / 12 条 / 单条 300，0600；超出归档到 `memory-archive/<slug>.md`（不注入） |
 | `reflections/` | 定期反思的 notes 与运行账本；P2 wiki 也规划在这里（尚未实现） |
 | `wechat-inbound/` / `wechat-claw-inbound/` | 微信入站图片原图；30 天 / 500 个上限 |
 | `wechat/`、`wechat-claw/`、`qq-bot/` | 各通道凭据、游标与暂停状态 |
@@ -146,16 +146,16 @@ outbox 与 `ria.json` 不是同一个事务：派发已被接受、但 outbox �
 
 ## 7. 记忆与反省
 
-`memory.md` 只放稳定偏好与长期约定，由 `ria_memory` 显式读写，上限 4 KB；不抄工单状态、时间戳或逐轮流水。定期反思是另一层（设计中，尚未实现）：设置页可开启每天/每周的 schedule，到点后 Ria 启动一个独立的反思 worker，读当天/当周的工单、turn 与 outbox（会话默认 `summary`，异常再按 `ref`/窗口 `full` 定点读），把报告写到 `reflections/YYYY-MM-DD.md`；worker 目标态只读、只提议隐性规则，不自动改写记忆；P2 再考虑 wiki。
+`memory.md` 只放稳定偏好与长期约定，由 `ria_memory` 显式读写；默认上限 2400 字符 / 12 条 / 单条 300（warn 阈值 2160 / 11 / 270），超限拒绝写入，长内容归档到 `memory-archive/<slug>.md`（不注入）；不抄工单状态、时间戳或逐轮流水。定期反思已实现：设置页可开启每天/每周的 schedule，到点后 Ria 启动一个独立的只读 worker（只有 6 个 `ria_reflect_*` 工具），读当天/当周的工单、turn 与 outbox（会话默认 `summary`，异常再按 `ref`/窗口 `full` 定点读），把报告写到 `reflections/YYYY-MM-DD.md`；worker 只提议隐性规则，不自动改写记忆。报告渲染/归档 UI、多天回填与 P2 wiki 尚未实现。
 
 ## 8. 扩展点
 
 - **新增工具**：在 `lib/index.js` 的工具注册处加定义与实现，补 manager prompt 与测试；输出必须是 lossless JSON。
 - **新增通道**：在进程内实现登录、入站、出站与暂停，凭据放 `stateDir`，入站消息转成 Ria 的普通用户消息；不新增端口。
-- **改状态机**：改 `lib/tickets.mjs` 的状态、转移表与不变量，保持 `RiaStore.transitionTicket` 是唯一写入口，并同步 `docs/task-model-design.md` 与测试。
+- **改状态机**：改 `lib/tickets.mjs` 的状态、转移表与不变量，保持 `RiaStore.transitionTicket` 是唯一写入口，并同步 [docs/archive/task-model.md](archive/task-model.md) 与测试。
 - **新增副作用**：在 outbox 增加 kind 与幂等键，明确重试与失败保留语义。
 - **新增持久化字段**：升 `ria.json` schema 版本，写迁移与备份，读取端兼容旧版本。
 
 ## 9. 文档分工
 
-README 讲用户怎么用；[docs/design.md](design.md) 记录历史设计、取舍与实现细节；本文是当前系统的顶层地图；`docs/` 下的专题文件展开单个主题。代码与测试是最终事实；行为变化时，先更新这张地图，再把原因补进 [docs/design.md](design.md)。
+README 讲用户怎么用；本文是当前系统的顶层地图；`docs/` 下的专题文件展开单个主题；历史设计与取舍在 [docs/archive/](archive/)，索引见 [docs/README.md](README.md)。代码与测试是最终事实；行为变化时，先更新这张地图，再把原因补进对应专题或归档。

@@ -2,7 +2,7 @@
 
 Ria 入口标题右侧有一个“连接”chip。点开后默认打开上次使用的通道（首次为微信 tab），可以扫码登录微信「文件传输助手」网页版、查看连接状态和退出登录；同一个面板里还有微信 Claw 和 QQ 机器人两个通道，见 [channels.md](channels.md)。
 
-![微信连接弹层](ui-wechat.png)
+![微信连接弹层](assets/screenshots/ui-wechat.png)
 
 - 微信客户端运行在 DSH 进程内，不启动 bridge 进程，不占端口。
 - 扫码登录需要在弹层里完成一次，之后 DSH 重启会自动复用凭据。

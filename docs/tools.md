@@ -23,38 +23,10 @@ Ria 通过 run_code SDK 调用 15 个 `ria_*` 工具（含反思编排 `ria_refl
 
 ## 记忆预算与归档（ria_memory）
 
-### core：memory.md
-
-- 文件：`stateDir/memory.md`，0600；全局一份，Web、微信和所有 worker 共用。
-- 预算：`maxChars`（core 总字符，默认 2400，统计全文去掉末尾换行）、`maxEntries`（顶格 `- ` 条目数，默认 12）、`maxEntryChars`（单条整行，含 `- **key**: ` 前缀，默认 300）。
-- 单位：字符一律是 Unicode code point（`[...text].length`），不是 UTF-16 `.length`，也不是字节；`bytes` 只作为附加信息展示。所有大小判断走 `lib/text-size.mjs` 的 `measureText()`，预算代码里不裸算 `text.length` 或 `Buffer.byteLength`。
-- 90% 预警：2160 字符 / 11 条 / 270 字符只返回 `warning` 和建议归档，不阻断写入。
-- 硬超限：三项任一超限即拒绝、**不部分写入**。工具返回 `ok:false`、`code:memory_over_budget`，`message`/`error` 同时列当前值/上限/超出量、最长条目 key 与 chars、每个超限 key 与 chars，并以 `No changes were made.` 结尾；`diagnostics` 带同一组数字和 `overEntryDetails`。例：
-
-  ~~~text
-  memory.md not written: 2430/2400 chars (+30), 13/12 entries (+1), 1 entry over 300 chars.
-  Longest entry "restart": 314/300 chars (+14).
-  Over-limit entries: "restart" 314/300 chars (+14).
-  Shorten "restart" to at most 300 chars or move the detail to memory-archive/restart.md. Run ria_memory action="read" to inspect the current file, then retry.
-  No changes were made.
-  ~~~
-
-- 读：`action=read`（默认 `scope=core`）返回 `text`、`chars`、`bytes`、`entries`、`maxChars`、`maxEntries`、`maxEntryChars`、`longestEntryChars`、`longestEntryKey`、`overBudget`、`warnings` 和 `archives`。
-- 写：`action=remember` 追加 `- **key**: text`（无 key 时 `- text`）；`action=forget` 按 key/文本子串删行。两者都返回写入后的预算视图；`memory.md` 超限时文件保持不变。
-- 整体重写：`action=replace`，`content`（完整文本，原样写入）或 `entries`（`{ key?, text }` 数组，逐项生成顶格 bullet）**二选一**。一次校验、一次 `writeAtomic`；任一项超限则整次拒绝并返回上述诊断，旧文件一个字节都不改。`entries` 每项必须单行、`text` 非空、`key` 不含 `*`；需要多行排版时用 `content`。replace 只改 core，不删除、不改写 archive；长细节仍按现有规则先写到 `memory-archive/<slug>.md`，core 只留指针。
-- 手工编辑：允许；若超过预算，注入 prompt 时只保留能完整放入的顶格条目，并在末尾附一行显式告警，不静默截断、不把超长内容继续注入。
-
-### archive：memory-archive/<slug>.md
-
-- 位置：`stateDir/memory-archive/<slug>.md`，目录 0700、文件 0600；一个主题一个文件。`slug` 必须以字母或数字开头，只允许 `[A-Za-z0-9._-]`，最长 80 个字符，且不能包含 `..`。
-- 单文件软上限 16 KB：超过只提示拆子主题，不自动删除、不自动改写。
-- `action=read scope=archive path=<slug>`：默认返回 4000 字符，超出用 `offset` 续读，返回 `nextOffset`/`truncated`/`overSoftLimit`；非法 path 返回 `invalid memory archive path: ...`，不存在返回 `memory archive not found: <slug>`。
-- `action=list`：列出每个 archive 的 `slug`、`chars`、`bytes`、`entries`、`updatedAt`、`overSoftLimit`。
-- archive 内容**绝不注入 system prompt**；只在相关工单需要时显式读取。
-
-### 设置页
-
-设置页「记忆预算」段只暴露**条目数**一个输入，范围 1–50；保存只提交 `body.memory.maxEntries`，不会把 `maxChars`/`maxEntryChars` 写成空值或 0。总字符 2400 与单条 300 仍保留服务端配置路径（`body.memory` 仍接受三项），但界面不暴露；保存后下一轮生效，不需要重启。`GET /settings` 同时返回 `settings.memory` 与 `settings.memoryStatus`（当前 chars/bytes/entries/最长条目/是否超限/预警）。Ria 自己不能通过工具改这些上限。
+- core 在 `stateDir/memory.md`，全局一份，0600；默认预算 **2400 字符 / 12 条 / 单条 300 字符**，按 Unicode code point 计。超限拒绝写入且不部分写入，90% 时只给 warning。完整口径、错误格式与迁移状态见 [memory-budget.md](memory-budget.md)。
+- `action=read` 读 core（`scope=archive` 加 `path`/`offset` 读归档）、`remember`/`forget` 增删条目、`replace` 整体重写（`content` 或 `entries` 二选一，超限整次拒绝）、`list` 列归档。
+- archive 在 `stateDir/memory-archive/<slug>.md`，单文件软上限 16 KB，默认每次读 4000 字符；**不注入 system prompt**。
+- 设置页只暴露条目数（1–50）；`POST /settings` 仍接受三项预算，下一轮生效。
 
 ## 工单排队与依赖
 
@@ -90,32 +62,28 @@ Ria 通过 run_code SDK 调用 15 个 `ria_*` 工具（含反思编排 `ria_refl
 
 ## 主题与看板（ria_topic）
 
-看板按“项目 → 主题 → 工单”组织。项目直接复用现有 workspace（以及 Ria、未分配、路径回退），主题是项目内的一级分组；工单通过 links 挂到一个或多个主题上，卡片只统计 role=primary 的归属，related 只在主题页里出现。没有 primary 的工单进入所属项目的「未分类」桶，这个桶是看板即时合成的，不写进 ria.json。
+看板按「项目 → 主题 → 工单」组织。项目直接复用现有 workspace（以及 Ria、未分配、路径回退），主题是项目内的一级分组；工单通过 links 挂到一个或多个主题，卡片只统计 `role=primary` 的归属，related 只在主题页出现。没有 primary 的工单进入所属项目即时合成的「未分类」桶，不写进 `ria.json`。
 
 `ria_topic` 的 action：
 
-- `create`：title 必填，可带 brief、level（1/2，默认 1）、parentId。返回新建的 topic。
-- `update`：改 title、brief、level 或 parentId。parentId 不能指向自己或形成环；已归档/已合并的主题拒绝更新。
-- `link`：topicId + ticketId，role 默认 primary。工单不存在返回 ticket_missing；同一个票再设 primary 会把旧的 primary 自动降为 related。
-- `unlink`：删除主题与该工单的链接，不影响工单本身。
-- `merge`：sourceTopicId + targetTopicId，把源主题的 links 改指目标并给源主题写 mergedInto + archivedAt；同一张票在目标里已有链接时合并为一条，保留最新 primary。
-- `archive`：仅当主题链接到的所有工单都已终态时允许；还有未完成工单返回 topic_unfinished，message 会列出前几个 ticketId。
-- `list`：默认隐藏已归档/已合并主题，includeArchived=true 全部返回；每项带 counts（total/open/working/blocked/done）。
+- `create`：title 必填，可带 brief、level（1/2，默认 1）、parentId。
+- `update`：改 title、brief、level 或 parentId；parentId 不能指向自己或成环，已归档/已合并主题拒绝。
+- `link`：topicId + ticketId，role 默认 primary；一票最多一个 primary，再设会旧 primary 自动降为 related；工单不存在返回 `ticket_missing`。
+- `unlink`：只删链接，不影响工单。
+- `merge`：sourceTopicId + targetTopicId，把源主题链接改指目标并写 mergedInto + archivedAt；同票已有链接时合并为一条并保留最新 primary。
+- `archive`：仅当主题下所有工单都终态时允许；否则 `topic_unfinished`，message 列出前几个 ticketId。
+- `list`：默认隐藏归档/合并主题，`includeArchived=true` 全返回；每项带 counts（total/open/working/blocked/done）。
+- `suggest`：见下。
 
-主题卡的 summary 先用手写的 `brief`；brief 为空（包括 update 时清空）时，宿主自动取该主题 `updatedAt` 最新的 primary 工单，拼成「「goal 最多 60 字」状态词 · 待执行 N · 执行中 M · 已完成 K」，为 0 的段省略；未分类桶显示「N 张待分类 · 最近：「goal」」，空桶显示「暂无工单」。看板返回的 `brief` 始终是最终展示文本，并带 `summaryAuto` 区分人工（false）与自动（true）；`ria_topic` 的 brief 描述也提示了这一点。Ria 在派发、收口或标 blocked 后若主题进展句变化，应用 `action=update` 写最多 120 字符；没变、10 分钟内已写过或工单没挂主题时不写。
+主题卡 summary 优先用手写 `brief`；为空时取该主题 `updatedAt` 最新的 primary 工单，生成「「goal 最多 60 字」状态词 · 待执行 N · 执行中 M · 已完成 K」，为 0 的段省略；未分类桶显示「N 张待分类 · 最近：「goal」」，空桶「暂无工单」。返回的 `brief` 是最终展示文本，`summaryAuto` 区分人工/自动。Ria 在派发、收口或标 blocked 后若主题进展句变化，用 `update` 写最多 120 字符；没变、10 分钟内写过或工单无主题时不写。
 
 ### 自动归主题（suggest）
 
-`ria_topic({ action: "suggest", goal, limit? })` 只读，给新工单找可挂的主题。`goal` 必填；`limit` 默认 5，范围 1–20。范围是本 Ria 的活跃主题（排除 archived/merged），候选文本为主题 title + brief + 该主题已链接工单的 goal；`tickets` 列表则是热存里没有 active primary 的工单，按各自 goal 打分。
+`ria_topic({ action: "suggest", goal, limit? })` 只读，goal 必填，limit 默认 5、范围 1–20。范围是本 Ria 的活跃主题（排除 archived/merged），候选文本为主题 title + brief + 已链接工单的 goal；`tickets` 则是热存里没有 active primary 的工单。评分确定、不依赖模型：文本先 NFKC + 小写，汉字连续串取相邻 2-gram，拉丁/数字取整 token，空白标点忽略；`score = 2 * 交集权重 / (查询权重 + 候选权重)`，保留 4 位，`score>0` 才返回，按 score 降序、同分按 topicId/ticketId 稳定排序。它不建主题、不 link 工单、不改历史归属。
 
-评分确定、不依赖模型：文本先 NFKC + 小写，汉字连续串取相邻 2-gram，拉丁/数字取整 token，空白和标点忽略；`score = 2 * 交集权重 / (查询权重 + 候选权重)`，保留 4 位，`score>0` 才返回。结果按 score 降序，同分按 topicId/ticketId 稳定排序；空结果返回 `{ok:true,topics:[],tickets:[]}`，不报错。它不会建主题、link 工单或改历史归属。
+创建工单时可直接带 `topicId` 原子挂 primary；未挂的创建结果带 `topicMissingHint`，只是提示不阻断。Ria 的固定流程：每张新 work 工单创建后、派发前先 suggest，相近就 link primary；没有相近就立即 create（title 概括方向 ≤40 字，brief 一句话）再 link；后续票优先复用，方向变化用 update/merge；存量票不回溯，除非用户明确要求。
 
-创建工单时可直接带 `topicId` 原子挂 primary（见 `ria_ticket`）；未挂主题的创建结果带 `topicMissingHint`，只是提示，不阻断。Ria 的固定流程已写进 manager prompt：每张新 work 工单（`ria_ticket create` 或 `ria_resolve` 转 work）创建后、派发前先 suggest，相近就 link primary；没有相近就立即 create（一张票也可以，title 概括方向 ≤40 字，brief 一句话）再 link；后续票优先复用，方向变化用 update/merge；存量票不回溯，除非用户明确要求。两个例子：
-
-1. 新工单「修复登录接口超时」→ suggest 命中「登录改造」→ `ria_topic {action:"link", topicId, ticketId, role:"primary"}`，不新建主题。
-2. 新工单「导出对账单 CSV」→ suggest 无命中 → `ria_topic {action:"create", title:"对账单导出", brief:"导出对账单 CSV"}` → 把返回的 topicId 传给 `ria_ticket create`（或再 link）。
-
-主题与链接存 ria.json 的 `topics`、`links`，schema v5 起存在；旧 v4 文件原样加载，缺字段视为空数组，首次写入前备份 `ria.json.v4.bak`。看板的主题卡最多显示待执行 2 条、执行中 3 条，超出时末尾显示「……」；已完成只显示计数。点「……」打开主题页，不在卡内展开。主题页是二维多列网格（2–3 列随宽度自适应）：未完成工单先排、终态工单排在后段，段内按 createdAt 倒序，卡片顶部显示 MM-DD HH:mm；筛选为未完成/执行中/待执行/全部，默认未完成，只淡化不重排。主题内依赖显示「依赖 N 张」标签（点击滚到上游并高亮 1 秒），跨主题依赖标出「↗ 在 <主题名>」。工作区表头和主题卡各有一个「说」输入：工作区发送 `【看板 · 工作区】<projectTitle> <text>`，主题卡发送 `【看板 · 主题卡】【主题名】<text>`（二级主题加「（子主题）」），都只是以 queue 模式发给 Ria，不建票、不派发。看板顶部按「数量（活跃 X · 阻塞 Y）」显示项目/主题/工单统计，并提供保留滚动位置与筛选的刷新。
+主题与链接存 `ria.json` 的 `topics`、`links`（schema v5）；旧 v4 文件原样加载，首次写入前备份 `ria.json.v4.bak`。看板的布局、筛选、搜索与「说」入口细节见 [board-preview.md](board-preview.md)。
 
 ## 排队消息（ria_queue）
 
@@ -254,4 +222,4 @@ ria_reflect 是反思的编排入口，只注册给 Ria。它管理 `reflections
 - `ria_reflect_read_context`：kind=memory/outbox/schedule；memory 最多 4096 字符，outbox 最多 50 条，schedule 本轮返回空视图。
 - `ria_reflect_report`：只写 `runs/<runId>/report.partial.md`，原子写、0600、不超过 30KB；不接受 path/runId/sessionId 参数。run finish/abort 后所有工具返回 run_closed。
 
-一次真实日志试跑的量级、缺口和默认值建议见 [reflection_tool_trial.md](reflection_tool_trial.md)。
+一次真实日志试跑的量级、缺口和默认值建议见 [archive/reflection-and-review.md](archive/reflection-and-review.md)。

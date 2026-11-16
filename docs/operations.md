@@ -1,12 +1,12 @@
 # 运行与任务流程
 
-本文记录 Ria 的入口与运行方式、工单生命周期、派发确认、重启恢复等运行时行为。设计背景与取舍见 [docs/design.md](design.md)。
+本文记录 Ria 的入口与运行方式、工单生命周期、派发确认、重启恢复等运行时行为。设计背景与取舍见 [design-history.md](archive/design-history.md)。
 
 ## 入口与运行方式
 
 左侧边栏出现 Ria 入口。第一次点击会 ensure：创建全局唯一的 Ria，并把界面切到她；之后点击只是重新打开同一个 Session。
 
-![Ria 入口打开后的会话界面](ui-final.png)
+![Ria 入口打开后的会话界面](assets/screenshots/ui-final.png)
 
 Ria 的 cwd 固定在：
 
@@ -16,9 +16,9 @@ DSH_HOME/state/ria
 
 DSH 的正常会话界面要求 Session 属于一个 Workspace。插件会为该目录创建一个标题为 Ria 的专用 Workspace，并把 Ria 挂进去。因此工作区列表里会多一个名为 Ria 的条目，这是输入框可用的必要条件，不是可选的 UI 装饰。
 
-Ria 运行 PTC 模式：模型直接看到 run_code 和生成的 SDK，12 个 ria_* 工具通过 SDK 调用。创建时固定 agentPreset=ptc；如果 ptc preset/runtime 不可用，会明确报错，不会退回 standard。
+Ria 运行 PTC 模式：模型直接看到 run_code 和生成的 SDK，15 个 ria_* 工具通过 SDK 调用。创建时固定 agentPreset=ptc；如果 ptc preset/runtime 不可用，会明确报错，不会退回 standard。
 
-Ria 自己是一个普通的顶层 DSH Session，运行 PTC preset，带管理者 prompt 和 12 个 ria_* 工具。worker 侧不需要安装任何东西，收到的就是普通用户消息；防误发提示由 agent 作用域的 system prompt section 提供，不修改消息内容。
+Ria 自己是一个普通的顶层 DSH Session，运行 PTC preset，带管理者 prompt 和 15 个 ria_* 工具。worker 侧不需要安装任何东西，收到的就是普通用户消息；防误发提示由 agent 作用域的 system prompt section 提供，不修改消息内容。
 
 ## 欢迎提示
 
@@ -48,7 +48,7 @@ Ria 自己是一个普通的顶层 DSH Session，运行 PTC preset，带管理�
 
 ### 派发 note 卡片与微信确认
 
-![Ria 会话中任务派发后的 turn-tail 卡片](ui-dispatch-note.png)
+![Ria 会话中任务派发后的 turn-tail 卡片](assets/screenshots/ui-dispatch-note.png)
 
 网页端在 Ria 当前轮次末尾显示“任务已派发 / 消息已转交”卡片；微信端同时收到一条以同样标题开头的文本。两处共用同一个 note 原文，措辞一致；网页看到卡片、微信收到文本是预期行为，不是重复发送。
 
@@ -85,7 +85,7 @@ Ria 自己是一个普通的顶层 DSH Session，运行 PTC preset，带管理�
 - 开关在“设置 > Ria”，默认打开；状态保存在 ria.json 的 settings.dispatchGuard。
 - 开关只影响后续 system prompt 的组装，不改 worker 已经收到的历史消息、tools 或 preset；也不会替模型做硬拦截。
 
-![设置中的 Ria 开关](ui-settings.png)
+![设置中的 Ria 开关](assets/screenshots/ui-settings.png)
 
 ## 任务归档
 

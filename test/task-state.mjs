@@ -191,7 +191,7 @@ function openTicket(store, overrides = {}) {
     grants: [],
     recentWorkers: {},
     dispatchNotes: [{ sessionId: 'session-ria', turn: 3, note: 'sent to worker', isTask: true, taskId: 'task_old', at: 5 }],
-    settings: { dispatchGuard: false },
+    settings: {},
   }, at)
   assert.equal(result.migrated, true)
   assert.equal(result.data.schemaVersion, 5)
@@ -203,7 +203,7 @@ function openTicket(store, overrides = {}) {
   assert.equal(result.data.ticketFeedback.length, 1)
   assert.equal(result.data.ticketFeedback[0].kind, 'dispatched')
   assert.equal(result.data.ticketFeedback[0].body, 'sent to worker')
-  assert.deepEqual(result.data.settings, { dispatchGuard: false, progressCards: false })
+  assert.deepEqual(result.data.settings, { progressCards: false })
 }
 
 // v1 terminal tasks carry no resolution or failure metadata. Migration must

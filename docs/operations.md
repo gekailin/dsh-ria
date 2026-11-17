@@ -76,17 +76,6 @@ Ria 自己是一个普通的顶层 DSH Session，运行 PTC preset，带管理�
 - 已经是 `done`/`failed`/`cancelled`/`blocked` 的工单、以及 Ria 自己的 turn 不参与判定；同一工单 + requestId 只告警一次。
 - 这个兜底只改变“派发被接受但未开跑”的工单；worker 正常开始后不会因为 60 秒到期而被误判。
 
-## 任务转交提示与设置页
-
-防误发提示不是消息前缀，而是插件为每个 agent 注册的 system prompt section（name 为 dsh-ria:dispatch-guard，order 4100）。
-
-- 插件启动时给已有 agent 安装，并监听 agent/created 给新 agent 安装；agent/disposed 和插件卸载时 dispose，避免重载时同名 section 冲突。
-- section 文本是固定的通用提示，不按工单或具体消息变化；关闭开关后 text 返回空字符串，DSH 的 renderPrompt 会丢弃空 section。
-- 开关在“设置 > Ria”，默认打开；状态保存在 ria.json 的 settings.dispatchGuard。
-- 开关只影响后续 system prompt 的组装，不改 worker 已经收到的历史消息、tools 或 preset；也不会替模型做硬拦截。
-
-![设置中的 Ria 开关](assets/screenshots/ui-settings.png)
-
 ## 任务归档
 
 终态工单不会无限留在 ria.json。热文件保留所有非终态，加上最近 24 小时内关闭的终态和按 closedAt 倒序最新 50 条终态；超出的写进 `~/.dsh/state/ria/tickets.log.jsonl`，并按 closedAt 的 UTC 月份同时追加到 `tickets-YYYY-MM.jsonl`（保留最新 12 个月）。新写入只用 `tickets.log.jsonl` / `tickets-YYYY-MM.jsonl`。启动时会一次性把遗留的 `tasks.log.jsonl` / `tasks-YYYY-MM.jsonl` 改名到新名（目标已存在则跳过，失败只记日志）；读取端同时兼容新旧名，并按 `ticketId + closedAt` 去重。先写成功再从内存删除；写失败时工单留在 ria.json，下次启动重试。

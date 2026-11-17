@@ -32,6 +32,27 @@ for (const match of hostSource.matchAll(/from '\.\/([^']+)'/g)) {
   }
 }
 
+// Older state files may still carry settings.dispatchGuard. Loading must
+// ignore it without error, and the next write must drop it.
+{
+  const legacyDir = mkdtempSync(join(tmpdir(), 'dsh-ria-legacy-dispatch-'))
+  try {
+    writeFileSync(join(legacyDir, 'ria.json'), JSON.stringify({
+      schemaVersion: 5,
+      version: 5,
+      settings: { dispatchGuard: false, wechatAutoPause: false },
+    }))
+    const legacyStore = new RiaStore(legacyDir)
+    assert.equal('dispatchGuard' in legacyStore.settings(), false)
+    assert.equal(legacyStore.settings().wechatAutoPause, false)
+    legacyStore.setSettings({ wechatAutoPause: true })
+    const persisted = JSON.parse(readFileSync(join(legacyDir, 'ria.json'), 'utf8'))
+    assert.equal('dispatchGuard' in persisted.settings, false)
+  } finally {
+    rmSync(legacyDir, { recursive: true, force: true })
+  }
+}
+
 const stateDir = mkdtempSync(join(tmpdir(), 'dsh-ria-test-'))
 const installed = new Map()
 const prompts = []
@@ -41,11 +62,6 @@ let workerRunning = false
 let workerQueue = []
 
 const workerEvents = []
-const guardSections = []
-function recordGuard(agentId, section) {
-  guardSections.push({ agentId, section })
-  return () => {}
-}
 const permissions = {
   sandboxMode: 'workspace-write',
   sandboxOverride: undefined,
@@ -54,7 +70,7 @@ const permissions = {
 }
 const worker = {
   id: 'session-worker',
-  ctx: { tools: { register: () => () => {} }, systemPrompt: { section(section) { return recordGuard('worker', section) } } },
+  ctx: { tools: { register: () => () => {} } },
   session: {
     snapshotEvents: () => [
       { type: 'assistant/message', seq: 2, data: { message: { content: [{ type: 'text', text: 'worker says done' }] } } },
@@ -78,7 +94,6 @@ const riaAgent = {
     systemPrompt: {
       section(section) {
         installed.set('prompt:' + section.name, section)
-        if (section.name === 'dsh-ria:dispatch-guard') recordGuard('ria', section)
         return () => {}
       },
     },
@@ -243,7 +258,6 @@ function expectedSettings(patch = {}) {
   const { reflection, reflectionStatus, style, memory, memoryStatus, ...rest } = patch
   const memoryLimits = { maxChars: 2400, maxEntries: 12, maxEntryChars: 300, ...(memory || {}) }
   return {
-    dispatchGuard: true,
     progressCards: false,
     wechatAutoPause: true,
     approvalAutomation: true,
@@ -312,23 +326,6 @@ const initialSettings = await request('GET', '/plugins/dsh-ria/api/settings')
 assert.equal(initialSettings.status, 200)
 assert.deepEqual(initialSettings.body, expectedSettings())
 assertLossless(initialSettings.body)
-const workerGuard = guardSections.find(item => item.agentId === 'worker')
-const riaGuard = guardSections.find(item => item.agentId === 'ria')
-assert.ok(workerGuard && riaGuard)
-assert.match(workerGuard.section.text(), /ask the user to confirm/)
-assert.doesNotMatch(workerGuard.section.text(), /\bRia\b/i)
-assert.match(workerGuard.section.text(), /clearly unrelated/)
-assert.equal(riaGuard.section.text(), workerGuard.section.text())
-const guardOff = await request('POST', '/plugins/dsh-ria/api/settings', { dispatchGuard: false })
-assert.equal(guardOff.status, 200)
-assert.deepEqual(guardOff.body, expectedSettings({ dispatchGuard: false }))
-assert.equal(workerGuard.section.text(), '')
-assert.equal(riaGuard.section.text(), '')
-const guardOn = await request('POST', '/plugins/dsh-ria/api/settings', { dispatchGuard: true })
-assert.equal(guardOn.status, 200)
-assert.deepEqual(guardOn.body, expectedSettings())
-assert.match(workerGuard.section.text(), /ask the user to confirm/)
-assert.doesNotMatch(workerGuard.section.text(), /\bRia\b/i)
 const autoPauseOff = await request('POST', '/plugins/dsh-ria/api/settings', { wechatAutoPause: false })
 assert.equal(autoPauseOff.status, 200)
 assert.deepEqual(autoPauseOff.body, expectedSettings({ wechatAutoPause: false }))
@@ -360,8 +357,6 @@ assert.equal(emptyClawImage.status, 200)
 assert.deepEqual(emptyClawImage.body.wechatClawImage, { inbound: true, outbound: true })
 const stillOn = await request('GET', '/plugins/dsh-ria/api/settings')
 assert.deepEqual(stillOn.body.wechatClawImage, { inbound: true, outbound: true })
-const badGuard = await request('POST', '/plugins/dsh-ria/api/settings', { dispatchGuard: 'yes' })
-assert.equal(badGuard.status, 400)
 const badAutoPause = await request('POST', '/plugins/dsh-ria/api/settings', { wechatAutoPause: 'yes' })
 assert.equal(badAutoPause.status, 400)
 const emptySettings = await request('POST', '/plugins/dsh-ria/api/settings', {})

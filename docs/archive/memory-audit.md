@@ -6,7 +6,7 @@
 ## 背景与目标
 
 - 审计对象：`/home/gkl/.dsh/state/ria/memory.md`（2026-11-12，3175 bytes，11 条 bullet，内有 2 组重复条）。
-- 对照面：`lib/index.js` 的 `managerPrompt()`、`startup()`、`toolRequest()`，以及 `lib/dispatch-guard.mjs`、`lib/worker-idle.mjs`。
+- 对照面：`lib/index.js` 的 `managerPrompt()`、`startup()`、`toolRequest()`，以及 `lib/worker-idle.mjs`。
 - 核心判据：**memory 只记「这个安装的偏好与环境事实」，不记「Ria 本来就应该这样工作」的规则**。后者每轮都该生效，应进静态 prompt 或有硬强制点的代码。
 - 二级判据：是否有强制点、是否易变（sessionId、命令）、是否只对 manager 生效。
 - 目标：给出 11 条的分类与去向、可直接粘贴的迁移文案、以及需要新增代码 guard 的清单。
@@ -23,12 +23,10 @@
 - **路由拆两半**：通用规则（standing routing preference 优先于 recent 默认）进 prompt；具体 sessionId 映射留 memory。理由：本插件是通用插件，个人 worker 名与 ID 属于安装数据，写进 lib 会在 ID 过期后留下死引用。
 - **必须先改 `lib/index.js:1649`**：`never pick a worker that has not been used recently` 与路由 memory 直接冲突，不改这一句，模型很可能按 prompt 否掉 memory。这是整份审计最容易漏的一处。
 - **restart-method 不进 prompt**：命令长、平台相关、低频，进 prompt 只增前缀体积；放 memory 精简版 + `docs/operations.md` 背景。
-- **Ria 专属规则不进 dispatch-guard**：它是全局静态 section，会挂到所有 agent（含 worker），把管理者规则灌进 worker 的 system prompt 属于串味。
 
 ## 关键机制与数字
 
 - manager prompt 是动态 section：`name: ria-manager`、`order: 40`、`interpolate: false`、`text: () => managerPrompt(sessionId, this.store.readMemory())`（`lib/index.js:2318-2325`）。
-- dispatch-guard 是全局 section：`name: dsh-ria:dispatch-guard`、`order: 4100`，文本只有一句防误发。
 - memory 注入在 section 最末尾（`lib/index.js:1677-1679`）：改 memory 只动尾部，前面大段规则仍是稳定前缀。把规则从 memory 挪进静态 prompt 是一次性前缀变更，之后不再随 memory 编辑而变，对缓存是净收益；**不要**把 memory 或本轮状态插到 `## How you work` 之前。
 - 「事不能丢」已有硬机制：`agent/pre-step` 自动 captureIntake 并注入 `[Task intake]`；`agent/turn-stopping` 第一次 steer 提醒、第二次自动 blocked。
 - 取消语义：`worker-idle.mjs` 检测 `isUserCancelled` 后把 working ticket 转 blocked，blockedReason 为「用户取消了 worker turn（aborted(user)）；等待用户决定下一步」，idleText 明确不自动续派。

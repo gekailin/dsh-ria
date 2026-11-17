@@ -18,7 +18,6 @@
 - 就绪通知「状态即真相」：唯一依据是已提交的 status/waitingOn/readyAt/readyNotifiedAt，不押在一次性回调上。起因是 ticket_mwf7lpk4_62a20be388 在 2026-11-14 00:55:32 就绪后 outbox 无 queue_wake、Ria 也没收到 [Queue ready]，空转 3 小时 36 分，直到 04:31 重启才被人发现。
 - 派发就是一条普通用户消息（source=user-rpc，不加任何前缀）；确认卡片走 conversation.chat.turnTail。早期用 command/run + command/done，卡片被 ChatNodeSeat 当 process member 折叠，真实 UI 不可见。
 - 欢迎提示改由 client 渲染（conversation.input.dock，仅 blank 时显示）。早期写合成 turn 1，其 assistant/message 排在真实 system/message 之前，违反 v4 校验 `system/message requires a protected first surface head`，重启 resume 报 corrupt。
-- 防误发提示改为 agent 作用域静态 system prompt section（name=dsh-ria:dispatch-guard、order=4100、两句英文），不再向消息插前缀。理由是插件看不到 worker 上下文，只能做行为约束，不能硬拦截。
 - 副作用走至少一次 outbox：宁可重复（微信已发但未落盘会重发）也不静默丢；卡片按 noteId 去重。
 - memory 只做 core + archive 两层：core 放稳定偏好，放不下的细节按主题拆到 archive，archive 绝不注入 prompt；不自动总结、不静默覆盖手写内容。
 - 微信客户端跑在 DSH 进程内，复用文件传输助手协议，不做 bridge、不占端口、不用 UDS/socket。

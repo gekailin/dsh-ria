@@ -64,7 +64,7 @@ Ria 侧现状：
 - 结构化 attention：已落地。`lib/tickets.mjs` 的 `normalizeAttention` 产出 `{ question, options?, ref? }`，不变量规定它只在 blocked 且 `waitingOn ∈ {user, approval}` 时合法，否则抛 `invalid_attention`；`blockedReason` 缺失时回填 `attention.question`；审批场景下 attention 在待决审批之间移交（`lib/approvals.mjs`）；`test/attention.mjs` 覆盖设置/读取/清空、旧 blockedReason 工单与 `ria_status` 输出。
 - `[Worker idle]` 跨 worker 合并投递：未实现，仍只是建议。当前同一 session 的多张 working 工单会合成一段 `idleText` 一次投递，但不同 session 各发一条 prompt；节流默认 30s（`DSH_RIA_WORKER_IDLE_THROTTLE_MS` 可配，夹在 1s–600s）。
 - 低优先、未做：`ticketStage()` 式纯派生（Ria 没有 assignment，派生不出 queued/idle/review 中间态）、prompt 版本化与 `base` 漂移提示（单人维护，可先把变更记进 `docs/`）、host 级「不许等」护栏（已有明文禁令 `index.js:1216`，护栏会误伤真实长命令且需装饰宿主工具）、100 词硬上限（微信侧已有 800 字/含表格代码转 .md 的降级）、`Later`（Ria 无槽位概念）、恢复提示补「外部动作（push/评论/PR）先核对」这个措辞（`index.js:1221` 已覆盖大半，属一句话打磨）。
-- 明确标注无痛点、不做：团队分节编辑 prompt 与团队 skills、设置项收敛/策略版本 UI/变更历史（Ria 只有 `dispatchGuard`、`progressCards` 两个设置）、面板统计（无排队概念、无通过/拒绝漏斗）、多语言（中英混排是刻意的：给模型看英文、给用户看中文）、候选卡 pending 过期（intake 有强制定性，不需要超时清理）。
+- 明确标注无痛点、不做：团队分节编辑 prompt 与团队 skills、设置项收敛/策略版本 UI/变更历史、面板统计（无排队概念、无通过/拒绝漏斗）、多语言（中英混排是刻意的：给模型看英文、给用户看中文）、候选卡 pending 过期（intake 有强制定性，不需要超时清理）。
 
 ## 仍未实现 / 风险
 

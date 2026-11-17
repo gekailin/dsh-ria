@@ -27,7 +27,6 @@
 | [ticket-queue.md](archive/ticket-queue.md) | `docs/ticket-queue-design.md`（719 行） | 历史设计；P0 依赖/排队已落地，保留 queueToken、wake key、失败 hold 与 P1 缺口 |
 | [daily-reflection.md](archive/daily-reflection.md) | `docs/daily-reflection-design.md`（1395 行） | 历史设计；服务端/调度/API/设置页已实现，保留预算、幂等与未实现项 |
 | [approval-automation.md](archive/approval-automation.md) | `docs/approval-automation-design.md`（585 行） | 旧方案稿；2026-11-16 用户拍板「默认从严代批」后已按新语义落地，本稿仅保留方案 C、规则匹配、参数缓存与待拍板项，不代表现行实现 |
-| [system-dispatch-guard.md](archive/system-dispatch-guard.md) | `docs/system-dispatch-guard.md`（265 行） | 已实施；保留 section 名/order、挂载点和「行为约束非硬拦截」 |
 | [superagent-borrow.md](archive/superagent-borrow.md) | `docs/superagent-borrow.md`（277 行） | 评估稿；保留采纳/拒绝清单（outbox、attention 已落地，idle 合并未实现） |
 | [memory-audit.md](archive/memory-audit.md) | `docs/memory-audit.md`（301 行） | 已落地（prompt 侧）；保留分流结论与未落地的路由/清理项 |
 | [code-audit.md](archive/code-audit.md) | `docs/code-audit.md`（75 行） | 历史审计；16 项 / 12 修 / 4 项边界待定，作为快照保留 |

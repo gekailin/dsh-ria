@@ -179,7 +179,6 @@ writeFileSync(join(migratedDir, 'ria.json'), JSON.stringify({
   version: 3,
   riaSessionId: null,
   settings: {
-    dispatchGuard: true,
     wechatAutoPause: false,
     reflection: { cadence: 'weekly', time: '07:05', weekday: 3, custom: 'keep' },
   },

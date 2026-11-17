@@ -19,7 +19,7 @@ function loadBoardTooltip() {
   const end = source.indexOf('/* board-tooltip:end */')
   assert.ok(start >= 0 && end > start, 'client board tooltip markers')
   const block = source.slice(start, end)
-  const api = new Function(block + '\nreturn { boardChecklistView, BOARD_CHECKLIST_LIMIT };')()
+  const api = new Function(block + '\nreturn { boardChecklistView, boardChecklistAll, BOARD_CHECKLIST_LIMIT };')()
   return { source, ...api }
 }
 
@@ -33,7 +33,18 @@ function loadBoardInteraction() {
   return { source, ...api }
 }
 
-const fixture = await createFixture()
+const fixture = await createFixture({
+  sessionEvents: {
+    'session-worker': [
+      { type: 'turn/start', data: { turn: 1 } },
+      { type: 'assistant/message', at: 100, data: { turn: 1, message: { content: [{ type: 'text', text: 'first draft' }] } } },
+      { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } },
+      { type: 'turn/start', data: { turn: 2 } },
+      { type: 'assistant/message', at: 200, data: { turn: 2, message: { content: [{ type: 'text', text: 'draft is ready' }] } } },
+      { type: 'turn/end', data: { turn: 2, reason: { kind: 'completed' } } },
+    ],
+  },
+})
 
 function get(path) {
   const route = fixture.routes.find(item => item.path === '/plugins/dsh-ria/api')
@@ -100,6 +111,28 @@ try {
   assert.equal(ghost.executorMissing, true)
   assert.equal(ghost.laneId, 'unassigned')
   assert.equal(ghost.laneLabel, '未分配')
+
+  // Detail reads the worker's last assistant message lazily, so /board keeps
+  // its payload and the panel can fall back when the session is gone.
+  const detailResponse = await get('/plugins/dsh-ria/api/board/ticket?ticketId=' + encodeURIComponent(upstream.ticket.ticketId))
+  assert.equal(detailResponse.status, 200)
+  assert.equal(detailResponse.body.ok, true)
+  assert.equal(detailResponse.body.ticketId, upstream.ticket.ticketId)
+  assert.equal(detailResponse.body.lastResult.text, 'draft is ready')
+  assert.equal(detailResponse.body.lastResult.turn, 2)
+  assert.equal(detailResponse.body.lastResult.outcome, 'completed')
+  assert.equal(detailResponse.body.lastResult.at, 200)
+
+  const selfDetailResponse = await get('/plugins/dsh-ria/api/board/ticket?ticketId=' + encodeURIComponent(selfTicket.ticket.ticketId))
+  assert.equal(selfDetailResponse.status, 200)
+  assert.equal(selfDetailResponse.body.lastResult, null)
+
+  const missingDetailResponse = await get('/plugins/dsh-ria/api/board/ticket?ticketId=ticket_missing')
+  assert.equal(missingDetailResponse.status, 404)
+  assert.equal(missingDetailResponse.body.code, 'ticket_missing')
+
+  const noIdDetailResponse = await get('/plugins/dsh-ria/api/board/ticket')
+  assert.equal(noIdDetailResponse.status, 400)
 
   // The summary line counts topics by whether they hold working/blocked
   // tickets, while tickets count by their own status. A project exposes the
@@ -479,17 +512,28 @@ try {
   assert.equal(empty.more, 0)
   assert.equal(tooltipApi.boardChecklistView({}).items.length, 0)
 
-  // Completed steps use a tick and normal text, pending ones an open circle
-  // and a lighter colour; long steps ellipsize instead of wrapping.
-  assert.match(tooltipApi.source, /item\.done \? "✓" : "○"/)
-  assert.match(tooltipApi.source, /color: item\.done \? "#334155" : "#94a3b8"/)
-  assert.match(tooltipApi.source, /textOverflow: "ellipsis"/)
-  assert.match(tooltipApi.source, /whiteSpace: "nowrap"/)
-  assert.match(tooltipApi.source, /…还有 " \+ checklist\.more \+ " 步/)
-  assert.match(tooltipApi.source, /checklist\.items\.length \? checklistRow\(\) : null/)
+  // The detail panel owns the long checklist; the tooltip keeps four short
+  // rows and two actions so it stays a glance.
+  const tip = tooltipApi.source.slice(tooltipApi.source.indexOf('function BoardTooltip'), tooltipApi.source.indexOf('function BoardOverlay'))
+  assert.match(tip, /\["更新", topicClockText\(ticket\.updatedAt\) \|\| "—"\]/)
+  assert.doesNotMatch(tip, /\["目标", ticket\.goal\]|\["验收", ticket\.acceptance\]|\["清单", null\]/)
+  assert.doesNotMatch(tip, /checklistRow|…还有 " \+ checklist\.more/)
+  assert.match(tooltipApi.source, /data-ria-tooltip-action/)
+  assert.match(tooltipApi.source, /"复制单号"/)
+  assert.match(tooltipApi.source, /"打开 worker"/)
+  assert.match(tooltipApi.source, /props\.onCopy \? actionButton\("复制单号"/)
+  assert.match(tooltipApi.source, /!canOpen/)
   assert.match(tooltipApi.source, /maxHeight: "calc\(100vh - 40px\)"/)
   assert.match(tooltipApi.source, /window\.innerHeight - rect\.height - margin/)
-  assert.match(tooltipApi.source, /单击卡片复制单号；浮层文字可选中复制/)
+
+  const full = tooltipApi.boardChecklistAll({
+    checklist: Array.from({ length: 8 }, (_, index) => ({ text: 'step ' + (index + 1), done: index < 6 })),
+  })
+  assert.equal(full.length, 8)
+  assert.equal(full[7].text, 'step 8')
+  assert.equal(full[5].done, true)
+  assert.equal(full[6].done, false)
+  assert.deepEqual(tooltipApi.boardChecklistAll({}), [])
 
   // Clicking a card copies its ticket id; the tooltip stays alive while the
   // pointer crosses the gap and can be dismissed by an outside click or Esc.

@@ -215,7 +215,6 @@ try {
   assert.doesNotMatch(sourceText, /function TicketComposeDialog/)
   assert.doesNotMatch(sourceText, /data-ria-topic-compose/)
   assert.doesNotMatch(sourceText, /data-ria-ticket-created/)
-  assert.doesNotMatch(sourceText, /board\/ticket/)
 
   const serverText = readFileSync(new URL('../lib/index.js', import.meta.url), 'utf8')
   assert.match(serverText, /async askBoardTopic/)
@@ -230,7 +229,6 @@ try {
   assert.doesNotMatch(serverText, /【看板 · 主题面板】/)
   assert.doesNotMatch(serverText, /createBoardTicket/)
   assert.doesNotMatch(serverText, /ticket_created/)
-  assert.doesNotMatch(serverText, /board\/ticket/)
 
   console.log('board-ask ok')
 } finally {

@@ -36,38 +36,32 @@ try {
   assert.equal(ticketOf(ticketId).status, 'working')
   assert.equal(String(ticketOf(ticketId).executor), String(worker))
 
-  // Whichever approval shortcut exists, the default is off: a request still
-  // reaches the downstream answerer.
+  // Risk policy replaces the old tool whitelist. The default is auto-low: a
+  // cached read-only command is auto-allowed, unknown arguments still ask.
   {
+    const cache = (callId, args) => fixture.emit(
+      'tools/pre-execute',
+      { agent: { id: worker }, name: 'bash', callId, arguments: args },
+      async () => ({ kind: 'enter' }),
+    )
     const calls = []
     const next = async () => { calls.push('next'); return 'rejected' }
-    const blocked = await fixture.emit('approval/request', { agent: { id: worker }, toolName: 'bash', callId: 'call-off', reason: 'why', signal: new AbortController().signal }, next)
-    assert.equal(blocked, 'rejected')
-    assert.deepEqual(calls, ['next'])
-    assert.equal(ticketOf(ticketId).status, 'working')
-    assert.deepEqual(fixture.service.store.settings().approvalAutoAllow, { enabled: false, tools: [] })
-  }
-
-  // Whitelist on: only a managed Worker on a ticket, only the listed tool.
-  fixture.service.store.setSettings({ approvalAutoAllow: { enabled: true, tools: ['bash'] } })
-  {
-    const calls = []
-    const next = async () => { calls.push('next'); return 'rejected' }
-    const allowed = await fixture.emit('approval/request', { agent: { id: worker }, toolName: 'bash', callId: 'call-on', reason: 'why', signal: new AbortController().signal }, next)
+    await cache('call-low', { command: 'git status' })
+    const allowed = await fixture.emit('approval/request', { agent: { id: worker }, toolName: 'bash', callId: 'call-low', reason: 'why', signal: new AbortController().signal }, next)
     assert.equal(allowed, 'allowed-once')
     assert.deepEqual(calls, [])
     // The matching asked event must not park the ticket this plugin approved.
-    asked(worker, { id: 'apr_auto', toolName: 'bash', callId: 'call-on', reason: 'why' })
+    asked(worker, { id: 'apr_auto', toolName: 'bash', callId: 'call-low', reason: 'why' })
     assert.equal(ticketOf(ticketId).status, 'working')
-    // An unlisted tool still goes to the answerer.
+    // An unknown tool/arguments still goes to the answerer.
     const other = await fixture.emit('approval/request', { agent: { id: worker }, toolName: 'write', callId: 'call-w', reason: 'why', signal: new AbortController().signal }, next)
     assert.equal(other, 'rejected')
     assert.deepEqual(calls, ['next'])
-    // An independent session is never auto-approved, even for a listed tool.
+    // An independent session is never auto-approved.
     const foreign = await fixture.emit('approval/request', { agent: { id: 'session-independent' }, toolName: 'bash', callId: 'call-i', reason: 'why', signal: new AbortController().signal }, next)
     assert.equal(foreign, 'rejected')
+    assert.deepEqual(fixture.service.store.settings().approvalAutoAllow, { enabled: false, tools: [] })
   }
-  fixture.service.store.setSettings({ approvalAutoAllow: { enabled: false, tools: [] } })
 
   // asked -> blocked(waitingOn=approval) with the tool, the reason and the time.
   const before = notices().length

@@ -255,13 +255,14 @@ const REFLECTION_DEFAULTS = {
 }
 
 function expectedSettings(patch = {}) {
-  const { reflection, reflectionStatus, style, memory, memoryStatus, approvalAutoAllow, ...rest } = patch
+  const { reflection, reflectionStatus, style, memory, memoryStatus, approvalAutoAllow, escalationPolicy, ...rest } = patch
   const memoryLimits = { maxChars: 2400, maxEntries: 12, maxEntryChars: 300, ...(memory || {}) }
   return {
     progressCards: false,
     wechatAutoPause: true,
     approvalAutomation: true,
     approvalAutoAllow: { enabled: false, tools: [], ...(approvalAutoAllow || {}) },
+    escalationPolicy: escalationPolicy || 'auto-low',
     wechatClawImage: { inbound: true, outbound: true },
     style: { ...STYLE_SETTINGS_DEFAULTS, ...(style || {}), effectiveText: (style && style.effectiveText) || '' },
     reflection: { ...REFLECTION_DEFAULTS, ...(reflection || {}) },
@@ -349,6 +350,14 @@ assert.deepEqual(autoAllowOff.body, expectedSettings({ approvalAutoAllow: { enab
 const autoAllowReset = await request('POST', '/plugins/dsh-ria/api/settings', { approvalAutoAllow: { tools: [] } })
 assert.equal(autoAllowReset.status, 200)
 assert.deepEqual(autoAllowReset.body, expectedSettings())
+const escalationStrict = await request('POST', '/plugins/dsh-ria/api/settings', { escalationPolicy: 'strict' })
+assert.equal(escalationStrict.status, 200)
+assert.deepEqual(escalationStrict.body, expectedSettings({ escalationPolicy: 'strict' }))
+const escalationBad = await request('POST', '/plugins/dsh-ria/api/settings', { escalationPolicy: 'nope' })
+assert.equal(escalationBad.status, 400)
+const escalationReset = await request('POST', '/plugins/dsh-ria/api/settings', { escalationPolicy: 'auto-low' })
+assert.equal(escalationReset.status, 200)
+assert.deepEqual(escalationReset.body, expectedSettings())
 // Claw image transfer is fixed on. Older clients may still try to turn it off;
 // the field is accepted and ignored so their save does not fail.
 const clawImageOff = await request('POST', '/plugins/dsh-ria/api/settings', { wechatClawImage: { inbound: false, outbound: false } })

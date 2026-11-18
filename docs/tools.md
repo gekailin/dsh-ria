@@ -1,6 +1,8 @@
 # 工具与 worker 管理
 
 > **v2 提示：** 插件默认运行 v2，Chatbot / Advisor / Worker 各自只拿到 scoped 的 `chatbot_*`、`ticket_*`、`worker_*` 工具，不再有 15 个 `ria_*`。本文描述的是 legacy manager 模式（`{ v2: false }`），见 [design-v2.md](design-v2.md)。
+>
+> **v2 提权：** 正常提权走按风险逐条审批（四档规则与工单 `escalationPolicy` 见 [design-v2.md](design-v2.md) §6）；`chatbot_grant` 仅调试/应急，调用写 `grant_kind=debug|emergency` 审计。
 
 Ria 通过 run_code SDK 调用 15 个 `ria_*` 工具（含反思编排 `ria_reflect`、文件发送 `ria_send_file` 和主题管理 `ria_topic`）。工具只在 Ria 的 Agent ctx 上注册，worker 侧不需要安装任何东西。
 

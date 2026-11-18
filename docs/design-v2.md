@@ -125,6 +125,42 @@ Advisor 的产物只有两种：
 - Router 只读，不调用 selectModel，不写回默认模型；用 llm.stream 做 one-shot，不创建 session。
 - 通知与副作用的目标形态是走 outbox，至少一次、按幂等键投递；状态先落定，再送达。MVP 的 Chatbot 通知直接 prompt，尚未接入 outbox（见第 10 节）。
 
+### 提权风险分级与逐条审批
+
+v2 的提权不再依赖工具白名单或 `chatbot_grant`。每次 Worker 的提权请求都由 Router 在 `approval/request` 前事件驱动地判一次风险，按风险决定「自动放行本次」还是「阻塞等用户」。分级器是纯函数 `lib/v2/risk.mjs`，没有 IO、没有定时器；参数缓存来自 `tools/pre-execute`，因为 `approval/request` 本身不带 argv。
+
+**四档规则表**（命中多条时取最高档，reasons 列出所有命中；括号内是稳定规则 id）：
+
+| 等级 | 判定类别 / 示例 | 规则 id |
+|---|---|---|
+| low | 只读命令：`ls`、`cat`、`head`、`tail`、`grep`、`rg`、`find`（无 `-delete`/`-exec`）、`wc`、`stat`、`file`、`jq`；只读 Git：`git status/diff/log/show/branch --list/rev-parse`；跑测试：`npm test`、`node test/*`、`pytest`、`go test`（不安装、不发布）；写工作区内产物/临时文件：`ria-runs/`、`runs/`、`dist/`、`*.log`、`*.tmp` | `read-only-cmd`、`read-only-git`、`run-tests`、`read-only-tool`、`write-artifact`、`write-workspace-file` |
+| medium | 写工作区内被跟踪的源码/配置：`lib/`、`src/`、`test/`、`docs/`、`package.json`、`tsconfig*.json` 等；`git add/commit/stash/merge/rebase/switch/checkout/restore`；安装依赖：`npm/pnpm/yarn/bun install/add/ci`、`pip install`；改 `~/.dsh` 下非凭据配置 | `write-tracked-source`、`git-write`、`install-deps`、`config-write` |
+| high | 写工作区外/系统路径（`/etc`、`/usr`、Home 下非 workspace）；`sudo`/`chmod`/`chown`/`dd`/`rm`/`rmdir`；`systemctl`/`service`/`launchctl`/`dsh-daemon`/`kill`；网络出口：`curl`/`wget`/`ssh`/`git push`；凭据相关：`.env`、`.credentials`、`.ssh`、`id_rsa`、`printenv`/`env` | `write-outside-workspace`、`privileged-command`、`privileged-escalation`、`destructive-command`、`network-egress`、`credentials-path`、`credentials-env`、`system-install` |
+| unknown | 命令无法静态解析：管道、变量/命令替换、`sh -c` 套娃、复合重定向；路径无法解析：相对路径逃逸、`~` 未展开、缺少 cwd/workspace；工具不认识或参数缓存缺失 | `unparsed-shell`、`path-escape`、`path-unparsed`、`path-missing`、`workspace-missing`、`missing-arguments`、`unknown-tool` |
+
+简单单条输出重定向（`cmd > path` / `cmd >> path`）按目标路径判定；含管道或复合重定向仍是 unknown。unknown 永远按高风险处理，不会自动放行。
+
+**策略优先级**：工单 `meta.escalationPolicy` > 全局 `settings.escalationPolicy` > 默认。默认 **`auto-low`**。`ticket_plan` 可传 `escalationPolicy`：
+
+| 策略 | low | medium | high / unknown |
+|---|---|---|---|
+| `strict` | 问用户 | 问用户 | 问用户 |
+| `auto-low`（默认） | 自动 allowed-once | 问用户 | 问用户 |
+| `auto-low-medium` | 自动 allowed-once | 自动 allowed-once | 问用户 |
+
+**事件驱动、无轮询**：`tools/pre-execute`（prepend）缓存 `sessionId|callId → {toolName, arguments}`，`tools/result` 清理；宿主追加 `approval/asked` 后、`approval/request` 瀑布前完成判定。自动放行直接返回 `allowed-once`；其余仍走宿主审批 UI，工单按 `approval/asked → blocked(waitingOn=approval)`、`approval/decided → open → working` 的既有状态机。没有任何 `setInterval`/看门狗。v1 的 `ApprovalObserver` 同样靠事件驱动；v2 的区别是按工单/风险决策、只对 Auto 策略下的 low/medium 放行。
+
+**审计**：每次决策写 `state/audit.jsonl`（复用 `appendAudit`，失败只告警）。自动放行、转人工、人工批准/拒绝/取消各一行：
+
+~~~json
+{"at":1795000000000,"event":"approval/decision","ticketId":"ticket_x","sessionId":"session-w","tool":"bash","callId":"call_1","argv":"git status","paths":[],"level":"low","reasons":["[read-only-git] 只读 Git 命令：git status"],"decision":"auto-allow","policy":"auto-low","policySource":"default","kind":"risk"}
+{"at":1795000000001,"event":"approval/decision","decision":"human-allow","approvalId":"apr_1","ticketId":"ticket_x","sessionId":"session-w","tool":"bash","callId":"call_2","level":"high","reasons":["[write-outside-workspace] 写入工作区外路径：/etc/hosts"],"policy":"auto-low","policySource":"ticket","kind":"risk"}
+~~~
+
+**通知**：低/中风险自动放行发一条信息性通知（谁、工具、命令/路径、等级、reasons、策略与来源），例如「已自动放行低风险提权：ticket_x 工具 bash「git status」；判为 risk:low [read-only-git] 只读 Git 命令：git status（策略 auto-low，来源 default）。」；需要人工判断的阻塞通知带 `[risk:high ...]` / `[risk:unknown ...]` 与全部 reasons。
+
+**`chatbot_grant` 的定位**：仅调试/应急。正常提权走上述逐条风险审批，不得用 grant 绕过审批或解开被审批卡住的 Worker。`action=set` 必须写 reason，并用 `kind=debug|emergency` 标明性质；每次调用写 `grant/set`（或 `grant/rejected`）审计并带 `grant_kind`。
+
 ## 7. 记忆与知识
 
 - 长期记忆只放稳定偏好和长期约定，不抄 ticket 状态、时间戳或逐轮流水；定期反思只读回看，产出建议，不自动改写记忆。
@@ -186,14 +222,14 @@ session_events { "sessionId": "session-abc", "types": ["approval/*", "turn/*"], 
 ## 9. 边界
 
 - 直管 ≠ 共享上下文或实时共思；双方只能通过消息、ticket 和 run record 协作。
-- 审批的目标形态是由 Host/Router 的风险策略处理：低风险只放行本次，高风险转用户或拒绝；不自动放宽长期权限。MVP 暂未接入 v2 审批策略（见第 10 节）。
+- 审批由 Host/Router 的风险策略逐条处理：低风险可按策略放行本次，高风险/未知一律转用户；不自动放宽长期权限。v2 已接入四档风险分级，见 §6「提权风险分级与逐条审批」。
 - 不把 subagent 当 worker；Router 不进入对话；Chatbot/Advisor 不是多个管理者；不改普通 worker 的配置和上下文。
 - 本文是目标设计，不表示全部已实现；根 DESIGN.md 未改，实现状态以代码和测试为准。
 
 ## 10. 当前实现（MVP）
 
-已实现：Chatbot（standard，仅 `chatbot_*`）、Global Advisor（PTC，只读核对 + `ticket_*`，不含会话只读工具）、managed Worker（PTC，两种 `workerType`：work 持 `worker_*` + 执行工具；reflection 只读仓库与会话日志，持 `worker_*` + `session_list`/`session_events`）；Chatbot 可通过 `chatbot_grant`（set/list/reset）调整任意顶层会话的 sandbox mode 和 approval policy，只有用户明确要求时才可用；纯降权永久生效，任何提权必须带 TTL；自动恢复只撤销提权字段，同一 grant 里的降权保留，显式 reset 才撤销全部字段；绑定 ticket 时随 done/cancelled 恢复，重启会 reconcile，审计写 `audit.jsonl`；ticket 的 intake → open → working → blocked/done/failed 主链路；研究类票（`chatbot_request mode=answer`）由 Advisor 只读调查后 `ticket_answer` 直接 `open → done`，不派 Worker；`chatbot_resume` 恢复 blocked 票；startup 把中断的 working 票置为 blocked(environment)；微信 Claw 通过 Chatbot 复用入站与 assistant 转发；微信直通模式（`/直通 <会话名>`、`/直通状态`、`/退出直通`）把消息直接 steer 给普通独立会话，只转发正式文本；启动时向已连接通道发送一条重启通知。`chatbot_request` 可带 `workspace` 绝对路径：给定已有项目目录时 Worker 用该项目 cwd、产物放 `{$cwd}/ria-runs/<workerId>/`；不填则用全局 worker 根目录。状态文件为 `ria.json`（ticket）+ `v2.json`（绑定、Request、WorkOrder、报告、inbox）。
+已实现：Chatbot（standard，仅 `chatbot_*`）、Global Advisor（PTC，只读核对 + `ticket_*`，不含会话只读工具）、managed Worker（PTC，两种 `workerType`：work 持 `worker_*` + 执行工具；reflection 只读仓库与会话日志，持 `worker_*` + `session_list`/`session_events`）；Worker 提权按四档风险逐条审批（`lib/v2/risk.mjs`，工单策略 > 全局设置 > 默认 auto-low），low 自动 allowed-once、medium 按策略、high/unknown 一律阻塞并通知，每次决策写 `audit.jsonl`；`chatbot_grant` 降级为调试/应急工具（set/list/reset），只有用户明确要求时才可用且写 `grant_kind` 审计；纯降权永久生效，任何提权必须带 TTL；自动恢复只撤销提权字段，同一 grant 里的降权保留，显式 reset 才撤销全部字段；绑定 ticket 时随 done/cancelled 恢复，重启会 reconcile，审计写 `audit.jsonl`；ticket 的 intake → open → working → blocked/done/failed 主链路；研究类票（`chatbot_request mode=answer`）由 Advisor 只读调查后 `ticket_answer` 直接 `open → done`，不派 Worker；`chatbot_resume` 恢复 blocked 票；startup 把中断的 working 票置为 blocked(environment)；微信 Claw 通过 Chatbot 复用入站与 assistant 转发；微信直通模式（`/直通 <会话名>`、`/直通状态`、`/退出直通`）把消息直接 steer 给普通独立会话，只转发正式文本；启动时向已连接通道发送一条重启通知。`chatbot_request` 可带 `workspace` 绝对路径：给定已有项目目录时 Worker 用该项目 cwd、产物放 `{$cwd}/ria-runs/<workerId>/`；不填则用全局 worker 根目录。状态文件为 `ria.json`（ticket）+ `v2.json`（绑定、Request、WorkOrder、报告、inbox）。
 
-暂缓：Project 路由与 Project Advisor、知识层、SQLite 迁移、审批自动化的 v2 策略、独立 worker 的创建与观察、Topic 亲和、看板动作的 v2 收口、旧 legacy ticket 的迁移。
+暂缓：Project 路由与 Project Advisor、知识层、SQLite 迁移、独立 worker 的创建与观察、Topic 亲和、看板动作的 v2 收口、旧 legacy ticket 的迁移。
 
 兼容：`apply(ctx, { stateDir })` 默认 v2；`{ v2: false }` 保留旧单会话 Ria 与 15 个 `ria_*` 工具，现有 legacy 测试走这条路径。

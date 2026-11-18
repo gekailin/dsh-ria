@@ -1,5 +1,7 @@
 # 运行与任务流程
 
+> **v2 提示：** 插件现在默认运行 v2（Chatbot / Advisor / Router / Worker）。本文其余部分描述的是 legacy manager 模式（`{ v2: false }`），保留作为兼容与对照。v2 的角色、ticket 流转和工具见 [design-v2.md](design-v2.md) 与 [ticket-flow.md](ticket-flow.md)。
+
 本文记录 Ria 的入口与运行方式、工单生命周期、派发确认、重启恢复等运行时行为。设计背景与取舍见 [design-history.md](archive/design-history.md)。
 
 ## 入口与运行方式

@@ -1,6 +1,8 @@
 # Ria 软件架构设计
 
 > 一页读懂当前系统：边界、对象、流程与可靠性。用户用法见 [README.md](../README.md)，历史设计与细节见 [docs/archive/design-history.md](archive/design-history.md)。
+>
+> **v2 提示：** 插件默认运行 v2（Chatbot / Advisor / Router / Worker）。本文描述的是 legacy manager（`{ v2: false }`）；v2 见 [design-v2.md](design-v2.md) 与 [ticket-flow.md](ticket-flow.md)。
 
 ## 目录
 
@@ -29,7 +31,7 @@ executor 要么是 worker 的 sessionId，要么是 `self`：Ria 默认把任务
 不做的部分：
 
 - 不轮询 worker 进度，不维护独立 bridge，不额外占端口；只监听宿主事件与 worker idle。
-- 默认按风险代批 worker 的权限请求：低风险只放行本次调用，高风险只能转给用户或拒绝；只有在用户明确要求时才通过 `ria_grant` 放宽，从不自动放宽长期权限。
+- 默认按风险代批 worker 的权限请求：低风险只放行本次调用，高风险只能转给用户或拒绝；只有在用户明确要求时才通过 `ria_grant` 调整会话权限；纯降权永久，任何提权都必须带 TTL 并自动恢复，从不自动放宽。
 - 不把 subagent 当 worker；派发目标必须是顶层会话。
 - 不写 transcript；Ria 与 worker 的会话日志仍由 DSH 管理。
 
@@ -117,6 +119,21 @@ outbox 与 `ria.json` 不是同一个事务：派发已被接受、但 outbox �
 
 终态工单在写入成功后从热存移入 `tickets.log.jsonl`，同时按月写 `tickets-YYYY-MM.jsonl`（保留 12 个月）。热存保留所有非终态，加上最近 24 小时或最新 50 条终态；读取端合并两边，按 `ticketId + closedAt` 去重。`ria.json`、`outbox.json`、`memory.md` 都用 mutex + 临时文件 + fsync + rename 原子写，权限 0600。
 
+### 4.7 可观测性与兜底边界
+
+三条原则，按优先级排列，约束所有「怎么发现卡住 / 在等什么」的设计。
+
+1. **不做定时看门狗或轮询来发现会话卡死。** 卡住必须由状态机自己的事件表达，而不是由旁路进程按固定间隔去猜。
+   理由：轮询只能证明「没有新事件」，分不清是在等审批、在跑长任务，还是在跑死循环；它把「没建模」藏起来，用误报和额外 turn 换虚假的安全感。宿主已经给出 `turn/start`、`turn/end`、`approval/asked`、`approval/decided` 这些事实源（见 4.4），缺的是把它们接进工单状态，而不是再加一个观察者。
+
+2. **ticket 机制必须完整自洽。** 状态迁移、阻塞原因、审批等待都要显式建模：可观测（状态与原因可查询）、可通知（变化主动推给 Ria 或用户）、可恢复（知道在等谁、等什么、下一步做什么）。任何「人正好看见才发现」的路径都算缺陷。
+   理由：核心原则要求「有始有终」——做完有结果，失败有原因，卡住说明在等谁。若阻塞只能靠人肉发现，这条承诺就是空的；更糟的是未建模的阻塞会同时骗过 Ria、看板和用户：三处都显示 `working`，实际卡在审批上。
+
+3. **发现遗漏时修根因，不加轮询兜底。** 复盘/反思发现盲区，先回答「状态机为什么没覆盖它」，补事件、补迁移、补通知，再用测试锁住；不把「加一个定时提醒」当作修复。
+   理由：兜底会把 bug 固化成特性——掩盖真实状态、引入延迟与不一致，并让下一次复盘看不到原始症状。只有根因本身不可建模（外部依赖不可观测）时才允许兜底，且必须在文档里写明它掩盖了什么、代价是什么。
+
+判定顺序：先问状态机缺哪个事件，再问要不要加定时器；如果答案是「缺事件」，就不准加定时器。
+
 ## 5. 持久化
 
 `stateDir` 默认为 `DSH_HOME/state/ria/`。
@@ -130,7 +147,7 @@ outbox 与 `ria.json` 不是同一个事务：派发已被接受、但 outbox �
 | `reflections/` | 定期反思的 notes 与运行账本；P2 wiki 也规划在这里（尚未实现） |
 | `wechat-inbound/` / `wechat-claw-inbound/` | 微信入站图片原图；30 天 / 500 个上限 |
 | `wechat/`、`wechat-claw/`、`qq-bot/` | 各通道凭据、游标与暂停状态 |
-| `audit.jsonl` | 临时权限（grant）与审批决定审计 |
+| `audit.jsonl` | 会话权限（grant）与审批决定审计 |
 | `approval-diagnostics.jsonl` | 到达但未归 Ria 处理的 approval/request 诊断（agentId、toolName、callId、reason） |
 
 不保存聊天 transcript；原始会话日志在 DSH 的 `sessions` 下。

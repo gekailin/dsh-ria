@@ -5,6 +5,7 @@
 ~~~text
 DSH_HOME/state/ria/
   ria.json       # riaSessionId、riaPreset、tickets、pending deliveries、grants、settings、dispatchNotes
+  v2.json        # v2：Chatbot/Advisor/Worker 绑定、Request/WorkOrder、worker 报告与 manager inbox
   outbox.json    # 副作用待投递/失败记录（dispatch note、微信镜像），0600
   memory.md       # 用户偏好和长期记忆
   audit.jsonl     # 临时权限与审批决定审计，0600
@@ -29,7 +30,7 @@ DSH_HOME/state/ria/
 前缀：/plugins/dsh-ria/api
 
 - POST /ensure：创建或打开全局唯一的 Ria。
-- GET /state：riaSessionId、tickets、pendingDeliveries、grants、settings、workerIdleNotifications（enabled/throttleMs）、wechatClawAssistant（最近一条 assistant 正文的转发结果，未产生过为 null）。
+- GET /state：riaSessionId、tickets、pendingDeliveries、grants、settings、workerIdleNotifications（enabled/throttleMs）、wechatClawAssistant（最近一条 assistant 正文的转发结果，未产生过为 null）。v2 模式还返回 v2：{chatbotSessionId, advisors, workers, tickets, lastError}，其中 tickets 是 v2 元数据与实际 ticket 状态的只读投影；lastError 是最近一次 Chatbot 创建/恢复失败的 {scope,message,stack,at,sessionId,phase}，成功后清空；legacy 模式为 null。
 - GET/POST /settings：读取或设置 {wechatAutoPause:boolean, approvalAutomation:boolean, reflection:object, style:object}（GET 还返回 progressCards、reflectionStatus 与 style.effectiveText）。approvalAutomation 默认 true，开启后按风险代批，关闭回退宿主原生审批；POST 只接受 boolean。reflection 默认 {enabled:false, cadence:"daily", time:"23:40", weekday:1, model:null, provider:null, reasoningEffort:null}，timezone 固定 Asia/Shanghai；POST 可只传其中一个，reflection 可只传部分字段并浅合并。校验：enabled 必须 boolean，cadence 为 daily|weekly，time 匹配 HH:MM，weekday 为 1–7 的整数，model/provider/reasoningEffort 为非空字符串或 null；任一项非法整包 400 且不部分写入。开启 reflection 时维护「Ria: 定期反思」计划；宿主无 schedule 服务时设置仍保存，reflectionStatus.scheduleError 给出原因。style 默认 {enabled:false, preset:"concise", custom:""}，preset 为 concise|warm|formal|playful，custom 最多 300 字；POST 的 style 可只传部分字段并浅合并，enabled 必须 boolean、preset 必须在枚举内、custom 必须是字符串且不超过 300 字，非法整包 400；空对象不算有效 patch。effectiveText 是服务端渲染的完整风格指令，style 关闭时为空字符串，前端不复制文案。
 - GET /reflection/status：只读返回 {lastCompletedDate, lastStatus, lastError, activeRunId, workerSessionId, scheduleId}。
 - POST /reflection/run：body {force?:boolean, forDate?:YYYY-MM-DD}；forDate 缺省为 Asia/Shanghai 今天，非法日期 400。已有运行中的反思返回 409 {error, runId}；否则向 Ria 注入 `[REFLECTION MANUAL] forDate=… force=…` 提醒并返回 202 {queued:true, forDate}。注入失败返回 500，不假报成功。

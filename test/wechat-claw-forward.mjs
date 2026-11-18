@@ -136,6 +136,14 @@ function makeClaw({ stateDir, send, sendImage, imageOptions = { inbound: true, o
     assert.equal(record.fallbackQueued, true)
     assert.equal(fallbacks.length, 1)
     assert.equal(fallbacks[0].text, '这条发不出去')
+
+    // Live direct-mode replies are not durable ticket replies. A failed send must
+    // not enqueue a “补发” copy that would be replayed later.
+    claw.forwardAssistant('直通回复发不出去', { seq: 5 }, { fallback: false })
+    await waitFor(() => claw.lastAssistantForward && claw.lastAssistantForward.chars === 8, 'direct send failure')
+    assert.equal(claw.lastAssistantForward.reason, 'send_failed')
+    assert.equal(claw.lastAssistantForward.fallbackQueued, undefined)
+    assert.equal(fallbacks.length, 1)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

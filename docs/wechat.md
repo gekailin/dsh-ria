@@ -15,6 +15,14 @@ Ria 入口标题右侧有一个“连接”chip。点开后默认打开上次使
 - DSH 重启后如有 creds 会自动重连；待发文本超过 10 条时只补发最后 10 条，并先提示跳过了多少条。
 - chip 只在宽侧边栏显示；折叠侧边栏不插入。
 
+## 直通模式（direct）
+
+微信 Claw 支持把当前聊天直通给一个普通独立会话：入站消息不再经过 Chatbot，直接以 `mode=steer` 发给目标会话；目标会话的正式文本回复带【直通·标题】前缀转回微信。只对微信 Claw 生效，其他通道没有这个钩子。
+
+- 归属：状态、命令解析、目标解析、入站转发全部在 v2 controller（`lib/v2/controller.mjs` 的 `directCommand` / `directInfo` / `enableDirect` / `directRelay` / `forwardDirectReply`）；微信 Claw 只在入站时调用注入的 `directRelay` 钩子（`lib/channels/wechat-claw.mjs`），`lib/index.js` 负责把 `v2.directRelay` 接进去，v1 没有直通。渠道端没有第二套实现。
+- 入口：模型侧 `chatbot_direct`，用户侧 `/直通 <标题或 sessionId>`、`/直通状态`、`/退出直通`；两者操作同一份内存状态，直通状态重启后清空。
+- 边界：只接受普通顶层会话；直管 Worker 与 Advisor 不走直通。后续若要扩展到其他渠道，只复用 controller 的 `directRelay`/`directInfo`，不要在渠道里复制状态、命令解析或转发逻辑。
+
 ## 暂停推送
 
 暂停只关闭“Ria -> 微信”的出站推送：连接、登录态、长轮询和心跳保持，微信入站照常投递给 Ria。状态存在 `wechat/state.json`，DSH 重启后保持。

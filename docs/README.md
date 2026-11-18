@@ -8,6 +8,7 @@
 | --- | --- | --- |
 | [architecture.md](architecture.md) | 系统顶层地图：定位与边界、核心对象、主流程、可靠性、持久化、通道、记忆与反思、扩展点 | 现行 |
 | [project-advisor-design.md](project-advisor-design.md) | 项目级 Advisor 的目标设计：workspace 路由与项目 key、会话放置（cwd 在 state 下）、两级经验库与晋升、生命周期、并发与迁移 | 草案 |
+| [sqlite-migration-design.md](sqlite-migration-design.md) | 控制面数据迁 SQLite 的设计与分阶段方案：进库/留文件范围与权威源、Schema 草案、单写者 WAL 与事务边界、导入校验与回滚、三阶段落地、依赖与风险 | 草案 |
 | [tools.md](tools.md) | 15 个 `ria_*` 工具与 6 个只读 `ria_reflect_*` 的参数、返回、依赖和调用纪律 | 现行 |
 | [operations.md](operations.md) | 运行手册：入口、任务转述、60 秒确认、outbox、归档、重启恢复、worker 唤醒、审批自动化 | 现行 |
 | [channels.md](channels.md) | 三个手机通道的面板、协议、入站投递、暂停与状态文件 | 现行 |

@@ -160,6 +160,22 @@ session_events { "sessionId": "session-abc", "types": ["approval/*", "turn/*"], 
 → { ok:true, sessionId, events:[{ seq, type, time, summary }], count, scanned, truncated, more, nextThroughSeq, note:"read-only" }
 ```
 
+### 经验库与分发（lessons）
+
+经验是**按需检索**的知识，和 memory.md（稳定偏好，整体注入）不是一回事：memory 抄进 prompt，经验只在派单命中时进入 Worker brief。
+
+**存储**：`DSH_HOME/state/ria/lessons.json`（0600，tmp+fsync+rename 原子写）。每条：`id`、`tags`、`condition`（适用条件）、`scenario`（场景）、`pitfall`（坑位）、`approach`（有效做法）、`source{ticketId,sessionId}` 与 `sources[]`、`createdAt/updatedAt`、`hits`（命中次数）、`status=active|archived`。上限 500 条，超出按命中少、更新时间旧归档。
+
+**闭环**：
+
+1. **回流**：Worker 在 `worker_report` 里带 `lessons:[{scenario,pitfall,approach,evidence?}]`（≤5 条）。它只是**候选**，落在 v2.json 的候选区，默认不生效、不影响派单；reflection Worker 在复盘票里同样用这个字段提交。
+2. **审阅**：Advisor 用 `lesson_review`（list/accept/reject）处理候选。accept 才写入经验库；reject 只标记候选，不入库。Worker 永远不能直接入库。
+3. **去重**：按「scenario slug + pitfall slug」的 hash 查重；命中则合并——tags 取并集、来源追加、approach 取新、hits 相加、updatedAt 刷新，条目不新增。
+4. **分发**：`ticket_plan` 可用 `lessons:[id]` 把条目钉进 WorkOrder；未钉时 `dispatchTicket` 用工单的 goal/workspace/mode 检索，自动取 ≤3 条。注入渲染成 brief 的 `[Lessons]` 段（每条一行，总长 ≤800 字符），并把所用 id 写进 `ticket meta.usedLessons`、派发返回体与 ticket 视图。
+5. **命中计数**：brief 成功发出后 `hits` +1；没有相关经验时 brief 不出现 `[Lessons]`，meta.usedLessons 为空数组，不报错。
+
+**检索**：内存倒排索引 `tag → ids` 与 `token → ids`（英文按词、中文按 2-gram，另加 workspace 路径段）。`match()` 只对查询 token/tag 的 postings 打分（tag 命中 ×3、token 命中 ×1，再按 hits/更新时间微调），不遍历全库；返回的 `scanned` 只随命中集合增长。`lesson_search` 是这个检索的只读入口。
+
 ## 8. 界面与观察
 
 - 一个看板 + 一个 Chatbot。看板的主语是“事”，不是 session；第一屏是“需要你”收件箱，只有这里弹通知；其余分为进行中、最近完成、异常/叫停。

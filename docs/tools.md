@@ -1,5 +1,7 @@
 # 工具与 worker 管理
 
+> **v2 提示：** 插件默认运行 v2，Chatbot / Advisor / Worker 各自只拿到 scoped 的 `chatbot_*`、`ticket_*`、`worker_*` 工具，不再有 15 个 `ria_*`。本文描述的是 legacy manager 模式（`{ v2: false }`），见 [design-v2.md](design-v2.md)。
+
 Ria 通过 run_code SDK 调用 15 个 `ria_*` 工具（含反思编排 `ria_reflect`、文件发送 `ria_send_file` 和主题管理 `ria_topic`）。工具只在 Ria 的 Agent ctx 上注册，worker 侧不需要安装任何东西。
 
 ## 工具
@@ -19,7 +21,7 @@ Ria 通过 run_code SDK 调用 15 个 `ria_*` 工具（含反思编排 `ria_refl
 | ria_queue | 列出或撤回一个顶层 worker 尚未执行的消息。action=list 返回 running 与 queue（id、placement=queued/steering/context、可选 rpcId、preview）；冷会话 queue=null。action=remove 接受 itemId 或 rpcId（rpcId 来自 ria_request 的 requestId；两者都给时 itemId 优先），不可恢复，只删 pending，不停止当前 turn、不改工单、不影响 recentWorkers。失败码 queue_item_not_found、queue_remove_failed；预检同 ria_request。 |
 | ria_approval | 列出正在等待 Ria 裁决的 worker 审批（仅限有 active 工单的 executor）。每项带 approvalId、workerSessionId、ticketId、toolName、callId/reason、risk、argsPreview、decisionBy、createdAt、expiresAt、expiresInMs。低风险已被宿主规则直接放行，不会出现在列表里。只读：不批准、不拒绝。 |
 | ria_approval_decision | 裁决一条待批请求。decision=allow 只放行本次调用（allowed-once）；deny 拒绝；ask-user 交给用户原生审批 UI。只有 low/medium 可 allow，high 只接受 ask-user/deny（否则 code=risk_requires_user）。必须 2 分钟内决定，否则宿主按拒绝处理并通知用户；每次决定写 audit.jsonl。不能用来放宽 sandbox/approval policy，那只能由用户明确要求后走 ria_grant。 |
-| ria_grant | 临时调整一个 worker 的 sandbox mode 和/或 approval policy。action=set/list/reset；set 必须带 userConfirmed=true，并记录原值、到期时间、审计，任务结束或 reset 时恢复。 |
+| ria_grant | 调整一个顶层会话的 sandbox mode 和/或 approval policy。action=set/list/reset；set 必须带 userConfirmed=true。纯降权永久生效，只有 reset 才恢复；任何提权必须带 TTL，并在任务结束、到期或重启时恢复。 |
 | ria_memory | 读/写 memory.md 与归档记忆。core 预算默认 2400 字符 / 12 条 / 单条 300 字符，按 Unicode code point 计；超限拒绝写入；archive 按主题存 `memory-archive/<slug>.md`，不注入 prompt。 |
 
 ## 记忆预算与归档（ria_memory）
@@ -139,18 +141,19 @@ Ria 通过宿主模型注册表（`ctx.get('llm').listProviders()/listModels(pro
 - 关闭 `approvalAutomation` 后回退旧行为：只记录、block、通知，然后 `next()` 交给原生 UI，15 分钟 TTL；Ria 不能代批。`ria_approval` 返回当前 pending 列表及每项的 `ticketId`、`risk`、`argsPreview`、`expiresAt`、`expiresInMs`。
 - 用户要批准/拒绝时，仍需打开对应 worker 会话操作；Ria 只能转告是哪个 worker、哪个工具、什么原因，不能代替用户决定。
 
-## 临时 worker 权限（阶段二）
+## 会话权限（阶段二）
 
-当用户明确要求“临时放开某个 worker”时，Ria 才调用 `ria_grant`。它不是自动提权，也不会因为 worker 被审批卡住就自行放宽。
+当用户明确要求调整某个顶层会话的权限时，Ria 才调用 `ria_grant`。它不是自动提权，也不会因为 worker 被审批卡住就自行放宽。
 
 - `set` 必须由用户明确指令触发，且传 `userConfirmed=true`；Host 不提供任何自动 set 路径。
-- 只作用在一个顶层 worker 上，至少指定 `sandboxMode` 或 `approvalPolicy`，可以关联一个未关闭的工单。
+- 作用在任意顶层会话上（直管 worker、独立会话、Advisor）；Ria/Chatbot 自己不可调整。至少指定 `sandboxMode` 或 `approvalPolicy`，可以关联一个未关闭的工单。
 - 支持 `sandboxMode=read-only|workspace-write|danger-full-access` 和 `approvalPolicy=ask|never`。`never` 是自动拒绝需要审批的操作，不是自动允许。
-- 默认 30 分钟过期，可设 60 秒到 24 小时；同一 worker 同时只保留一个 grant。
-- Host 记录生效值和 override 原值，写入 `ria.json` 和 `audit.jsonl`；在工单 done/cancelled、显式 reset、到期或 DSH 下次启动时恢复。
-- 恢复是保守的：如果用户期间手工改过该字段，当前值已不等于 grant 写入的值，就跳过该字段并在结果里报告，不覆盖用户的新选择。
+- **纯降权永久**：不设过期时间，工单结束或重启都不会恢复，只有显式 `reset` 才恢复原值。
+- **任何提权临时**：sandbox 等级变大，或 approval 从 `ask` 变成 `never`，都算提权；必须有 TTL，默认 30 分钟，可设 60 秒到 24 小时。关联工单时，在工单 done/cancelled、到期或 DSH 下次启动时恢复；同时包含降权和提权的混合变更按提权处理。
+- 同一会话同时只保留一个 grant。
+- Host 记录生效值和 override 原值，写入 `ria.json` 和 `audit.jsonl`；恢复是保守的：如果用户期间手工改过该字段，当前值已不等于 grant 写入的值，就跳过该字段并在结果里报告，不覆盖用户的新选择。
 - 恢复失败会标记 `restore_failed`，60 秒后重试；审计里能看到失败原因。
-- 不改 worker 的 tools、prompt 或 preset。
+- 不改会话的 tools、prompt 或 preset。
 
 ## 发送文件
 
@@ -226,3 +229,14 @@ ria_reflect 是反思的编排入口，只注册给 Ria。它管理 `reflections
 - `ria_reflect_report`：只写 `runs/<runId>/report.partial.md`，原子写、0600、不超过 30KB；不接受 path/runId/sessionId 参数。写入前先跑与 finish 相同的校验，失败返回结构化错误（code + problems），不落盘、旧文件保持不变。run finish/abort 后所有工具返回 run_closed。
 
 一次真实日志试跑的量级、缺口和默认值建议见 [archive/reflection-and-review.md](archive/reflection-and-review.md)。
+
+## v2 工具补充：经验库（lessons）
+
+v2 的 Advisor / Worker 额外有经验闭环工具（legacy 模式没有）：
+
+- `worker_report.lessons`：Worker 报告可带 ≤5 条候选 `{scenario, pitfall, approach, evidence?}`。候选落在 v2.json 的候选区，**不自动生效**；done 报告会提示候选条数。reflection Worker 在复盘票里用同一字段提炼经验。
+- `lesson_search`（Advisor 只读）：参数 `query`、`workspace`、`mode`、`limit`（1–5，默认 3）。走内存倒排索引，返回 `{lessons:[{id,scenario,pitfall,approach,tags,source,hits}], total, scanned}`，不扫全库。
+- `lesson_review`（Advisor）：`action=list|accept|reject`，`id`（accept/reject 必填），`status`（list 过滤，默认 candidate）。accept 按「scenario + pitfall」归一查重：命中则合并 tags/来源、保留最新 approach、hits 相加并返回 `deduped:true`；未命中新建并返回 `deduped:false` 与 `entryId`。reject 只标记候选，不入库。
+- `ticket_plan.lessons`：可选 lesson id 列表，写进 WorkOrder 的 `lessons`（id + 短场景）。派发时这些条目的 `[Lessons]` 段进入 Worker brief；未钉时按工单 goal/workspace/mode 自动匹配 ≤3 条，总长 ≤800 字符。
+
+经验库文件：`DSH_HOME/state/ria/lessons.json`（0600，原子写，≤500 条）。条目含 id/场景/适用条件/正文/来源(ticket+session)/时间/命中数；派单用到的 id 记在 ticket meta 的 `usedLessons` 和派发返回体里，可追溯。

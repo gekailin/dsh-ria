@@ -28,6 +28,8 @@
 - Advisor 暂不设 Task Advisor；Project Advisor 不绑 cwd，Global Advisor 不绑项目。
 - **会话形态**：Chatbot 用 standard；Advisor（Global / Project）和直管 worker 用 PTC；Router 没有会话。独立 worker 不指定 preset，沿用 DSH 当前配置。PTC 只改变调用方式，不改变权限；Advisor 与直管 worker 各自注册 scoped 工具，均不继承 Ria 的 `ria_*` 管理工具。
 
+> 项目级 Advisor（按 workspace 路由、会话放 `stateDir/advisors/<key>`、经验两级分层与晋升）见 [project-advisor-design.md](project-advisor-design.md)；本文只描述 Global Advisor 的现状。
+
 ### Advisor（参谋）的定位
 
 > 旧称 Thinker（已改名 Advisor）。

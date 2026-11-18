@@ -31,6 +31,7 @@ export async function createFixture(options = {}) {
   const installed = new Map()
   const agentTools = new Map()
   const prompts = []
+  const appends = []
   const steered = []
   const followups = []
   const creates = []
@@ -48,32 +49,53 @@ export async function createFixture(options = {}) {
   let promptFailure = undefined
   const queues = new Map(Object.entries(options.queues || {}).map(([id, queue]) => [String(id), Array.isArray(queue) ? queue.map(item => ({ ...item })) : null]))
   const runningOverrides = new Map()
+  // SessionState.pendingInput belongs to the host state controller. Tests
+  // inject the sampled value (approval / question / other) instead of pretending
+  // the host produced it.
+  const pendingInputs = id => {
+    const injected = options.pendingInputs && options.pendingInputs[id]
+    return Array.isArray(injected) ? injected.slice() : []
+  }
   const updateQueueCalls = []
   const models = new Map()
   models.set(riaId, { provider: 'provider-ok', model: 'model-vision' })
   models.set('session-worker', { provider: 'provider-ok', model: 'model-vision' })
   models.set('session-no-image', { provider: 'provider-text', model: 'model-text-only' })
+  for (const item of options.extraSessions || []) {
+    if (item.agentAvailable === false) continue
+    const sid = String(item.sessionId)
+    if (!models.has(sid)) models.set(sid, { provider: 'provider-ok', model: 'model-vision' })
+  }
 
   const restrictions = new Map()
-  const globalTools = ['bash', 'read', 'write', 'edit', 'run_code']
+  // Delegation tools are host-global and mounted by the profile preset; tests
+  // that exercise the Worker deny-list inject the ones their profile exposes.
+  const globalTools = ['bash', 'read', 'write', 'edit', 'run_code', ...(options.extraGlobalTools || [])]
   const toolsApi = (id, tools) => ({
     register(definition) {
+      if (options.rejectDuplicateTools && tools.has(definition.name)) {
+        throw new Error('tool "' + definition.name + '" is already registered in this scope')
+      }
       tools.set(definition.name, definition)
       return () => tools.delete(definition.name)
     },
     restrict(filter) {
       restrictions.set(String(id), filter && typeof filter === 'object' ? filter : {})
     },
-    view() {
+    view(scope) {
       const filter = restrictions.get(String(id))
       const visible = new Map()
+      // Model dsh-tools: an unscoped view is deployment-global and excludes
+      // this agent's scoped registrations. Only a view for this agent includes
+      // them, which is what the Advisor/Worker restriction code must request.
+      const ownScope = scope !== undefined && String(scope.id) === String(id)
       for (const name of globalTools) {
         if (filter && Array.isArray(filter.allow) && !filter.allow.includes(name)) continue
         if (filter && Array.isArray(filter.deny) && filter.deny.includes(name)) continue
         visible.set(name, { name })
       }
-      for (const [name, definition] of tools) visible.set(name, definition)
-      return { visible }
+      if (ownScope) for (const [name, definition] of tools) visible.set(name, definition)
+      return { visible, restrictableNames: new Set(globalTools) }
     },
   })
 
@@ -81,14 +103,14 @@ export async function createFixture(options = {}) {
     id: riaId,
     ctx: {
       tools: toolsApi(riaId, installed),
-      systemPrompt: { section() { return () => {} } },
+      systemPrompt: { section(section) { if (!Number.isFinite(section && section.order)) throw new TypeError('prompt section order must be finite'); return () => {} } },
     },
     model: { current() { return models.get(String(riaAgent.id)) } },
     steer(message) { steered.push(message) },
     followup(message) { followups.push(message) },
     session: {
       snapshotEvents() { return options.sessionEvents && options.sessionEvents[riaId] ? options.sessionEvents[riaId].slice() : [] },
-      append() { return { seq: 0, time: 1 } },
+      append(...args) { appends.push({ sessionId: riaId, args }); return { seq: 0, time: 1 } },
     },
   }
 
@@ -105,10 +127,13 @@ export async function createFixture(options = {}) {
       id,
       ctx: {
         tools: toolsApi(id, tools),
-        systemPrompt: { section() { return () => {} } },
+        systemPrompt: { section(section) { if (!Number.isFinite(section && section.order)) throw new TypeError('prompt section order must be finite'); return () => {} } },
       },
       model: { current() { return model } },
-      session: { snapshotEvents() { return options.sessionEvents && options.sessionEvents[id] ? options.sessionEvents[id].slice() : [] }, append() { return { seq: 0, time: 1 } } },
+      session: {
+        snapshotEvents() { return options.sessionEvents && options.sessionEvents[id] ? options.sessionEvents[id].slice() : [] },
+        append(...args) { appends.push({ sessionId: id, args }); return { seq: 0, time: 1 } },
+      },
     }
   }
 
@@ -221,9 +246,12 @@ export async function createFixture(options = {}) {
   const ctx = {
     logger: { info() {}, warn() {}, error() {} },
     agents: { list() { return [] } },
-    on(name, handler) {
+    on(name, handler, listenerOptions) {
       const list = listeners.get(name) || []
-      list.push(handler)
+      // The host orders waterfall listeners by registration; dsh-ria prepends
+      // some of them (approval/request) so a test can prove the ordering.
+      if (listenerOptions && listenerOptions.prepend) list.unshift(handler)
+      else list.push(handler)
       listeners.set(name, list)
       return () => {
         const current = listeners.get(name) || []
@@ -337,7 +365,15 @@ export async function createFixture(options = {}) {
           const title = titles.get(String(item.sessionId))
           if (title) values.title = title
           if (current) values.modelSelection = { next: current }
-          return { ...item, projections: { ...(item.projections || {}), values } }
+          // Match the host SessionSummary shape: agentAvailable/running/blank are
+          // always present, while parentSessionId/origin/cwd stay optional.
+          return {
+            agentAvailable: item.agentAvailable !== false,
+            running: Boolean(item.running),
+            blank: Boolean(item.blank),
+            ...item,
+            projections: { ...(item.projections || {}), values },
+          }
         }
         return {
           items: [
@@ -401,13 +437,26 @@ export async function createFixture(options = {}) {
         const running = runningOverrides.has(id)
           ? Boolean(runningOverrides.get(id))
           : queues.has(id) ? (options.running === undefined ? true : Boolean(options.running)) : false
-        if (!queues.has(id)) return { cursor: 1, active: running, running, queue: null, pendingInput: [] }
+        const pendingInput = pendingInputs(id)
+        // The event cursor is the log end session_events starts from. Fixtures
+        // with a seeded event log report its highest seq; the historical default
+        // (1) stays for sessions without one.
+        const recorded = options.sessionEvents && options.sessionEvents[id]
+        let cursor = 1
+        if (Array.isArray(recorded)) {
+          for (const record of recorded) {
+            const event = record && record.type === 'event' && record.event ? record.event : record
+            const seq = event && Number.isSafeInteger(event.seq) ? event.seq : 0
+            if (seq > cursor) cursor = seq
+          }
+        }
+        if (!queues.has(id)) return { cursor, active: running, running, queue: null, pendingInput }
         return {
-          cursor: 1,
+          cursor,
           active: running || queues.get(id).length > 0,
           running,
           queue: queues.get(id),
-          pendingInput: [],
+          pendingInput,
         }
       },
       async updateQueue(request) {
@@ -423,13 +472,60 @@ export async function createFixture(options = {}) {
       },
       async events(request) {
         const id = request && request.address ? String(request.address.sessionId) : ''
-        const events = options.sessionEvents && options.sessionEvents[id]
-        return { records: Array.isArray(events) ? events.slice() : [], hasMore: false, cursor: 0 }
+        const all = Array.isArray(options.sessionEvents && options.sessionEvents[id]) ? options.sessionEvents[id] : []
+        const unwrap = record => record && record.type === 'event' && record.event ? record.event : record
+        const seqOf = record => {
+          const event = unwrap(record)
+          return event && Number.isSafeInteger(event.seq) ? event.seq : undefined
+        }
+        const maxSeq = all.reduce((max, record) => {
+          const seq = seqOf(record)
+          return seq !== undefined && seq > max ? seq : max
+        }, 0)
+        const throughSeq = Number.isSafeInteger(request && request.throughSeq) ? request.throughSeq : undefined
+        const entries = all.map((record, index) => ({ record, seq: seqOf(record), index }))
+        // The host applies the inclusive cut; records without a seq cannot be
+        // placed on the timeline and are kept as-is (legacy fixture shape).
+        let kept = entries.filter(entry => entry.seq === undefined || throughSeq === undefined || entry.seq <= throughSeq)
+        if (kept.every(entry => entry.seq !== undefined)) kept = kept.slice().sort((a, b) => a.seq - b.seq)
+        const maxMessages = Number.isSafeInteger(request && request.maxMessages) && request.maxMessages > 0
+          ? request.maxMessages
+          : undefined
+        let hasMore = false
+        if (maxMessages !== undefined && kept.length > maxMessages) {
+          kept = kept.slice(-maxMessages)
+          hasMore = true
+        }
+        return {
+          records: kept.map(entry => entry.record),
+          hasMore,
+          cursor: throughSeq === undefined ? maxSeq : throughSeq,
+        }
+      },
+      async wait(request, signal) {
+        if (!signal || typeof signal.throwIfAborted !== 'function') {
+          throw new TypeError("Cannot read properties of undefined (reading 'throwIfAborted')")
+        }
+        signal.throwIfAborted()
+        const id = String(request && request.sessionId ? request.sessionId : '')
+        if (options.onWait) {
+          const custom = await options.onWait(request)
+          if (custom) return custom
+        }
+        const records = options.waitRecords && options.waitRecords[id]
+        return {
+          reason: 'idle',
+          state: { cursor: 10, active: false, running: false, queue: null, pendingInput: pendingInputs(id) },
+          output: { records: Array.isArray(records) ? records.slice() : [], truncated: false },
+        }
       },
       async projections(request) {
         const id = request && request.sessionId ? String(request.sessionId) : ''
         const current = models.get(id) || { provider: 'provider-ok', model: 'model-vision' }
-        return { kind: 'sequenced', values: { modelSelection: { next: current } } }
+        const values = { modelSelection: { next: current } }
+        const title = titles.get(id)
+        if (title) values.title = title
+        return { kind: 'sequenced', values }
       },
     },
   }
@@ -450,20 +546,40 @@ export async function createFixture(options = {}) {
     return dispatch(0)
   }
 
-  const service = apply(ctx, { stateDir })
+  // Some host plugins register their waterfall listener before profile plugins
+  // load; dsh-api-remotes holds approval/request for the browser this way. Tests
+  // that need that ordering declare listeners here.
+  for (const [name, handler] of Object.entries(options.preListeners || {})) {
+    const list = listeners.get(name) || []
+    list.push(handler)
+    listeners.set(name, list)
+  }
+
+  // Legacy tests stay on the explicit old manager. A test that wants to check
+  // the shipped default asks for v2Default instead of opting in by hand.
+  const service = options.v2Default === true
+    ? apply(ctx, { stateDir })
+    : apply(ctx, { stateDir, v2: options.v2 === true })
   await service.ensure()
   // Automation changes the approval waterfall, so every existing test runs
   // with the host-native behaviour unless it opts in explicitly.
   service.store.setSettings({ approvalAutomation: options.approvalAutomation === true })
-  const call = async (name, args) => {
-    const definition = installed.get(name)
-    if (!definition) throw new Error('tool not installed: ' + name)
+  const toolsFor = sessionId => {
+    const id = String(sessionId)
+    return id === String(riaAgent.id) ? installed : agentTools.get(id)
+  }
+  const callAs = async (sessionId, name, args) => {
+    const agent = makeAgent(String(sessionId))
+    const tools = toolsFor(sessionId)
+    const definition = tools && tools.get(name)
+    if (!agent || !definition) throw new Error('tool not installed for ' + String(sessionId) + ': ' + name)
     return await definition.execute(args, {
-      agent: riaAgent,
+      agent,
       signal: new AbortController().signal,
       concludeTurn() { concluded += 1 },
     })
   }
+  const call = async (name, args) => await callAs(riaAgent.id, name, args)
   const cleanup = (cleanupOptions = {}) => {
     try { service.wechat.shutdown() } catch { /* already stopped */ }
     try { service.shutdownOutbox() } catch { /* already stopped */ }
@@ -479,6 +595,7 @@ export async function createFixture(options = {}) {
     installed,
     agentTools,
     prompts,
+    appends,
     steered,
     followups,
     emit,
@@ -492,14 +609,17 @@ export async function createFixture(options = {}) {
     schedules,
     scheduleCalls,
     riaAgent,
+    agentFor(sessionId) { return makeAgent(String(sessionId)) },
     call,
+    callAs,
     cleanup,
     visibleTools(sessionId) {
       const agent = makeAgent(String(sessionId))
       if (!agent) return []
-      return [...agent.ctx.tools.view().visible.keys()]
+      return [...agent.ctx.tools.view(agent).visible.keys()]
     },
     queues,
+    restrictions,
     setRunning(sessionId, value) { runningOverrides.set(String(sessionId), Boolean(value)) },
     setRiaSession(sessionId) {
       riaId = String(sessionId)

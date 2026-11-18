@@ -237,7 +237,7 @@ function assertLossless(value, path = '$') {
   JSON.stringify(value)
 }
 
-const service = apply(ctx, { stateDir })
+const service = apply(ctx, { stateDir, v2: false })
 const wechatNotes = []
 service.wechat.sendDispatchNote = async (note, options) => {
   wechatNotes.push({ note, options })
@@ -255,12 +255,13 @@ const REFLECTION_DEFAULTS = {
 }
 
 function expectedSettings(patch = {}) {
-  const { reflection, reflectionStatus, style, memory, memoryStatus, ...rest } = patch
+  const { reflection, reflectionStatus, style, memory, memoryStatus, approvalAutoAllow, ...rest } = patch
   const memoryLimits = { maxChars: 2400, maxEntries: 12, maxEntryChars: 300, ...(memory || {}) }
   return {
     progressCards: false,
     wechatAutoPause: true,
     approvalAutomation: true,
+    approvalAutoAllow: { enabled: false, tools: [], ...(approvalAutoAllow || {}) },
     wechatClawImage: { inbound: true, outbound: true },
     style: { ...STYLE_SETTINGS_DEFAULTS, ...(style || {}), effectiveText: (style && style.effectiveText) || '' },
     reflection: { ...REFLECTION_DEFAULTS, ...(reflection || {}) },
@@ -338,6 +339,16 @@ assert.deepEqual(approvalOff.body, expectedSettings({ approvalAutomation: false 
 const approvalOn = await request('POST', '/plugins/dsh-ria/api/settings', { approvalAutomation: true })
 assert.equal(approvalOn.status, 200)
 assert.deepEqual(approvalOn.body, expectedSettings())
+// The v2 whitelist is off by default and round-trips one patched field at a time.
+const autoAllowOn = await request('POST', '/plugins/dsh-ria/api/settings', { approvalAutoAllow: { enabled: true, tools: ['bash'] } })
+assert.equal(autoAllowOn.status, 200)
+assert.deepEqual(autoAllowOn.body, expectedSettings({ approvalAutoAllow: { enabled: true, tools: ['bash'] } }))
+const autoAllowOff = await request('POST', '/plugins/dsh-ria/api/settings', { approvalAutoAllow: { enabled: false } })
+assert.equal(autoAllowOff.status, 200)
+assert.deepEqual(autoAllowOff.body, expectedSettings({ approvalAutoAllow: { enabled: false, tools: ['bash'] } }))
+const autoAllowReset = await request('POST', '/plugins/dsh-ria/api/settings', { approvalAutoAllow: { tools: [] } })
+assert.equal(autoAllowReset.status, 200)
+assert.deepEqual(autoAllowReset.body, expectedSettings())
 // Claw image transfer is fixed on. Older clients may still try to turn it off;
 // the field is accepted and ignored so their save does not fail.
 const clawImageOff = await request('POST', '/plugins/dsh-ria/api/settings', { wechatClawImage: { inbound: false, outbound: false } })

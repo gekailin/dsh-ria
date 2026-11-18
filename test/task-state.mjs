@@ -63,13 +63,33 @@ function openTicket(store, overrides = {}) {
     const store = fixture.service.store
     const ticket = openTicket(store)
     const before = JSON.parse(JSON.stringify(ticket))
-    for (const target of ['done', 'failed']) {
-      const result = store.transitionTicket(ticket.ticketId, target)
-      assert.equal(result.ok, false)
-      assert.equal(result.code, 'invalid_transition')
-    }
+    const failed = store.transitionTicket(ticket.ticketId, 'failed')
+    assert.equal(failed.ok, false)
+    assert.equal(failed.code, 'invalid_transition')
     assert.deepEqual(store.ticket(ticket.ticketId), before)
     assert.equal(TICKET_TRANSITIONS.done.includes('working'), false)
+
+    // open -> done is legal now: a research/knowledge ticket is answered
+    // directly by the Advisor, without a work order or a Worker.
+    const answered = store.transitionTicket(ticket.ticketId, 'done', {
+      resolution: { kind: 'answered', summary: 'answer', answer: 'answer' },
+      reason: 'answered directly by Advisor',
+    })
+    assert.equal(answered.ok, true)
+    assert.equal(answered.ticket.status, 'done')
+    assert.equal(typeof answered.ticket.closedAt, 'number')
+    assert.equal(answered.ticket.resolution.kind, 'answered')
+
+    // The intake -> done edge is unchanged.
+    const intake = store.addTicket({ status: 'intake', goal: 'answered intake' })
+    const intakeDone = store.transitionTicket(intake.ticketId, 'done', {
+      executor: 'router',
+      resolution: { kind: 'answered', summary: 'answered intake' },
+      reason: 'answered intake',
+    })
+    assert.equal(intakeDone.ok, true)
+    assert.equal(intakeDone.ticket.status, 'done')
+    assert.equal(TICKET_TRANSITIONS.intake.includes('done'), true)
   } finally {
     fixture.cleanup()
   }

@@ -163,11 +163,40 @@ v2 的提权不再依赖工具白名单或 `chatbot_grant`。每次 Worker 的�
 
 **`chatbot_grant` 的定位**：仅调试/应急。正常提权走上述逐条风险审批，不得用 grant 绕过审批或解开被审批卡住的 Worker。`action=set` 必须写 reason，并用 `kind=debug|emergency` 标明性质；每次调用写 `grant/set`（或 `grant/rejected`）审计并带 `grant_kind`。
 
+### Router 事件日志
+
+ticket history 是状态快照，`audit.jsonl` 是审批/授权决策审计；两者都不记录“为什么派发、派发给谁、确认了没有”。Router 事件日志补上这条过程流，append-only，事件驱动，复盘时可以直接按 ticket 还原时间线。
+
+**事件类型**（`event` 字段；查询支持 `dispatch.*` 这类前缀）：
+
+| event | 产生位置 | payload 关键字段 |
+|---|---|---|
+| `ticket.created` | `chatbotRequest` 建票成功后 | `mode`（work/answer/reflection）、`workspace`、`requestId`、`goal` 摘要 |
+| `advisor.plan` | `ticketPlan` 写 WorkOrder 后 | `summary`、`steps` |
+| `dispatch.attempt` | `dispatchTicket` 的 working 迁移后 | `workerId`、`attemptCount`、`requestId` |
+| `dispatch.confirmed` | `confirmWorkerTurnStart` 收到 worker `turn/start` 时 | `workerId`、`requestId` |
+| `dispatch.blocked` | 60 秒未确认、派发 prompt 失败、重派失败、startup 中断 | `workerId`、`requestId`、`message`、`reason` |
+| `ticket.state` | `RiaStore.transitionTicket`（唯一状态写入口） | `from`、`to`、`waitingOn` |
+| `approval.asked` | v2 `onApprovalAsked` | `approvalId`、`toolName`、`reason`、`riskLevel`、`decision`、`policy`、`policySource` |
+| `approval.decided` | v2 `onApprovalDecided` | `approvalId`、`outcome`、`decision`、`riskLevel`、`toolName` |
+| `lesson.injected` | `dispatchTicket` 把经验写进 Worker brief 后 | `lessonIds`、`source`（workOrder/match） |
+
+**每条记录字段**：`ts`（epoch ms）、`event`、`ticketId`、`sessionId`、`actor`（chatbot/advisor/router/host）、`reason`、`payload`（对象或 null）。写失败只记 warn，不影响派发或审批。
+
+**存储**：当前文件 `stateDir/router-events.jsonl`；跨月或当前文件超过 64MB 时，append 时把热文件轮转到 `router-events-YYYY-MM.jsonl`（YYYY-MM 取事件 ts 的 UTC 月）。启动时执行一次 `prune()`：保留最新 12 个月，删更早的月文件；没有定时器。`lib/router-events.mjs` 是唯一读写实现。
+
+**只读查询**：
+
+- `ria_status { scope: "events", ticketId?, type?, from?, to?, limit?, offset? }`：`type` 支持精确名或 `dispatch.*` 前缀；`from`/`to` 接受毫秒或 ISO；`limit` 1–200（默认 100），返回 `{scope:'events', ok, events, total, matched, hasMore, limit, offset, scanned}`，按 `ts` 倒序。只读，不建票、不改状态。
+- HTTP `GET /plugins/dsh-ria/api/events?ticketId=&type=&from=&to=&limit=&offset=`：同一实现，JSON 返回；不提供写/清理接口。
+
+没有轮询、没有定时器：所有埋点都在既有回调点（建票、plan、dispatch、turn/start、状态迁移、approval asked/decided），轮转只在 append 时触发，清理只在启动时触发一次。
+
 ## 7. 记忆与知识
 
 - 长期记忆只放稳定偏好和长期约定，不抄 ticket 状态、时间戳或逐轮流水；定期反思只读回看，产出建议，不自动改写记忆。
 - 知识层独立于 ticket：Global 知识跨项目，Project 知识项目内；条目不挂 ticketId。生命周期 proposed → active → deprecated / superseded；Worker 和 Chatbot 只能提议，Advisor 写 knowledge，Router 不写。
-- 持久化目标：控制面热状态（ticket、event、outbox、registry、knowledge 等）进 SQLite；memory 和 reflections 留文件；transcript 仍由 DSH 管理。单写者、事务、WAL、可备份。
+- 持久化目标：控制面热状态（ticket、event、outbox、registry、knowledge 等）进 SQLite；memory 和 reflections 留文件；transcript 仍由 DSH 管理。单写者、事务、WAL、可备份。SQLite 的迁移范围、Schema、导入/回滚与分阶段方案见 [sqlite-migration-design.md](sqlite-migration-design.md)。
 
 ### 复盘用的只读会话工具
 

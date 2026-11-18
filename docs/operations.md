@@ -78,6 +78,15 @@ Ria 自己是一个普通的顶层 DSH Session，运行 PTC preset，带管理�
 - 已经是 `done`/`failed`/`cancelled`/`blocked` 的工单、以及 Ria 自己的 turn 不参与判定；同一工单 + requestId 只告警一次。
 - 这个兜底只改变“派发被接受但未开跑”的工单；worker 正常开始后不会因为 60 秒到期而被误判。
 
+## Router 事件日志
+
+`stateDir/router-events.jsonl` 记录控制面过程事件；它不是 ticket history（状态快照），也不是 `audit.jsonl`（审批/授权决策审计）。
+
+- 当前文件：`stateDir/router-events.jsonl`；跨月或超过 64MB 时轮转到 `stateDir/router-events-YYYY-MM.jsonl`，启动时保留最新 12 个月。`lib/router-events.mjs` 实现，无定时器。
+- 每条字段：`ts/event/ticketId/sessionId/actor/reason/payload`。事件包括 `ticket.created`、`advisor.plan`、`dispatch.attempt`、`dispatch.confirmed`、`dispatch.blocked`、`ticket.state`、`approval.asked`、`approval.decided`、`lesson.injected`。
+- 查询：`ria_status { scope: "events", ticketId, type, from, to, limit, offset }`，`type` 支持 `dispatch.*` 前缀，时间接受毫秒或 ISO；只读，按 ts 倒序。HTTP 同参数：`GET /plugins/dsh-ria/api/events`。
+- 事件写失败只告警，不影响建票、派发或审批；所有埋点都在既有回调点，没有轮询。
+
 ## 任务归档
 
 终态工单不会无限留在 ria.json。热文件保留所有非终态，加上最近 24 小时内关闭的终态和按 closedAt 倒序最新 50 条终态；超出的写进 `~/.dsh/state/ria/tickets.log.jsonl`，并按 closedAt 的 UTC 月份同时追加到 `tickets-YYYY-MM.jsonl`（保留最新 12 个月）。新写入只用 `tickets.log.jsonl` / `tickets-YYYY-MM.jsonl`。启动时会一次性把遗留的 `tasks.log.jsonl` / `tasks-YYYY-MM.jsonl` 改名到新名（目标已存在则跳过，失败只记日志）；读取端同时兼容新旧名，并按 `ticketId + closedAt` 去重。先写成功再从内存删除；写失败时工单留在 ria.json，下次启动重试。

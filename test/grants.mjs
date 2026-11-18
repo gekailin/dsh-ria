@@ -90,6 +90,31 @@ assert.equal(grants.length, 0)
 assert.equal(permissions.sandboxOverride, 'workspace-write')
 assert.equal(permissions.approvalOverride, 'ask')
 
+// A pure downgrade is permanent: no expiry, and closing its ticket or a
+// startup reconcile must not restore it.
+const narrowed = await service.set({
+  sessionId: 'session-w',
+  ticketId: 'task-1',
+  sandboxMode: 'read-only',
+  approvalPolicy: 'ask',
+  userConfirmed: true,
+})
+assert.equal(narrowed.status, 'active')
+assert.equal(narrowed.kind, 'permanent')
+assert.equal(narrowed.permanent, true)
+assert.equal(narrowed.expiresAt, null)
+assert.equal(permissions.sandboxOverride, 'read-only')
+tickets[0].status = 'done'
+await service.onTicketChanged(tickets[0])
+assert.equal(grants.length, 1)
+await service.reconcile()
+assert.equal(grants.length, 1)
+assert.equal(permissions.sandboxOverride, 'read-only')
+const narrowedReset = await service.restore(narrowed.grantId, 'explicit-reset')
+assert.equal(narrowedReset.restored, true)
+assert.equal(permissions.sandboxOverride, 'workspace-write')
+tickets[0].status = 'working'
+
 const applying = await service.set({
   sessionId: 'session-w',
   approvalPolicy: 'never',
@@ -124,6 +149,27 @@ await service.reconcile()
 assert.equal(grants.length, 0)
 assert.equal(permissions.sandboxOverride, 'workspace-write')
 
+// A mixed change with a sandbox downgrade and an approval escalation is
+// temporary, but expiry must restore only the escalated approval. Restoring the
+// sandbox to its previous wider mode would silently re-escalate the session.
+permissions.sandboxOverride = 'danger-full-access'
+permissions.approvalOverride = 'ask'
+const mixed = await service.set({
+  sessionId: 'session-w',
+  ticketId: 'task-1',
+  sandboxMode: 'workspace-write',
+  approvalPolicy: 'never',
+  userConfirmed: true,
+})
+assert.equal(mixed.kind, 'temporary')
+assert.equal(permissions.sandboxOverride, 'workspace-write')
+assert.equal(permissions.approvalOverride, 'never')
+store.grant(mixed.grantId).expiresAt = Date.now() - 1
+await service.reconcile()
+assert.equal(grants.length, 0)
+assert.equal(permissions.sandboxOverride, 'workspace-write')
+assert.equal(permissions.approvalOverride, 'ask')
+
 const failing = await service.set({
   sessionId: 'session-w',
   approvalPolicy: 'never',
@@ -142,6 +188,7 @@ assert.ok(audit.some(item => item.event === 'grant/restored' && item.trigger ===
 assert.ok(audit.some(item => item.event === 'grant/restored' && item.trigger === 'ticket-done' && item.grantId === orphan.grantId))
 assert.ok(audit.some(item => item.event === 'grant/restored' && item.trigger === 'manual-test' && item.skipped.includes('sandboxMode')))
 assert.ok(audit.some(item => item.event === 'grant/restore_failed' && item.trigger === 'manual-test'))
+assert.ok(audit.some(item => item.event === 'grant/restored' && item.grantId === mixed.grantId && item.trigger === 'expired' && item.restored.includes('approvalPolicy') && !item.restored.includes('sandboxMode')))
 
 rmSync(stateDir, { recursive: true, force: true })
 console.log('grants ok')

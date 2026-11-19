@@ -1,4 +1,6 @@
-# 项目级 Advisor 设计（草案）
+# 项目级 Advisor 设计（草案，已取代）
+
+> **已被 [Sage（大脑）+ 无状态 Advisor 设计](sage-advisor-design.md) 取代（2026-11-19），保留作历史方案。** 本方案按项目分会话的做法不再采用；项目差异改由共享认知库的 project 片段承载，Advisor 无状态化。
 
 > 目标设计，不替代根 DESIGN.md；与 [design-v2.md](design-v2.md) 互补。本文只回答四件事：一张票什么时候有自己的 Advisor、它住在哪、经验怎么分层、怎么迁移。不写实现代码。
 

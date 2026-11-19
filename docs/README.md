@@ -7,7 +7,8 @@
 | 文档 | 内容 | 状态 |
 | --- | --- | --- |
 | [architecture.md](architecture.md) | 系统顶层地图：定位与边界、核心对象、主流程、可靠性、持久化、通道、记忆与反思、扩展点 | 现行 |
-| [project-advisor-design.md](project-advisor-design.md) | 项目级 Advisor 的目标设计：workspace 路由与项目 key、会话放置（cwd 在 state 下）、两级经验库与晋升、生命周期、并发与迁移 | 草案 |
+| [sage-advisor-design.md](sage-advisor-design.md) | Sage（大脑）+ 无状态 Advisor 的目标设计：Sage 边界/工具面/epoch、共享认知库（proposal→Sage 采纳）、Advisor 快照预算与降级、Router 两阶段、反馈闭环、迁移与风险 | 草案 |
+| [project-advisor-design.md](project-advisor-design.md) | 项目级 Advisor 的历史方案：workspace 路由、项目会话、两级经验库与晋升；已被 Sage + 无状态 Advisor 取代 | 已取代 |
 | [co-management-design.md](co-management-design.md) | 协管 P1+P2 设计与实现口径：transport 状态、监控/转述/统一路由、事件表、用户直连观测、与 direct 无耦合、命令与工具、去重限流、失败重试 | 现行 |
 | [sqlite-migration-design.md](sqlite-migration-design.md) | 控制面数据迁 SQLite 的设计与分阶段方案：进库/留文件范围与权威源、Schema 草案、单写者 WAL 与事务边界、导入校验与回滚、三阶段落地、依赖与风险 | 草案 |
 | [tools.md](tools.md) | 15 个 `ria_*` 工具与 6 个只读 `ria_reflect_*` 的参数、返回、依赖和调用纪律 | 现行 |

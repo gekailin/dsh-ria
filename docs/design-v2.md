@@ -197,6 +197,8 @@ v2 的提权不再依赖工具白名单或 `chatbot_grant`。每次 Worker 的�
 
 **`chatbot_request` 的 workerPreset 与 `chatbot_worker_config`**：work 模式可选 `workerPreset`（白名单 ptc/standard/minimal，默认 ptc，仅新建 Worker 生效；answer/reflection 传会返回 `worker_preset_not_supported`）；idle Worker 复用时沿用原 preset。`chatbot_worker_config`（仅 Chatbot）支持 `get`（seq/title/cwd/workerType/preset/model/status）与 `set`：模型走 `sessionController.selectModel` 立即生效（下一轮）；preset 因 DSH 不支持运行中切换，未传 `recreate:true` 时返回 `worker_preset_requires_recreate`，recreate 停用旧绑定、同 cwd 新建、旧会话归档；变更写 `worker.config.changed`。
 
+**默认附带用户截图**：`chatbot_request` 的 `attachImages` 默认 `true`。建票时从 Chatbot 当前用户消息提取图片附件（`~/.dsh/attachments/v1/objects/...`）；当前消息无图时按 `attachmentFallbackMessages`（默认 1，0 表示不回退）回退最近 N 条用户消息。最多 5 张，按 `sha256` 去重；单张 >10MB 仍收录但标 `oversized:true`。清单写入 ticket meta `attachments: [{path,mime,width,height,sha256,size?,oversized?}]`，并渲染进 WorkOrder/worker brief：绝对路径 + mime/尺寸/sha256，提示「需要时用 read 工具查看；超过 10MB 的图不建议读入」，不内联二进制/base64。附件缺失/不可读只记 `attachmentNotes` 并跳过，不使建票失败；Worker 对附件目录只需只读。`ticket.created` payload 带 `attachments.count` 与 `sha256` 列表（不含内容）。`attachImages:false` 时 meta 为空数组、事件 count=0。
+
 ### Router 事件日志
 
 ticket history 是状态快照，`audit.jsonl` 是审批/授权决策审计；两者都不记录“为什么派发、派发给谁、确认了没有”。Router 事件日志补上这条过程流，append-only，事件驱动，复盘时可以直接按 ticket 还原时间线。

@@ -216,6 +216,11 @@ ticket history 是状态快照，`audit.jsonl` 是审批/授权决策审计；�
 | `approval.asked` | v2 `onApprovalAsked` | `approvalId`、`toolName`、`reason`、`riskLevel`、`decision`、`policy`、`policySource` |
 | `approval.decided` | v2 `onApprovalDecided` | `approvalId`、`outcome`、`decision`、`riskLevel`、`toolName` |
 | `lesson.injected` | `dispatchTicket` 把经验写进 Worker brief 后 | `lessonIds`、`source`（workOrder/match） |
+| `steer.queued` | `chatbotSteer` 成功写 inbox 后 | `inboxId`、`summary`（≤120 字符）、`at`（ISO） |
+| `steer.delivered` | done/failed/rearm 的收尾 prompt 成功、checkpoint 读取后 | `count`、`attempts` |
+| `steer.undelivered` | done/failed/resume-rearm 仍有未读 inbox | `inboxId`、`summary`、`at`、`trigger`（done/failed/resume-rearm）、`attempts` |
+
+**steer 收尾**：`done` 迁移前检查 `pendingInbox`，非空则先补一轮 prompt 交付；最多 `STEER_MAX_DELIVERY_ATTEMPTS=2` 次，仍失败转 `blocked(waitingOn=user)` 并写 `steer.undelivered` + Chatbot 通知。`failed` 与 `resume-rearm` 也走同一 helper；空闲直投成功后 `markInboxDelivered`，保证 `deliveredAt` 与账实一致。steer 写入语义不变：仍无条件写 inbox。
 
 **每条记录字段**：`ts`（epoch ms）、`event`、`ticketId`、`sessionId`、`actor`（chatbot/advisor/router/host）、`reason`、`payload`（对象或 null）。写失败只记 warn，不影响派发或审批。
 

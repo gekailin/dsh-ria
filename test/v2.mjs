@@ -317,7 +317,9 @@ try {
   })
   assert.equal(steer.ok, true)
   const afterSteer = await fixture.callAs(worker, 'worker_checkpoint', { ticketId: created.ticketId })
-  assert.deepEqual(afterSteer.messages.map(item => item.message), ['keep it under 120 words'])
+  // The Worker was idle, so chatbot_steer delivered directly and marked the
+  // inbox entry delivered; checkpoint has nothing left to read.
+  assert.deepEqual(afterSteer.messages, [])
   const repeated = await fixture.callAs(worker, 'worker_checkpoint', { ticketId: created.ticketId })
   assert.deepEqual(repeated.messages, [])
 

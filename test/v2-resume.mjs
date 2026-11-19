@@ -137,10 +137,10 @@ function promptTo(fixture, sessionId, after) {
     assert.equal(ticket.executor, workerId)
     assert.equal(typeof ticket.attempt.confirmedAt, 'number')
     assert.equal(typeof ticket.attempt.rearmedAt, 'number')
-    assert.deepEqual(
-      fixture.service.v2.v2.pendingInbox(ticketId, workerId).map(item => item.message),
-      ['continue please'],
-    )
+    // The resume reply was handed to the busy worker and marked delivered, so
+    // it is no longer pending for the next checkpoint.
+    assert.deepEqual(fixture.service.v2.v2.pendingInbox(ticketId, workerId), [])
+    assert.equal(fixture.service.v2.v2.data.inbox.find(item => item.ticketId === ticketId).deliveredAt > 0, true)
     const wake = promptTo(fixture, workerId, before)
     assert.ok(wake, 'the busy worker must receive the user reply')
     assert.match(wake.content[0].text, /\[Manager resume\]/)

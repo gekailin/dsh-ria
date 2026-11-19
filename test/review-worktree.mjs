@@ -12,8 +12,8 @@ import { fileURLToPath } from 'node:url'
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const SCRIPT = join(ROOT, 'scripts', 'review-worktree.sh')
 
-function run(args) {
-  const result = spawnSync('bash', [SCRIPT, ...args], { encoding: 'utf8' })
+function run(args, env = process.env) {
+  const result = spawnSync('bash', [SCRIPT, ...args], { encoding: 'utf8', env })
   return { status: result.status, stdout: (result.stdout || '').trim(), stderr: (result.stderr || '').trim() }
 }
 
@@ -117,6 +117,37 @@ try {
   const inside = run(['--repo', repo, '--commit', first, '--dir', join(repo, 'wt-inside')])
   assert.notEqual(inside.status, 0)
   assert.match(inside.stderr, /outside the repository/)
+
+  // 9. Read-only --verify preserves the existing checkout and output contract.
+  const verifiedPath = join(tmp, 'wt-verify')
+  assert.equal(run(['--repo', repo, '--commit', first, '--dir', verifiedPath]).status, 0)
+  const verified = run(['--repo', repo, '--commit', first, '--dir', verifiedPath, '--verify'])
+  assert.equal(verified.status, 0, verified.stderr)
+  assert.equal(parseAddOutput(verified.stdout).head, first)
+  const absentVerify = join(tmp, 'absent-parent', 'wt')
+  assert.notEqual(run(['--repo', repo, '--commit', first, '--dir', absentVerify, '--verify']).status, 0)
+  assert.equal(existsSync(dirname(absentVerify)), false)
+
+  // 10. Fake Git failures expose their stderr verbatim with source labeling.
+  const fakeBin = join(tmp, 'fake-bin')
+  mkdirSync(fakeBin)
+  const realGit = spawnSync('which', ['git'], { encoding: 'utf8' }).stdout.trim()
+  writeFileSync(join(fakeBin, 'git'), '#!/usr/bin/env bash\n'
+    + 'case "$*" in\n'
+    + '  *"$MOCK_GIT_FAIL"*) printf "fatal: Read-only file system (mock git stderr)\\n" >&2; exit 73 ;;\n'
+    + 'esac\nexec "$MOCK_REAL_GIT" "$@"\n', { mode: 0o755 })
+  for (const [fail, args] of [
+    ['worktree add', ['--repo', repo, '--commit', first, '--dir', join(tmp, 'wt-fail')]],
+    ['--verify', ['--repo', repo, '--commit', first, '--dir', verifiedPath, '--verify']],
+    ['rev-parse HEAD', ['--repo', repo, '--commit', first, '--dir', verifiedPath, '--verify']],
+    ['--git-common-dir', ['--repo', repo, '--commit', first, '--dir', verifiedPath]],
+  ]) {
+    const failed = run(args, { ...process.env, PATH: fakeBin + ':' + process.env.PATH, MOCK_REAL_GIT: realGit, MOCK_GIT_FAIL: fail })
+    assert.notEqual(failed.status, 0, fail)
+    assert.match(failed.stderr, /git stderr:/, fail)
+    assert.match(failed.stderr, /fatal: Read-only file system \(mock git stderr\)/, fail)
+  }
+  assert.equal(run(['--repo', repo, '--cleanup', verifiedPath]).status, 0)
 
   console.log('review worktree ok')
 } finally {

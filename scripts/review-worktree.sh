@@ -23,7 +23,8 @@
 #   scripts/review-worktree.sh --cleanup /tmp/ria-review-foo
 #
 # 约束：只创建/删除 worktree，不改主工作树、不切换分支、不重启服务。
-# 失败时向 stderr 输出一行可读原因并以非 0 退出。
+# --verify --repo <repo> --commit <sha> --dir <existing-worktree>: 只读验证，不创建。
+# 失败时保留可读原因，并标注 git stderr 原文，以非 0 退出。
 set -euo pipefail
 
 PROG=review-worktree
@@ -31,6 +32,19 @@ PROG=review-worktree
 die() {
   printf '%s: %s\n' "$PROG" "$*" >&2
   exit 1
+}
+
+# Preserve stdout for callers that capture rev-parse; never discard Git stderr.
+git_checked() {
+  local errors
+  local status=0
+  { errors=$(git "$@" 2>&1 1>&3) || status=$?; } 3>&1
+  if [ "$status" -ne 0 ]; then
+    printf '%s: git stderr:\n%s\n' "$PROG" "$errors" >&2
+  elif [ -n "$errors" ]; then
+    printf '%s\n' "$errors" >&2
+  fi
+  return "$status"
 }
 
 usage() {
@@ -41,6 +55,7 @@ REPO=''
 COMMIT=''
 DIR=''
 CLEANUP=''
+VERIFY=false
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -64,6 +79,10 @@ while [ $# -gt 0 ]; do
       CLEANUP=$2
       shift 2
       ;;
+    --verify)
+      VERIFY=true
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -77,7 +96,7 @@ done
 repo_root() {
   local path=$1
   [ -e "$path" ] || return 1
-  git -C "$path" rev-parse --show-toplevel 2>/dev/null
+  git_checked -C "$path" rev-parse --show-toplevel
 }
 
 absolute_dir() {
@@ -90,6 +109,7 @@ absolute_dir() {
 
 # Cleanup mode: --cleanup <dir>, optionally with --repo to name the main repository.
 if [ -n "$CLEANUP" ]; then
+  [ "$VERIFY" = false ] || die '--cleanup cannot be combined with --verify'
   [ -z "$COMMIT" ] || die '--cleanup cannot be combined with --commit'
   [ -z "$DIR" ] || die 'use either --cleanup <dir> or --dir <dir>, not both'
   target=$(absolute_dir "$CLEANUP")
@@ -97,29 +117,29 @@ if [ -n "$CLEANUP" ]; then
     # Already gone: prune stale metadata when the repository is known, then succeed.
     if [ -n "$REPO" ]; then
       root=$(repo_root "$REPO") || die "not a git repository: $REPO"
-      git -C "$root" worktree prune >/dev/null 2>&1 || true
+      git_checked -C "$root" worktree prune >/dev/null || true
     fi
     printf 'worktree already absent: %s\n' "$target"
     exit 0
   fi
   if [ -z "$REPO" ]; then
-    common=$(git -C "$target" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) \
+    common=$(git_checked -C "$target" rev-parse --path-format=absolute --git-common-dir) \
       || die "not a git worktree: $target (pass --repo to name the main repository)"
     REPO=$(dirname "$common")
   fi
   root=$(repo_root "$REPO") || die "not a git repository: $REPO"
   # Refuse to remove the main working tree or a worktree of another repository.
-  target_common=$(git -C "$target" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) \
+  target_common=$(git_checked -C "$target" rev-parse --path-format=absolute --git-common-dir) \
     || die "not a git worktree: $target"
-  root_common=$(git -C "$root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) \
+  root_common=$(git_checked -C "$root" rev-parse --path-format=absolute --git-common-dir) \
     || die "not a git repository: $root"
   [ "$target_common" = "$root_common" ] \
     || die "worktree $target does not belong to repository $root"
-  [ "$(git -C "$root" rev-parse --show-toplevel 2>/dev/null)" != "$target" ] \
+  [ "$(git_checked -C "$root" rev-parse --show-toplevel)" != "$target" ] \
     || die "refusing to remove the main working tree: $target"
-  git -C "$root" worktree remove --force "$target" >/dev/null 2>&1 \
+  git_checked -C "$root" worktree remove --force "$target" >/dev/null \
     || die "could not remove worktree $target (run 'git -C $root worktree prune' and retry)"
-  git -C "$root" worktree prune >/dev/null 2>&1 || true
+  git_checked -C "$root" worktree prune >/dev/null || true
   [ ! -e "$target" ] || die "worktree directory still exists after cleanup: $target"
   printf 'cleaned worktree: %s\n' "$target"
   exit 0
@@ -129,7 +149,7 @@ fi
 [ -n "$REPO" ] || die '--repo is required (usage: --repo <path> --commit <sha> [--dir <path>])'
 [ -n "$COMMIT" ] || die '--commit is required (usage: --repo <path> --commit <sha> [--dir <path>])'
 root=$(repo_root "$REPO") || die "not a git repository: $REPO"
-full=$(git -C "$root" rev-parse --verify --quiet "${COMMIT}^{commit}") \
+full=$(git_checked -C "$root" rev-parse --verify "${COMMIT}^{commit}") \
   || die "cannot resolve commit: $COMMIT (not a commit in $root)"
 short=${full:0:8}
 timestamp=$(date +%Y%m%d%H%M%S)
@@ -147,22 +167,25 @@ case "$target" in
 esac
 
 if [ -e "$target" ]; then
-  existing=$(git -C "$target" rev-parse HEAD 2>/dev/null) \
+  existing=$(git_checked -C "$target" rev-parse HEAD) \
     || die "target exists but is not a git worktree: $target"
   [ "$existing" = "$full" ] \
     || die "target exists with different HEAD: $target (HEAD $existing, wanted $full)"
-  target_common=$(git -C "$target" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
-  root_common=$(git -C "$root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+  target_common=$(git_checked -C "$target" rev-parse --path-format=absolute --git-common-dir) \
+    || die "cannot verify worktree repository: $target"
+  root_common=$(git_checked -C "$root" rev-parse --path-format=absolute --git-common-dir) \
+    || die "cannot verify main repository: $root"
   [ "$target_common" = "$root_common" ] \
     || die "target is a worktree of another repository: $target"
 else
+  [ "$VERIFY" = false ] || die "verification target does not exist: $target"
   parent=$(dirname "$target")
   mkdir -p "$parent" || die "could not create parent directory: $parent"
-  git -C "$root" worktree add --detach "$target" "$full" >/dev/null 2>&1 \
+  git_checked -C "$root" worktree add --detach "$target" "$full" >/dev/null \
     || die "git worktree add failed for $target at $full"
 fi
 
-actual=$(git -C "$target" rev-parse HEAD 2>/dev/null) \
+actual=$(git_checked -C "$target" rev-parse HEAD) \
   || die "worktree was created but HEAD cannot be read: $target"
 [ "$actual" = "$full" ] \
   || die "worktree HEAD mismatch: $target has $actual, wanted $full"

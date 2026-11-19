@@ -88,6 +88,24 @@ export async function createFixture(options = {}) {
       return () => tools.delete(definition.name)
     },
     restrict(filter) {
+      // Model dsh-tools/lib/index.js:453-467 exactly: a filter is validated
+      // against inherited (global/preset) names only. A scope-local name such
+      // as sage_read, an unknown name, run_code, or an empty filter throws the
+      // same way the host does. Without this validation a wrong-namespace
+      // restriction silently no-ops in production yet passes the suite.
+      const allow = filter && Array.isArray(filter.allow) ? filter.allow : undefined
+      const deny = filter && Array.isArray(filter.deny) ? filter.deny : undefined
+      if (allow === undefined && deny === undefined) {
+        throw new Error('tools.restrict({}) is a no-op: pass `allow` and/or `deny` (an empty filter is almost always a materialized-empty-config bug)')
+      }
+      const named = [...(allow || []), ...(deny || [])]
+      if (named.includes('run_code')) {
+        throw new Error('tools.restrict() cannot name reserved PTC mode presentation transport "run_code"; restrict end-capability tools instead')
+      }
+      const unknown = named.filter(name => !globalTools.includes(name))
+      if (unknown.length > 0) {
+        throw new Error('tools.restrict() names unknown global tool' + (unknown.length > 1 ? 's' : '') + ' ' + unknown.map(name => '"' + name + '"').join(', ') + '; known global tools: ' + globalTools.slice().sort().join(', '))
+      }
       restrictions.set(String(id), filter && typeof filter === 'object' ? filter : {})
     },
     view(scope) {

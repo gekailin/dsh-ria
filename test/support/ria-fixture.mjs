@@ -5,11 +5,11 @@ import { apply } from '../../lib/index.js'
 
 const RIA_ID = 'session-ria'
 const MODEL_CATALOG = [
-  { provider: 'provider-ok', model: 'model-vision' },
-  { provider: 'provider-ok', model: 'model-fast' },
-  { provider: 'provider-text', model: 'model-text-only' },
-  { provider: 'provider-ok', model: 'model-shared' },
-  { provider: 'provider-text', model: 'model-shared' },
+  { provider: 'provider-ok', model: 'model-vision', name: 'Vision Model', contextWindow: 128000, maxTokens: 8192 },
+  { provider: 'provider-ok', model: 'model-fast', name: 'Fast Model', contextWindow: 64000, maxTokens: 4096 },
+  { provider: 'provider-text', model: 'model-text-only', name: 'Text Only Model' },
+  { provider: 'provider-ok', model: 'model-shared', name: 'Shared Model' },
+  { provider: 'provider-text', model: 'model-shared', name: 'Shared Model' },
 ]
 const DEFAULT_IMAGE_LIMITS = {
   maxImageBytes: 1024,
@@ -43,6 +43,7 @@ export async function createFixture(options = {}) {
   const archivedSessions = []
   const listeners = new Map()
   const summaries = []
+  const modelCalls = { listProviders: 0, listModels: 0 }
   const titles = new Map([
     ['session-worker', 'Worker One'],
     ['session-no-image', 'Text Only'],
@@ -287,6 +288,7 @@ export async function createFixture(options = {}) {
         }
       }
       if (name === 'llm') {
+        if (options.noLlm) return undefined
         return {
           async *stream(request) {
             llmCalls.push(request)
@@ -302,10 +304,21 @@ export async function createFixture(options = {}) {
             yield { type: 'usage', usage: { input: 10, output: String(reply).length, total: 10 + String(reply).length } }
             yield { type: 'finish', reason: 'stop' }
           },
-          listProviders() { return [{ id: 'provider-ok' }, { id: 'provider-text' }] },
+          listProviders() {
+            modelCalls.listProviders += 1
+            if (options.failListProviders) throw new Error('provider directory unavailable')
+            return [{ id: 'provider-ok' }, { id: 'provider-text' }]
+          },
           async listModels(provider) {
+            modelCalls.listModels += 1
+            if (options.failListModels) throw new Error('model directory unavailable')
             if (options.failListModelsProvider === provider) throw new Error('provider catalog unavailable')
-            return MODEL_CATALOG.filter(item => item.provider === provider).map(item => ({ ...item, id: item.model }))
+            if (options.emptyModelCatalog) return []
+            return MODEL_CATALOG.filter(item => item.provider === provider).map(item => ({
+              ...item,
+              provider: item.provider,
+              id: item.model,
+            }))
           },
           async resolveModelInfo(provider, model) {
             return { provider, model, inputModalities: provider === 'provider-text' ? ['text'] : ['text', 'image'] }
@@ -648,6 +661,7 @@ export async function createFixture(options = {}) {
     },
     queues,
     restrictions,
+    modelCalls,
     setRunning(sessionId, value) { runningOverrides.set(String(sessionId), Boolean(value)) },
     setRiaSession(sessionId) {
       riaId = String(sessionId)

@@ -197,6 +197,8 @@ v2 的提权不再依赖工具白名单或 `chatbot_grant`。每次 Worker 的�
 
 **`chatbot_request` 的 workerPreset 与 `chatbot_worker_config`**：work 模式可选 `workerPreset`（白名单 ptc/standard/minimal，默认 ptc，仅新建 Worker 生效；answer/reflection 传会返回 `worker_preset_not_supported`）；idle Worker 复用时沿用原 preset。`chatbot_worker_config`（仅 Chatbot）支持 `get`（seq/title/cwd/workerType/preset/model/status）与 `set`：模型走 `sessionController.selectModel` 立即生效（下一轮）；preset 因 DSH 不支持运行中切换，未传 `recreate:true` 时返回 `worker_preset_requires_recreate`，recreate 停用旧绑定、同 cwd 新建、旧会话归档；变更写 `worker.config.changed`。
 
+**`chatbot_models`**：仅 Chatbot 可调用的只读工具，用于在 `chatbot_worker_config set` 前确认准确模型 id。优先读取 DSH 模型注册表（`ctx.get('llm').listProviders/listModels`，source=`catalog`）；注册表不可用或全部 provider 拉取失败时回退内置 bundled catalog（`lib/v2/model-catalog.mjs`，source=`bundled-fallback`，带 `reason`，不整体报错）；`provider-api` 预留给未来直连 provider 的路径。参数：`provider`（精确过滤）、`query`（id/displayName 大小写不敏感子串）、`limit`（1–200，默认 50）；返回 `models[{provider,model,displayName,contextWindow?,maxOutput?,default?,source}]`、`count`（返回条数）、`total`（过滤后总数）、`source`、`cached`，空结果给 `message` 说明。进程内 5 分钟 TTL 内存缓存，无定时刷新/轮询。
+
 **默认附带用户截图**：`chatbot_request` 的 `attachImages` 默认 `true`。建票时从 Chatbot 当前用户消息提取图片附件（`~/.dsh/attachments/v1/objects/...`）；当前消息无图时按 `attachmentFallbackMessages`（默认 1，0 表示不回退）回退最近 N 条用户消息。最多 5 张，按 `sha256` 去重；单张 >10MB 仍收录但标 `oversized:true`。清单写入 ticket meta `attachments: [{path,mime,width,height,sha256,size?,oversized?}]`，并渲染进 WorkOrder/worker brief：绝对路径 + mime/尺寸/sha256，提示「需要时用 read 工具查看；超过 10MB 的图不建议读入」，不内联二进制/base64。附件缺失/不可读只记 `attachmentNotes` 并跳过，不使建票失败；Worker 对附件目录只需只读。`ticket.created` payload 带 `attachments.count` 与 `sha256` 列表（不含内容）。`attachImages:false` 时 meta 为空数组、事件 count=0。
 
 ### Router 事件日志

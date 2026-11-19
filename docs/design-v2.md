@@ -219,10 +219,41 @@ ticket history 是状态快照，`audit.jsonl` 是审批/授权决策审计；�
 | `approval.decided` | v2 `onApprovalDecided` | `approvalId`、`outcome`、`decision`、`riskLevel`、`toolName` |
 | `lesson.injected` | `dispatchTicket` 把经验写进 Worker brief 后 | `lessonIds`、`source`（workOrder/match） |
 | `steer.queued` | `chatbotSteer` 成功写 inbox 后 | `inboxId`、`summary`（≤120 字符）、`at`（ISO） |
-| `steer.delivered` | done/failed/rearm 的收尾 prompt 成功、checkpoint 读取后 | `count`、`attempts` |
+| `steer.delivered` | pre-step 注入、checkpoint 读取、done/failed/rearm 的收尾 prompt 成功、空闲直投 | `count`、`attempts`、`deliveryMode`（pre-step/checkpoint/done-retry）、`inboxIds`、`ticketIds`（多条或跨票时） |
 | `steer.undelivered` | done/failed/resume-rearm 仍有未读 inbox | `inboxId`、`summary`、`at`、`trigger`（done/failed/resume-rearm）、`attempts` |
+| `ticket.cancelled` | `chatbot_stop_ticket` 成功取消工单后 | `reason`、`previousStatus`、`workerId`、`inboxCleared`、`hardAbort`、`abortAvailable`、`abortError?`、`by` |
+| `worker.stop.enforced` | pre-step 发现工单已 cancelled 但无法硬中断 | `ticketId`、`phase`（pre-step/reject-step）、`mode=soft`、`turn`、`step`；`reason=cancelled-by-stop` |
 
-**steer 收尾**：`done` 迁移前检查 `pendingInbox`，非空则先补一轮 prompt 交付；最多 `STEER_MAX_DELIVERY_ATTEMPTS=2` 次，仍失败转 `blocked(waitingOn=user)` 并写 `steer.undelivered` + Chatbot 通知。`failed` 与 `resume-rearm` 也走同一 helper；空闲直投成功后 `markInboxDelivered`，保证 `deliveredAt` 与账实一致。steer 写入语义不变：仍无条件写 inbox。
+**steer 投递时机（pre-step）**：边界是「当前工具调用返回之后、下一步模型调用开始之前」——即 `agent/pre-step` 回调内，绝不在工具执行中注入，也不调用 `agent.steer()`，因此不会打断正在跑的工具。每个边界读取该 Worker 名下所有 `working` 工单的 `pendingInbox`，按票和入队顺序取最多 `STEER_PRE_STEP_BATCH_SIZE=3` 条，合并成一条 host 消息注入下一步输入：`source.kind='ria-task-host'`、`source.form='steer'`、`source.ticketId`、`source.inboxId`（首批）与 `source.inboxIds`（全部）。注入成功后把这些条目 `markInboxDelivered`，并写 `steer.delivered`（`deliveryMode='pre-step'`）。超出 3 条的积压留到下一个边界，不丢弃；没有工具执行时不会凭空触发。
+
+**steer 兜底**：整回合都没等到边界（例如最后的工具调用后直接 `worker_report(done)`）时，`done` 迁移前仍检查 `pendingInbox`，非空则先补一轮 prompt 交付；最多 `STEER_MAX_DELIVERY_ATTEMPTS=2` 次，仍失败转 `blocked(waitingOn=user)` 并写 `steer.undelivered` + Chatbot 通知。该路径事件标 `deliveryMode='done-retry'`；`failed` 与 `resume-rearm` 复用同一 helper（同为 done-retry）；`worker_checkpoint` 读取 inbox 时标 `deliveryMode='checkpoint'`；空闲直投标 `deliveryMode='pre-step'`（在下一轮首个 step 前送达）。steer 写入语义不变：仍无条件写 inbox。
+
+**强制停止（`chatbot_stop_ticket`）语义**：仅 Chatbot 可调用，参数 `ticketId`、`reason`（都必填）。校验顺序：工单不存在 → `ticket_missing`；已 `cancelled` → 幂等成功（`idempotent:true`，不重复迁移、不重复写 `ticket.cancelled`）；已 `done` → `ok:false, code='ticket_done'` 且状态保持 done；其它终态 → `ticket_closed`。之后按顺序执行：
+
+1. `working|blocked|open|intake|forked → cancelled`，`resolution={kind:'cancelled', reason, by:'chatbot', source:'chatbot_stop_ticket', stoppedAt}`。若 checklist 还有未完成项，强制停止不被清单门禁拦住：自动写显式 `resolution.waiver`（说明未完成步骤不再执行）。
+2. 清空该 ticket 的 pending steer：采用「标记 discarded」而不是物理删除——写 `discardedAt/discardedReason/discardedBy`，`pendingInbox` 过滤掉它们，因此停止后不可能再注入；审计仍能看到当时排了什么。
+3. 向 Worker 发终止信号：若宿主提供 `sessionController.cancel({sessionId})`（DSH 用它实现用户停止，内部 `agent.cancel({kind:'user'}, {keepInbox:true})`），且该 Worker 正在运行，则视为硬中断（`hardAbort:true`），回执「已立即停止」。若接口不可用、调用失败或 Worker 当时并未运行，则降级为软停止：写入 `worker.stopRequest`，回执「已请求停止，当前步骤结束后生效」。硬中断后仍保留一个停止保护标记（`worker.stopRequest`），因为 DSH 的 cancel 会保留 pending inbox：任何残留/排队的 turn 在下一个 pre-step 仍会先收到终止说明而不会在已取消的票上继续工作；Worker 空闲且无排队时才不写标记。
+4. 写 `ticket.cancelled`（`actor:'chatbot'`，payload 含 reason、是否硬中断、清理条数等），并通知 Chatbot 转述用户。
+5. 软停止在 Worker 的下一个 pre-step 生效：先于 steer 检查，发现所属 ticket 已 `cancelled` 就注入一条 `[Manager stop]` host 消息，要求只输出终止说明、不再调用工具；该边界不注入任何 steer。若 Worker 仍继续调用工具，再下一个 pre-step 以 `kind:'reject'` 结束回合并清掉标记（事件 `worker.stop.enforced`）。工单被重新打开时，pre-step 会自动清除过期的停止标记。
+
+**幂等与并发**：重复 stop 同一 ticket 直接返回成功（`idempotent:true`），不重复写事件、不再调用 cancel；done 票拒绝且不产生任何副作用。停止先落 `cancelled` 再中断，worker-idle watcher 只处理 `working` 工单，因此不会把已取消的票再改成 blocked。
+
+**Chatbot 工具清单**（仅 `chatbot_*`；Advisor/Worker 不可见）：
+
+| 工具 | 作用 |
+|---|---|
+| `chatbot_request` | 建票并交给 Advisor；mode=answer/work/reflection |
+| `chatbot_status` | 只读查询工单与最新进度 |
+| `chatbot_steer` | 向运行中的 Worker 同步方向调整；pre-step 合并投递，不打断工具 |
+| `chatbot_stop_ticket` | 强制停止工单：cancelled + reason、清 inbox、硬中断/软停止、通知用户 |
+| `chatbot_resume` | 恢复 blocked 工单并重新派发 |
+| `chatbot_worker_config` | 查看/修改 Worker 模型与 preset（preset 需重建会话） |
+| `chatbot_models` | 只读列出可用模型 |
+| `chatbot_sessions` / `chatbot_talk` / `chatbot_read` | 查找普通顶层会话、带话、读回复 |
+| `chatbot_direct` | 微信直通普通会话（内存态，不跨重启） |
+| `chatbot_grant` | 调试/应急权限调整；不是正常提权通道 |
+| `chatbot_watch` | 协管普通会话 |
+| `chatbot_propose` / `chatbot_new_session` | 记忆提案、新建普通会话 |
 
 **每条记录字段**：`ts`（epoch ms）、`event`、`ticketId`、`sessionId`、`actor`（chatbot/advisor/router/host）、`reason`、`payload`（对象或 null）。写失败只记 warn，不影响派发或审批。
 
@@ -346,7 +377,7 @@ Advisor 在无状态 answer 模式下失败分四类：`empty`（模型返回空
 
 ## 10. 当前实现（MVP）
 
-已实现：Chatbot（standard，仅 `chatbot_*`；可用 `chatbot_new_session` 新建普通会话，title≤80、cwd 必须在 stateDir/~/.dsh/系统目录之外、preset 仅 standard/ptc、同分钟最多 5 次，不能创建角色会话）、Global Advisor（PTC，只读核对 + `ticket_*`，不含会话只读工具）、managed Worker（PTC，两种 `workerType`：work 持 `worker_*` + 执行工具；reflection 只读仓库与会话日志，持 `worker_*` + `session_list`/`session_events`）；Worker 提权按四档风险逐条审批（`lib/v2/risk.mjs`，工单策略 > 全局设置 > 默认 auto-low），low 自动 allowed-once、medium 按策略、high/unknown 一律阻塞并通知，每次决策写 `audit.jsonl`；`chatbot_grant` 降级为调试/应急工具（set/list/reset），只有用户明确要求时才可用且写 `grant_kind` 审计；Chatbot 可用 `chatbot_watch`（add/remove/list/status）协管独立会话，与 direct 无耦合；Advisor/Worker 拦截用户直连消息（`settings.blockDirectUserMessages` 默认 true，`waitingOn=user` 例外），只回固定提示；纯降权永久生效，任何提权必须带 TTL；自动恢复只撤销提权字段，同一 grant 里的降权保留，显式 reset 才撤销全部字段；绑定 ticket 时随 done/cancelled 恢复，重启会 reconcile，审计写 `audit.jsonl`；ticket 的 intake → open → working → blocked/done/failed 主链路；研究类票（`chatbot_request mode=answer`）由 Advisor 只读调查后 `ticket_answer` 直接 `open → done`，不派 Worker；`chatbot_resume` 恢复 blocked 票；startup 把中断的 working 票置为 blocked(environment)；微信 Claw 通过 Chatbot 复用入站与 assistant 转发；微信直通模式（`/直通 <会话名>`、`/直通状态`、`/退出直通`）把消息直接 steer 给普通独立会话，只转发正式文本；启动时向已连接通道发送一条重启通知。`chatbot_request` 可带 `workspace` 绝对路径：给定已有项目目录时 Worker 用该项目 cwd、产物放 `{$cwd}/ria-runs/<workerId>/`；不填则用全局 worker 根目录。状态文件为 `ria.json`（ticket）+ `v2.json`（绑定、Request、WorkOrder、报告、inbox）。
+已实现：Chatbot（standard，仅 `chatbot_*`；可用 `chatbot_new_session` 新建普通会话，title≤80、cwd 必须在 stateDir/~/.dsh/系统目录之外、preset 仅 standard/ptc、同分钟最多 5 次，不能创建角色会话）、Global Advisor（PTC，只读核对 + `ticket_*`，不含会话只读工具）、managed Worker（PTC，两种 `workerType`：work 持 `worker_*` + 执行工具；reflection 只读仓库与会话日志，持 `worker_*` + `session_list`/`session_events`）；Worker 提权按四档风险逐条审批（`lib/v2/risk.mjs`，工单策略 > 全局设置 > 默认 auto-low），low 自动 allowed-once、medium 按策略、high/unknown 一律阻塞并通知，每次决策写 `audit.jsonl`；`chatbot_grant` 降级为调试/应急工具（set/list/reset），只有用户明确要求时才可用且写 `grant_kind` 审计；Chatbot 可用 `chatbot_watch`（add/remove/list/status）协管独立会话，与 direct 无耦合；Advisor/Worker 拦截用户直连消息（`settings.blockDirectUserMessages` 默认 true，`waitingOn=user` 例外），只回固定提示；纯降权永久生效，任何提权必须带 TTL；自动恢复只撤销提权字段，同一 grant 里的降权保留，显式 reset 才撤销全部字段；绑定 ticket 时随 done/cancelled 恢复，重启会 reconcile，审计写 `audit.jsonl`；ticket 的 intake → open → working → blocked/done/failed 主链路；研究类票（`chatbot_request mode=answer`）由 Advisor 只读调查后 `ticket_answer` 直接 `open → done`，不派 Worker；`chatbot_resume` 恢复 blocked 票，`chatbot_stop_ticket` 强制停止（cancelled + reason、清 pending inbox、DSH 可用时硬中断否则 pre-step 软停止）；startup 把中断的 working 票置为 blocked(environment)；微信 Claw 通过 Chatbot 复用入站与 assistant 转发；微信直通模式（`/直通 <会话名>`、`/直通状态`、`/退出直通`）把消息直接 steer 给普通独立会话，只转发正式文本；启动时向已连接通道发送一条重启通知。`chatbot_request` 可带 `workspace` 绝对路径：给定已有项目目录时 Worker 用该项目 cwd、产物放 `{$cwd}/ria-runs/<workerId>/`；不填则用全局 worker 根目录。状态文件为 `ria.json`（ticket）+ `v2.json`（绑定、Request、WorkOrder、报告、inbox）。
 
 暂缓：Project 路由与 Project Advisor、知识层、SQLite 迁移、独立 worker 的创建与观察、Topic 亲和、看板动作的 v2 收口、旧 legacy ticket 的迁移。
 

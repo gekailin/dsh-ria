@@ -62,6 +62,8 @@ export async function createFixture(options = {}) {
     return Array.isArray(injected) ? injected.slice() : []
   }
   const updateQueueCalls = []
+  const cancelCalls = []
+  let cancelFailure = options.cancelFailure
   const models = new Map()
   models.set(riaId, { provider: 'provider-ok', model: 'model-vision' })
   models.set('session-worker', { provider: 'provider-ok', model: 'model-vision' })
@@ -493,6 +495,11 @@ export async function createFixture(options = {}) {
           pendingInput,
         }
       },
+      cancel(request) {
+        cancelCalls.push(request)
+        if (cancelFailure) throw cancelFailure
+        return { accepted: true }
+      },
       async updateQueue(request) {
         updateQueueCalls.push(request)
         const failure = typeof options.failUpdateQueue === 'function' ? options.failUpdateQueue(request) : options.failUpdateQueue
@@ -670,6 +677,8 @@ export async function createFixture(options = {}) {
       service.store.setRia(riaId, 'ptc')
     },
     updateQueueCalls,
+    cancelCalls,
+    setCancelFailure(error) { cancelFailure = error },
     setPromptFailure(error) { promptFailure = error },
     get concluded() { return concluded },
     resetConcluded() { concluded = 0 },

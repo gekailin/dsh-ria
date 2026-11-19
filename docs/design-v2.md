@@ -214,6 +214,7 @@ ticket history 是状态快照，`audit.jsonl` 是审批/授权决策审计；�
 | `dispatch.attempt` | `dispatchTicket` 的 working 迁移后 | `workerId`、`attemptCount`、`requestId` |
 | `dispatch.confirmed` | `confirmWorkerTurnStart` 收到 worker `turn/start` 时 | `workerId`、`requestId` |
 | `dispatch.blocked` | 60 秒未确认、派发 prompt 失败、重派失败、startup 中断 | `workerId`、`requestId`、`message`、`reason` |
+| `turn.failed` | Worker 的 `turn/end` 的 `reason.kind` 不是 `completed` | `ticketId`、`workerId`、`turnId`、`kind`、`detail`、`failureCode`、`blocked` |
 | `ticket.state` | `RiaStore.transitionTicket`（唯一状态写入口） | `from`、`to`、`waitingOn` |
 | `approval.asked` | v2 `onApprovalAsked` | `approvalId`、`toolName`、`reason`、`riskLevel`、`decision`、`policy`、`policySource` |
 | `approval.decided` | v2 `onApprovalDecided` | `approvalId`、`outcome`、`decision`、`riskLevel`、`toolName` |
@@ -243,11 +244,11 @@ ticket history 是状态快照，`audit.jsonl` 是审批/授权决策审计；�
 | 工具 | 作用 |
 |---|---|
 | `chatbot_request` | 建票并交给 Advisor；mode=answer/work/reflection |
-| `chatbot_status` | 只读查询工单与最新进度 |
+| `chatbot_status` | 只读查询工单与最新进度；ticket 视图带 `activeTurn`/`lastEventAgeMinutes`/`stuckSuspect`/`stuckReason` |
 | `chatbot_steer` | 向运行中的 Worker 同步方向调整；pre-step 合并投递，不打断工具 |
 | `chatbot_stop_ticket` | 强制停止工单：cancelled + reason、清 inbox、硬中断/软停止、通知用户 |
 | `chatbot_resume` | 恢复 blocked 工单并重新派发 |
-| `chatbot_worker_config` | 查看/修改 Worker 模型与 preset（preset 需重建会话） |
+| `chatbot_worker_config` | 查看/修改 Worker 模型与 preset（preset 需重建会话）；`get` 对有绑定工单的 Worker 返回同一套 stuck 字段 |
 | `chatbot_models` | 只读列出可用模型 |
 | `chatbot_sessions` / `chatbot_talk` / `chatbot_read` | 查找普通顶层会话、带话、读回复 |
 | `chatbot_direct` | 微信直通普通会话（内存态，不跨重启） |
@@ -265,6 +266,37 @@ ticket history 是状态快照，`audit.jsonl` 是审批/授权决策审计；�
 - HTTP `GET /plugins/dsh-ria/api/events?ticketId=&type=&from=&to=&limit=&offset=`：同一实现，JSON 返回；不提供写/清理接口。
 
 没有轮询、没有定时器：所有埋点都在既有回调点（建票、plan、dispatch、turn/start、状态迁移、approval asked/decided），轮转只在 append 时触发，清理只在启动时触发一次。
+
+### turn 异常结束的语义与卡死检测
+
+**reason.kind**：DSH 每个 turn 结束追加一条 `turn/end`，`data.reason.kind` 取值为 `completed`、`blocked`、`max-tokens`、`error`（带 `error.code/message`）、`aborted`（带 `reason.kind`：user/parent/hook/disposed）。v2 只把 `completed` 当正常结束；其余（含缺失/未知 kind）都意味着 turn 提前结束、Worker 没有完成它的工单。
+
+| reason.kind | 分类 | 工单结果 | failure.code |
+|---|---|---|---|
+| `completed` | 正常 | 保持原行为：工单仍 working、Worker 仍占用；不写事件、不通知 | — |
+| `error` | 异常 | working → blocked(waitingOn=environment) | `turn_failed` |
+| `aborted` | 异常 | 同上；blockedReason 保留 `aborted(user)` / parent / hook / disposed | `turn_aborted` |
+| `blocked` / `max-tokens` / 未知 / 缺失 | 异常 | 同上，blockedReason 注明原始 kind | `turn_failed` |
+
+**四件事**（`V2Controller.onWorkerTurnFailed`，`lib/v2/controller.mjs`）：
+
+1. 状态：`working → blocked`（状态机本身允许这条边，不需要先落 open），`waitingOn='environment'`，`failure={code, message, at}`；blockedReason 含 turn 号、kind 与错误摘要（`error.code: message` 或 `aborted(user)`，截断 300 字），ticket meta `phase='blocked'`。
+2. 释放 Worker：清 `currentTicketId`、`status='idle'`（`releaseWorkerForTicket`），下一张票可以复用它，而不是留下一个永远 busy 的绑定。
+3. 事件 `turn.failed`：payload 含 `ticketId`、`workerId`、`turnId`、`kind`、`detail`、`failureCode`、`blocked`、`at`；没有 working 票时也写（ticketId=null），只观测、不改状态。
+4. 通知：`notifyChatbot` 一条，含 ticketId、Worker、turn、kind 与错误摘要，并提示处理后用 `chatbot_resume` 继续。
+
+迟到的重复 turn/end 不会二次 block 或二次通知：此时工单已不在 working，只会再写一条 turn.failed。`completed` 路径完全不变（回归测试覆盖）。
+
+**卡死检测字段**（`lib/v2/ticket-health.mjs` 的 `computeTicketHealth`）：`chatbot_status` 的 ticket 视图与 `chatbot_worker_config get` 对同一张票复用同一函数，取值一致：
+
+| 字段 | 含义 |
+|---|---|
+| `activeTurn` | 该票 executor 是否有未闭合 turn（`turn/start` 置位、`turn/end` 清除） |
+| `lastEventAgeMinutes` | 距最后事件多少分钟（取 `progress.lastEventAt` 与 `updatedAt` 的较大值；都没有时回退 `createdAt`，再没有为 null） |
+| `stuckSuspect` | 仅 working 票：`!activeTurn` 或 `lastEventAgeMinutes > 10` 为 true；blocked 与终态票不误报 |
+| `stuckReason` | 命中的判据与数值，如「working 但没有活跃 turn；最后一个事件已过去 10.1 分钟（阈值 10 分钟）」 |
+
+阈值是常量 `STUCK_LAST_EVENT_MINUTES = 10`（严格大于；恰好 10 分钟不算 stuck），可用 `options.v2StuckLastEventMinutes` 覆盖。**没有 `progress.stale` 字段**：它从来没有写入点，只是误导；年龄一律按 `lastEventAgeMinutes` 计算。
 
 ## 7. 记忆与知识
 

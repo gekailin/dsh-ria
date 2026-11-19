@@ -119,6 +119,13 @@ Advisor 的产物只有两种：
 - **复盘票流转**：Chatbot 或用户提出复盘需求 → `chatbot_request(mode=reflection)` 建票 → Advisor 写 WorkOrder（读哪些会话、产出什么报告）→ `ticket_dispatch` 路由到 reflection Worker（当前没有就现场创建一个）→ Worker 用 session_* 与 read 取证，`worker_report(done)` 回传结论与证据 → Router 收口，Chatbot 转述。
 - **为什么不给 Worker 子代理能力**：委派工具族对直管 Worker 全部关闭（`subagent`、`subagent_fork`、`list_agents`、`send_message`、`interrupt_agent`，以及 agent-team 的 `spawn_teammate`/`wait_agent` 若挂载）。① **执行末端**：Worker 是责任链的末端，工单已由 Advisor 拆到可执行粒度，再向下派会让“谁在做这张票”失去单一答案。② **责任链**：Worker 只对 Ria 下结论、只领一张票；子代理没有工单、没有 checkpoint、没有报告，失败无法归因，Ria 也无法纠偏。③ **绕过 checkpoint/report**：现有协作靠 `worker_report`/`worker_checkpoint` 的里程碑与 steer；子代理在本轮内部黑盒跑完，等于绕开这两个唯一可观测点。④ **并发不可控**：一张票同一时间只允许一个执行者（lease/attempt 语义）；子代理会制造绕过 lease 的并发写与重复产物，Ria 也无法暂停/恢复它们。实现口径：`restrictWorker` 按可用名求交集后以 deny-list 下发整个委派工具族，未知名自动跳过；Advisor/Chatbot 的工具面不受影响。
 
+### 派发选人与失效绑定
+
+- 可复用 Worker 只从「idle、无 currentTicketId、类型匹配（work/reflection）、cwd 匹配」的绑定里选；**已归档会话**（`workspaceRegistry.archivedSessionIds`）一律不参与选择——绑定保留，但不会派活。
+- 选中后先 resolve；会话不存在/不可用时删除该绑定，写 `worker.resolve_failed`（workerId/error/latencyMs），在剩余候选里继续选，最多 `WORKER_RESELECT_LIMIT`（3）个；全部失败才新建 Worker。单个失效绑定不再让整次派发失败。
+- 启动时 `reconcileWorkerBindings()` 幂等清理「确认不存在」的绑定（写 `worker.reconcile_removed`）；临时的 resolve 失败不删绑定。
+- 归档/删除只影响 Worker 选择，不改 ticket 状态机。
+
 ## 6. 控制面
 
 - Router 是确定性控制面：事件驱动，不读对话上下文，不维护自己的会话；状态、权限、租约、预算、重试、超时、通知、审计都归它。
@@ -285,6 +292,15 @@ session_events { "sessionId": "session-abc", "types": ["approval/*", "turn/*"], 
 - **提案通道**：Advisor `ticket_plan.cognitionProposal`、Worker/Reflection `worker_report.lessons`、用户 `chatbot_propose` 都落 `proposals/`；Sage 采纳后写记忆，积压不阻塞派单。
 - **退役与 bootstrap**：启动时 `bootstrapCognition()` 一次性生成初始记忆（已有 `.bootstrapped` 则跳过）；`retireLegacyAdvisor()` 仅在 `advisorMode=stateless` 时清空 global 旧绑定并尝试归档，legacy 模式直接跳过，避免覆盖回滚开关。
 - **简化口径**：Sage 单例，不做写队列/优先级/冲突引擎/TTL；记忆冲突与过期由 Sage 人工维护。与 `docs/sage-advisor-design.md` 一致，后者补充了更完整的长期目标。
+
+### answer 模式的失败语义
+
+Advisor 在无状态 answer 模式下失败分四类：`empty`（模型返回空 answer）、`timeout`、`exception`、`parse_error`。
+
+- 每次失败写 `advisor.answer.failed` 事件，payload 含 `failureType/reason/latencyMs/model/retryCount/attempts/usage`。
+- `empty` 重试一次（附带明确提示「必须返回非空 answer.text」）；仍空则 ticket 转 `blocked(waitingOn=environment)`，blockedReason 为可读文案（如「Advisor 返回空答复（重试 1 次仍为空）」），并通知 Chatbot。
+- `timeout`/`exception`/`parse_error` 同样 `blocked(environment)` + 可读原因 + 通知，不退化成裸 blocked 或 `ticket_not_*`。
+- plan/reflection 等其它模式的解析失败仍走原有的 `advisor.plan.failed` 与错误路径。
 
 ### 阻塞通知范围
 

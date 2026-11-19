@@ -181,3 +181,13 @@ systemctl --user daemon-reload
 
 注意：`dsh plugin --profile web add … ` 只改 profile 的 node_modules/锁文件，**不会**改写 daemon 的启动参数或 `watchdog.js` 的 `OPEN_BROWSER`；排查“重启弹页面”时不要怀疑插件安装。
 
+
+## 截断会话日志后的必做项
+
+截断会话日志（删除某个事件及其之后的全部记录）时，除了重写内容，还必须同时满足下面两点，否则会话可能从宿主 session/list 里消失：
+
+1. **重新分帧。** DSH 用 zstd 前缀解码读日志 header。若把解压后的内容整段重压成一个 30MB 的大 frame，前缀解码会失败，listArtifacts 会静默跳过该会话（表现：磁盘上有目录、日志也能 zstdcat，但列表里没有）。必须按块压缩成多个 zstd frame（首帧含 header 行），每帧建议带 XXH64 checksum；内容字节必须与截断结果逐字节一致（用 `sha256sum <(zstdcat 文件)` 对比）。
+2. **失效对应的 session_projcache。** 缓存里 `record.rows[*].seq` 记录的是截断前的旧 seq（例如 56513）。不失效的话投影与日志不一致，会话可能仍不出现或显示异常。做法：先备份（`cp -p` 校验字节一致），再删除/改名该会话的 `~/.dsh/storages/session_projcache/sessions/<sessionId>.json`，让宿主下次冷读按新日志重建；确认重建后 `record.rows[*].seq` 等于新的最后事件 seq（例如 56200）。注意：若宿主进程仍持有该会话旧内存态，删除后可能被写回旧副本——此时优先让用户关闭/重新打开会话触发冷读，确有必要才延迟重启一次（`systemd-run --user --on-active=6s --property=KillMode=process --unit=ria-restart-<HHMMSS> dsh-daemon restart`）。
+3. 若列表仍缺，再查搜索索引 `~/.dsh/state/session-query.sqlite` 的 revision 是否停在旧日期，必要时重建索引；**不要删除日志正文**，备份文件（`.bak-*`）保留用于回滚。
+
+安全脚本：`node scripts/repair-session.mjs --session <id>`（默认 dry-run，打印帧数、内容 sha256、行数、最后事件与缓存状态）；确认无误后加 `--apply` 执行「备份 → 必要时按 64KB 重新分帧并校验内容 sha256 → 备份并移除 projcache」。脚本不访问网络、不重启服务、不删除日志正文。

@@ -413,6 +413,8 @@ export async function createFixture(options = {}) {
         signal.throwIfAborted()
         if (promptFailure) throw promptFailure
         prompts.push(request)
+        const summary = summaries.find(item => String(item.sessionId) === String(request.sessionId))
+        if (summary) summary.blank = false
         if (options.onPrompt) await options.onPrompt(request)
         return { accepted: true }
       },

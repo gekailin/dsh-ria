@@ -17,7 +17,7 @@
 
 | 角色 | 形态 | 职责 | 不做什么 |
 |---|---|---|---|
-| Chatbot | 单例顶层会话 | 对用户说话、打标、入口 Request、通知 | 不派发、不改 ticket 状态、不执行任务、不挂干活工具 |
+| Chatbot | 单例顶层会话 | 对用户说话、打标、入口 Request、通知；可新建普通会话（不能建角色会话） | 不派发、不改 ticket 状态、不执行任务、不挂干活工具 |
 | Advisor | Global 单例；Project 每项目一个 | 澄清、拆解、定验收、产出 WorkOrder（plan of record） | 不做长调查、不写代码、不做最终验证；不直接对用户说话、不直接发 worker、不写 ticket 状态 |
 | Router | 确定性控制面，不是会话 | 事件、状态机、路由、租约、派发、审批、通知、审计、预算 | 不做对话、不用模型做决定 |
 | Worker | 顶层会话 | 执行 ticket | 不做管理、不派 subagent |
@@ -304,7 +304,7 @@ session_events { "sessionId": "session-abc", "types": ["approval/*", "turn/*"], 
 
 ## 10. 当前实现（MVP）
 
-已实现：Chatbot（standard，仅 `chatbot_*`）、Global Advisor（PTC，只读核对 + `ticket_*`，不含会话只读工具）、managed Worker（PTC，两种 `workerType`：work 持 `worker_*` + 执行工具；reflection 只读仓库与会话日志，持 `worker_*` + `session_list`/`session_events`）；Worker 提权按四档风险逐条审批（`lib/v2/risk.mjs`，工单策略 > 全局设置 > 默认 auto-low），low 自动 allowed-once、medium 按策略、high/unknown 一律阻塞并通知，每次决策写 `audit.jsonl`；`chatbot_grant` 降级为调试/应急工具（set/list/reset），只有用户明确要求时才可用且写 `grant_kind` 审计；Chatbot 可用 `chatbot_watch`（add/remove/list/status）协管独立会话，与 direct 无耦合；Advisor/Worker 拦截用户直连消息（`settings.blockDirectUserMessages` 默认 true，`waitingOn=user` 例外），只回固定提示；纯降权永久生效，任何提权必须带 TTL；自动恢复只撤销提权字段，同一 grant 里的降权保留，显式 reset 才撤销全部字段；绑定 ticket 时随 done/cancelled 恢复，重启会 reconcile，审计写 `audit.jsonl`；ticket 的 intake → open → working → blocked/done/failed 主链路；研究类票（`chatbot_request mode=answer`）由 Advisor 只读调查后 `ticket_answer` 直接 `open → done`，不派 Worker；`chatbot_resume` 恢复 blocked 票；startup 把中断的 working 票置为 blocked(environment)；微信 Claw 通过 Chatbot 复用入站与 assistant 转发；微信直通模式（`/直通 <会话名>`、`/直通状态`、`/退出直通`）把消息直接 steer 给普通独立会话，只转发正式文本；启动时向已连接通道发送一条重启通知。`chatbot_request` 可带 `workspace` 绝对路径：给定已有项目目录时 Worker 用该项目 cwd、产物放 `{$cwd}/ria-runs/<workerId>/`；不填则用全局 worker 根目录。状态文件为 `ria.json`（ticket）+ `v2.json`（绑定、Request、WorkOrder、报告、inbox）。
+已实现：Chatbot（standard，仅 `chatbot_*`；可用 `chatbot_new_session` 新建普通会话，title≤80、cwd 必须在 stateDir/~/.dsh/系统目录之外、preset 仅 standard/ptc、同分钟最多 5 次，不能创建角色会话）、Global Advisor（PTC，只读核对 + `ticket_*`，不含会话只读工具）、managed Worker（PTC，两种 `workerType`：work 持 `worker_*` + 执行工具；reflection 只读仓库与会话日志，持 `worker_*` + `session_list`/`session_events`）；Worker 提权按四档风险逐条审批（`lib/v2/risk.mjs`，工单策略 > 全局设置 > 默认 auto-low），low 自动 allowed-once、medium 按策略、high/unknown 一律阻塞并通知，每次决策写 `audit.jsonl`；`chatbot_grant` 降级为调试/应急工具（set/list/reset），只有用户明确要求时才可用且写 `grant_kind` 审计；Chatbot 可用 `chatbot_watch`（add/remove/list/status）协管独立会话，与 direct 无耦合；Advisor/Worker 拦截用户直连消息（`settings.blockDirectUserMessages` 默认 true，`waitingOn=user` 例外），只回固定提示；纯降权永久生效，任何提权必须带 TTL；自动恢复只撤销提权字段，同一 grant 里的降权保留，显式 reset 才撤销全部字段；绑定 ticket 时随 done/cancelled 恢复，重启会 reconcile，审计写 `audit.jsonl`；ticket 的 intake → open → working → blocked/done/failed 主链路；研究类票（`chatbot_request mode=answer`）由 Advisor 只读调查后 `ticket_answer` 直接 `open → done`，不派 Worker；`chatbot_resume` 恢复 blocked 票；startup 把中断的 working 票置为 blocked(environment)；微信 Claw 通过 Chatbot 复用入站与 assistant 转发；微信直通模式（`/直通 <会话名>`、`/直通状态`、`/退出直通`）把消息直接 steer 给普通独立会话，只转发正式文本；启动时向已连接通道发送一条重启通知。`chatbot_request` 可带 `workspace` 绝对路径：给定已有项目目录时 Worker 用该项目 cwd、产物放 `{$cwd}/ria-runs/<workerId>/`；不填则用全局 worker 根目录。状态文件为 `ria.json`（ticket）+ `v2.json`（绑定、Request、WorkOrder、报告、inbox）。
 
 暂缓：Project 路由与 Project Advisor、知识层、SQLite 迁移、独立 worker 的创建与观察、Topic 亲和、看板动作的 v2 收口、旧 legacy ticket 的迁移。
 

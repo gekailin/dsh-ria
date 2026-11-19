@@ -52,7 +52,7 @@ try {
   const ensured = await fixture.service.ensure()
   const chatbot = fixture.service.v2.v2.chatbotSessionId
   assert.equal(ensured.sessionId, chatbot)
-  assert.deepEqual(fixture.visibleTools(chatbot).sort(), ['chatbot_direct', 'chatbot_grant', 'chatbot_propose', 'chatbot_read', 'chatbot_request', 'chatbot_resume', 'chatbot_sessions', 'chatbot_status', 'chatbot_steer', 'chatbot_talk', 'chatbot_watch'])
+  assert.deepEqual(fixture.visibleTools(chatbot).sort(), ['chatbot_direct', 'chatbot_grant', 'chatbot_new_session', 'chatbot_propose', 'chatbot_read', 'chatbot_request', 'chatbot_resume', 'chatbot_sessions', 'chatbot_status', 'chatbot_steer', 'chatbot_talk', 'chatbot_watch'])
   // WeChat Claw resolves its peer session through these two callbacks. In v2
   // they must point at the Chatbot, not at the retired legacy manager.
   assert.equal(fixture.service.wechatClaw.getRiaId(), chatbot)
@@ -509,7 +509,7 @@ try {
   const chatbot = second.service.v2.v2.chatbotSessionId
   assert.ok(chatbot)
   assert.equal(second.service.store.riaSessionId, chatbot)
-  assert.deepEqual(second.visibleTools(chatbot).sort(), ['chatbot_direct', 'chatbot_grant', 'chatbot_propose', 'chatbot_read', 'chatbot_request', 'chatbot_resume', 'chatbot_sessions', 'chatbot_status', 'chatbot_steer', 'chatbot_talk', 'chatbot_watch'])
+  assert.deepEqual(second.visibleTools(chatbot).sort(), ['chatbot_direct', 'chatbot_grant', 'chatbot_new_session', 'chatbot_propose', 'chatbot_read', 'chatbot_request', 'chatbot_resume', 'chatbot_sessions', 'chatbot_status', 'chatbot_steer', 'chatbot_talk', 'chatbot_watch'])
   await second.service.startup()
   const parked = second.service.store.ticket(workingTicketId)
   assert.equal(parked.status, 'blocked')

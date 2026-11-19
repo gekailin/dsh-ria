@@ -37,6 +37,9 @@ export async function createFixture(options = {}) {
   const creates = []
   const renames = []
   const effects = []
+  const llmCalls = []
+  let llmFailureCount = options.llmFailures || 0
+  const archivedSessions = []
   const listeners = new Map()
   const summaries = []
   const titles = new Map([
@@ -284,6 +287,20 @@ export async function createFixture(options = {}) {
       }
       if (name === 'llm') {
         return {
+          async *stream(request) {
+            llmCalls.push(request)
+            if (options.llmDelayMs) await new Promise(resolve => setTimeout(resolve, options.llmDelayMs))
+            if (llmFailureCount > 0) {
+              llmFailureCount -= 1
+              throw new Error('llm stream failed')
+            }
+            const reply = typeof options.llmReply === 'function'
+              ? options.llmReply(request)
+              : (options.llmReply || JSON.stringify({ action: 'block', block: { reason: 'no reply configured' } }))
+            yield { type: 'text-delta', text: String(reply) }
+            yield { type: 'usage', usage: { input: 10, output: String(reply).length, total: 10 + String(reply).length } }
+            yield { type: 'finish', reason: 'stop' }
+          },
           listProviders() { return [{ id: 'provider-ok' }, { id: 'provider-text' }] },
           async listModels(provider) {
             if (options.failListModelsProvider === provider) throw new Error('provider catalog unavailable')
@@ -311,7 +328,8 @@ export async function createFixture(options = {}) {
     },
     webServer: { register(route) { routes.push(route); return () => {} } },
     workspaceRegistry: {
-      get archivedSessionIds() { return options.archivedSessionIds || [] },
+      get archivedSessionIds() { return [...(options.archivedSessionIds || []), ...archivedSessions] },
+      async archiveSession(sessionId) { archivedSessions.push(String(sessionId)) },
       async create(path, title) {
         workspaceCalls.push({ path, title })
         return workspaceFor(path, title)
@@ -561,6 +579,10 @@ export async function createFixture(options = {}) {
     ? apply(ctx, { stateDir })
     : apply(ctx, { stateDir, v2: options.v2 === true })
   await service.ensure()
+  // Tests keep the legacy Advisor tool/session path by default so existing
+  // ticket_plan/ticket_dispatch cases remain meaningful. New stateless tests
+  // opt in explicitly.
+  if (service.v2 && service.v2.v2 && typeof service.v2.v2.setAdvisorMode === 'function') service.v2.v2.setAdvisorMode(options.advisorMode === 'stateless' ? 'stateless' : 'legacy')
   // Automation changes the approval waterfall, so every existing test runs
   // with the host-native behaviour unless it opts in explicitly.
   service.store.setSettings({ approvalAutomation: options.approvalAutomation === true })
@@ -608,6 +630,8 @@ export async function createFixture(options = {}) {
     routes,
     schedules,
     scheduleCalls,
+    llmCalls,
+    archivedSessions,
     riaAgent,
     agentFor(sessionId) { return makeAgent(String(sessionId)) },
     call,

@@ -110,12 +110,49 @@ try {
   const thirdStep = await controller.onPreStep({ agent: chatAgent, turn: 3 }, async () => decision())
   assert.ok(thirdStep.messages.some(item => item && item.source && item.source.form === 'chatbot-memory'))
 
-  // Legacy retirement clears the binding and marks stateless mode.
+  // Legacy retirement only runs in stateless mode; legacy mode is a rollback switch.
+  controller.v2.setAdvisorMode('stateless')
   controller.v2.setAdvisor('global', 'session-legacy-advisor', { cwd: '/tmp' })
   const retired = await controller.retireLegacyAdvisor()
   assert.equal(retired.retired, true)
   assert.equal(controller.v2.advisor('global'), null)
   assert.equal(controller.v2.data.advisorMode, 'stateless')
+
+  // Sage cwd migration: old stateDir/sage session is archived once, a new Sage
+  // is created at stateDir root, and the migration is idempotent.
+  {
+    const events = () => {
+      try {
+        return readFileSync(join(fixture.stateDir, 'router-events.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
+      } catch { return [] }
+    }
+    const oldId = 'session-old-sage'
+    const oldCwd = join(controller.stateDir, 'sage')
+    await fixture.service.ctx.sessionController.create({ sessionId: oldId, cwd: oldCwd, agentPreset: 'standard' })
+    controller.v2.setSage(oldId)
+    controller.sageIndexInjected = false
+    const beforeCreates = fixture.creates.length
+    const migrated = await controller.ensureSage()
+    assert.notEqual(migrated.sessionId, oldId)
+    assert.equal(controller.v2.sageSessionId, migrated.sessionId)
+    assert.equal(await titleOf(migrated.sessionId), 'Ria Sage')
+    const migratedSummary = (await fixture.service.ctx.sessionController.list({})).items.find(item => String(item.sessionId) === String(migrated.sessionId))
+    assert.equal(migratedSummary.cwd, controller.stateDir)
+    assert.ok(fixture.archivedSessions.includes(oldId))
+    const sagePrompts = fixture.prompts.filter(item => String(item.sessionId) === String(migrated.sessionId)).map(item => String(item.content[0].text))
+    assert.ok(sagePrompts.some(text => text.includes('[认知 INDEX]')))
+    assert.ok(sagePrompts.some(text => text.includes('[PRINCIPLES 摘要]')))
+    const migratedEvents = events().filter(item => item.event === 'sage.migrated')
+    assert.equal(migratedEvents.length, 1)
+    assert.equal(migratedEvents[0].sessionId, oldId)
+    assert.equal(migratedEvents[0].payload.from, oldCwd)
+    assert.equal(migratedEvents[0].payload.to, controller.stateDir)
+    const afterCreates = fixture.creates.length
+    const again = await controller.ensureSage()
+    assert.equal(again.created, false)
+    assert.equal(fixture.creates.length, afterCreates)
+    assert.equal(events().filter(item => item.event === 'sage.migrated').length, 1)
+  }
 
   console.log('v2 sage ok')
 } finally {

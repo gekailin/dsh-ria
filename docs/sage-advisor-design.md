@@ -68,7 +68,7 @@ Sage 只暴露三个 scoped 工具，使用 standard preset（非 PTC）：
 
 ### 1.3 生命周期、恢复与 DSH 自动 compact
 
-**常驻**：启动时 `ensureSage`（与 `ensureChatbot` 同级），sessionId 持久化在 v2 状态；已有 session 直接复用，不重建。会话标题固定 **`Ria Sage`**；cwd 固定 `stateDir/sage`，不落项目目录。
+**常驻**：启动时 `ensureSage`（与 `ensureChatbot` 同级），sessionId 持久化在 v2 状态；已有 session 直接复用，不重建。会话标题固定 **`Ria Sage`**；cwd 固定 **`stateDir` 根**（旧 `stateDir/sage` 只在迁移判定中保留；启动时归档一次并重建，已是 stateDir 则幂等复用），不落项目目录。
 
 **上下文托管给 DSH**：Sage 不再自己判断「上下文快满了该轮换」，也不创建新会话、不做轮换。上下文超限由 **DSH 自动 compact（压缩）** 处理；对 Sage 来说，会话可以被压缩，但认知文件不会。
 
@@ -489,7 +489,8 @@ v2.json.cognition = { version, lastAppliedAt, pendingProposals, lastError }
 
 - **Sage 单例，无写队列/优先级/批处理**：提案直接写 `cognition/proposals/`，积压不阻塞 Ria；用户提案 priority=high 仅用于排序。
 - **Sage 独占写、原子写、INDEX 更新**；不做 TTL 自动清理、不做冲突检测引擎、不做版本回滚 UI；过期/冲突由 Sage 自己维护。
-- **Advisor 每票新建会话**：`createAdvisorForTicket`，prompt = brief + cognition snapshot；旧 Global Advisor 启动时清绑定并尝试归档（`advisorMode=stateless`）。
+- **Advisor 默认无 session**：`planTicketStateless` 单次 LLM 调用（最多 2 次尝试/120s）产出 plan/answer/block；输入 brief + cognition snapshot，degraded 显式；`advisor.plan` 记录 `sessionId:''`、latencyMs、usage、cognitionIds、brief/workOrder 摘要；失败先写 `advisor.plan.failed` 再由调用点落 blocked。`advisorMode=legacy` 才保留 `createAdvisorForTicket` 建会话与 `ticket_plan` 回滚路径。
+- **Sage cwd = stateDir 根**：旧 `stateDir/sage` 会话启动迁移时归档一次并写 `sage.migrated`，随后新建/绑定 cwd=stateDir 的 Sage；已是 stateDir 的 Sage 幂等复用；注入 INDEX + principles 摘要（≤800 字）。
 - **Chatbot 记忆**：由 `onPreStep` 以 host 消息注入只读摘要，记忆变化才重注；用户提案走 `chatbot_propose`。
 - **bootstrap**：`bootstrapCognition()` 从 DESIGN 五原则、architecture/limitations 摘要、memory.md、lessons 生成初始 principles/projects/chatbot 文件，`.bootstrapped` 幂等。
 - **Sage 工具**：`sage_read` / `sage_write` / `sage_request`；`sage_write` 遇 `resolveProposal` 标记提案已采纳。

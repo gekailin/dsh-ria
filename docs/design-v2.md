@@ -266,7 +266,7 @@ session_events { "sessionId": "session-abc", "types": ["approval/*", "turn/*"], 
 | 角色 | 标题 | 规则 |
 |---|---|---|
 | Chatbot | `Ria` | 单例 |
-| Advisor | `Ria Advisor` | 单例（当前 Global；未来无状态 Advisor 同名） |
+| Advisor | `Ria Advisor` | 默认无 session；仅 `advisorMode=legacy` 回滚时创建会话 |
 | Worker | `Ria Worker <n>` | n 持久化递增，删除/回收不复用 |
 | Reflection Worker | `Ria Reflection Worker <n>` | 独立计数器，同上 |
 | Sage | `Ria Sage` | 单例 |
@@ -278,12 +278,12 @@ session_events { "sessionId": "session-abc", "types": ["approval/*", "turn/*"], 
 
 ### Sage 与无状态 Advisor（实现补充）
 
-- **Sage**：单例标准会话，标题 `Ria Sage`，cwd `stateDir/sage`；工具仅 `sage_read`/`sage_write`/`sage_request`，无 bash/write/edit/run_code。启动与 compaction 后读 `cognition/INDEX.md`。
+- **Sage**：单例标准会话，标题 `Ria Sage`，cwd **`stateDir` 根**；旧 `stateDir/sage` 会话在启动迁移时归档一次（`sage.migrated`），然后新建并绑定新会话；已是 stateDir 的 Sage 幂等复用。工具仅 `sage_read`/`sage_write`/`sage_request`，无 bash/write/edit/run_code。启动与 compaction 后读 INDEX，并注入 principles 摘要（≤800 字）。
 - **认知库**：`stateDir/cognition/` 下 `principles.md`、`projects/<key>.md`、`chatbot/{preferences,agreements,decisions}.md`、自动生成的 `INDEX.md`、`proposals/`；仍复用 `stateDir/lessons.json`。所有写入 0600 + tmp+fsync+rename，Sage 独占写，写后更新 INDEX 与 router-events。
-- **无状态 Advisor**：每张进入 Advisor 阶段的票由 `createAdvisorForTicket` 新建会话（标题 `Ria Advisor`），prompt = ticket brief + 认知快照；不跨票复用上下文；检索失败时 prompt 显式标 `cognition_status: degraded`。
+- **无状态 Advisor**：默认不创建会话，由 `planTicketStateless` 单次 LLM 调用产出 `plan`/`answer`/`block`；输入 = ticket brief + 认知快照；检索失败显式 degraded。LLM 最多 2 次尝试（120s/次），失败先写 `advisor.plan.failed` 再由调用点落 blocked，不静默。`advisor.plan` 审计字段含 `sessionId:''`、`latencyMs`、`attempts`、`usage`、`degraded`、`cognitionIds`、`briefSummary`、`workOrderSummary`；无 session 日志，router-events 是唯一取证入口。`advisorMode=stateless` 为生产默认，`legacy` 保留建会话/ticket_plan 回滚；`advisors` 绑定只在 legacy 使用。
 - **Chatbot 记忆**：Ria 在 `onPreStep` 以 host 消息注入只读摘要（记忆变化才重新注入）；Chatbot 无写认知工具，用户提案走 `chatbot_propose`（priority=high）。
 - **提案通道**：Advisor `ticket_plan.cognitionProposal`、Worker/Reflection `worker_report.lessons`、用户 `chatbot_propose` 都落 `proposals/`；Sage 采纳后写记忆，积压不阻塞派单。
-- **退役与 bootstrap**：启动时 `bootstrapCognition()` 一次性生成初始记忆（已有 `.bootstrapped` 则跳过），`retireLegacyAdvisor()` 清空 global 旧绑定并尝试归档会话，`advisorMode=stateless`。
+- **退役与 bootstrap**：启动时 `bootstrapCognition()` 一次性生成初始记忆（已有 `.bootstrapped` 则跳过）；`retireLegacyAdvisor()` 仅在 `advisorMode=stateless` 时清空 global 旧绑定并尝试归档，legacy 模式直接跳过，避免覆盖回滚开关。
 - **简化口径**：Sage 单例，不做写队列/优先级/冲突引擎/TTL；记忆冲突与过期由 Sage 人工维护。与 `docs/sage-advisor-design.md` 一致，后者补充了更完整的长期目标。
 
 ### 阻塞通知范围

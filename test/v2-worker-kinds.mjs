@@ -128,9 +128,11 @@ try {
     workerSessionId: reflectionWorkerId,
   })
   assert.equal(mismatch.ok, false)
-  assert.equal(mismatch.code, 'worker_kind_mismatch')
+  assert.equal(mismatch.code, 'specified_worker_unavailable')
+  assert.equal(mismatch.cause, 'worker_kind_mismatch')
   assert.match(mismatch.message, /reflection worker.*work worker/)
-  assert.equal(fixture.service.store.ticket(mismatchRequest.ticketId).status, 'open')
+  assert.equal(fixture.service.store.ticket(mismatchRequest.ticketId).status, 'blocked')
+  assert.equal(fixture.service.store.ticket(mismatchRequest.ticketId).waitingOn, 'user')
 
   // Reflection tickets refuse a workspace: they must not touch a repository.
   const withWorkspace = await fixture.callAs(chatbot, 'chatbot_request', {

@@ -96,6 +96,7 @@ Advisor 的产物只有两种：
 - **独立 worker**：普通顶层会话，保留自己的 preset、tools、MCP；Ria 不改配置，不注入契约。观察需用户授权，只读；建议默认给用户，不直接指挥。
 - **直管 worker**：只对 Ria 负责；不创建 worker，也不派子代理（`subagent`/`subagent_fork`）或列/发消息/打断子代理（`list_agents`/`send_message`/`interrupt_agent`，全部 deny），不调用 `ria_*` 管理工具，不写 Ria 记忆；Ria 的 steer 在下一个 checkpoint 必须处理；完成必须带证据。
 - **Topic 弱关联与生命周期**：直管 worker 不绑定 Topic；Topic 只做路由亲和和上下文提示。一个 Topic 可以按需使用多个 worker，一个 worker 也可以跨 Topic 复用；同一 Workspace（Global 为 Ria 的 worker 根目录）内优先复用最近处理过该 Topic 的 idle worker。同一时间只接一张票；完成后继续接同 Workspace（或 Ria 的 worker 根目录）的其他票，空闲或显式退休；Topic 归档或合并不强制退休，只清掉亲和提示。跨 Topic 切换前写回 run record，切换时用 ticketBrief 重新定位，不假设上一 Topic 的上下文。
+- **是否允许自动派活**：Worker meta 新增 `allowAutoDispatch: boolean`，默认 `true`；旧绑定缺字段按 `true` 读取，下次写入补齐。`false` 是可复用但仅接受显式派单的 Worker，不等于退休/归档，不停止它正在执行的工单；`true` 保持原自动复用行为。preset 重建保留该标记，除非同次配置显式修改。
 - **cwd 与产物目录**：直管 worker 的 cwd 创建时固定，不为单张票换 cwd。Project 票用项目 cwd（该票选定 Workspace 的根目录），生成物和中间产物放 `{$cwd}/ria-runs/<workerId>/`；Global 票默认用 Ria 的 worker 根目录（默认 DSH_HOME/state/ria/workers），生成物和中间产物放 `{$cwd}/runs/<workerId>/`；Global 票显式指定 Workspace 时按项目 cwd 走。产物不散落在项目根或 Ria 状态根；Topic 跨 Workspace 时按 Workspace 拆 worker。
 - **直管契约**：一轮一件事；开工复述目标、验收、计划；里程碑结构化报告；歧义、不可逆、需要用户偏好时停下来问；只对 Ria 下结论。
 - **PTC 与 checkpoint**：直管 worker 默认 PTC，但一个 `run_code` 只是一个执行段，不是 checkpoint。长任务按里程碑拆成多次 `run_code`；每次结束必须 `report` 并读 steer，不能把整张票塞进一个长程序，否则 Ria 无法在中途纠偏。
@@ -114,7 +115,7 @@ Advisor 的产物只有两种：
 | 派发 | mode=work 的工单 | mode=reflection 的工单 |
 | 子代理 | 全部 deny | 全部 deny |
 
-- 两种类型不可混用：给 work 工单指定 reflection Worker（或反过来）会被拒绝，返回 `worker_kind_mismatch`，票保持 `open`。
+- 两种类型不可混用：给 work 工单指定 reflection Worker（或反过来）会按指定 Worker 不可用处理，返回 `specified_worker_unavailable`（`cause='worker_kind_mismatch'`），工单转 `blocked(waitingOn=user)`，不自动换成另一种 Worker。显式选择只绕过 `allowAutoDispatch`，不绕过类型校验。
 - reflection Worker 只读：通过 read/grep/glob 读仓库、通过 session_list/session_events 读历史会话；不写代码、不改配置、不做最终收尾。会话只读工具只属于它，Advisor 和 work Worker 都没有。
 - **复盘票流转**：Chatbot 或用户提出复盘需求 → `chatbot_request(mode=reflection)` 建票 → Advisor 写 WorkOrder（读哪些会话、产出什么报告）→ `ticket_dispatch` 路由到 reflection Worker（当前没有就现场创建一个）→ Worker 用 session_* 与 read 取证，`worker_report(done)` 回传结论与证据 → Router 收口，Chatbot 转述。
 - **为什么不给 Worker 子代理能力**：委派工具族对直管 Worker 全部关闭（`subagent`、`subagent_fork`、`list_agents`、`send_message`、`interrupt_agent`，以及 agent-team 的 `spawn_teammate`/`wait_agent` 若挂载）。① **执行末端**：Worker 是责任链的末端，工单已由 Advisor 拆到可执行粒度，再向下派会让“谁在做这张票”失去单一答案。② **责任链**：Worker 只对 Ria 下结论、只领一张票；子代理没有工单、没有 checkpoint、没有报告，失败无法归因，Ria 也无法纠偏。③ **绕过 checkpoint/report**：现有协作靠 `worker_report`/`worker_checkpoint` 的里程碑与 steer；子代理在本轮内部黑盒跑完，等于绕开这两个唯一可观测点。④ **并发不可控**：一张票同一时间只允许一个执行者（lease/attempt 语义）；子代理会制造绕过 lease 的并发写与重复产物，Ria 也无法暂停/恢复它们。实现口径：`restrictWorker` 按可用名求交集后以 deny-list 下发整个委派工具族，未知名自动跳过；Advisor/Chatbot 的工具面不受影响。
@@ -132,12 +133,16 @@ Advisor 的产物只有两种：
 - **新建生效**：`chatbot_request`（work）可带 `workerPreset`，写入 ticket meta；`ensureWorker` 新建会话时使用它，不填用默认 `ptc`。
 - **复用不重配**：已有 idle Worker 被复用时沿用其创建时的 preset（`worker.preset`），请求里的 `workerPreset` 不会改写它；要改配置走 `chatbot_worker_config`。
 - **运行中切换**：模型支持（`sessionController.selectModel`，下一轮生效）；**preset 不支持**（DSH 只在 create/reuse 时解析 preset）。因此 `set preset` 返回 `worker_preset_requires_recreate`，传 `recreate:true` 才执行：停用旧绑定、同 cwd/同类型新建 Worker、旧会话归档保留。
+- **自动派活开关**：`chatbot_worker_config get` 返回 `allowAutoDispatch`；`set` 可仅传该布尔值，或与模型/preset 同传。切换立即影响下一次自动候选筛选，不需重建会话；`get.selectable` 为自动可选择性，`false` 的 Worker 仍可显式派发。写 `worker.config.changed`（`field='allowAutoDispatch'`，布尔 `before/after`，actor=chatbot）；相同值幂等、不重复写变更事件。
 - **审计**：每次变更写 `worker.config.changed`（workerId、field、before、after；recreate 另带 newWorkerId/archivedOld）。
 
 ### 派发选人与失效绑定
 
-- 可复用 Worker 只从「idle、无 currentTicketId、类型匹配（work/reflection）、cwd 匹配」的绑定里选；**已归档会话**（`workspaceRegistry.archivedSessionIds`）一律不参与选择——绑定保留，但不会派活。
-- 选中后先 resolve；会话不存在/不可用时删除该绑定，写 `worker.resolve_failed`（workerId/error/latencyMs），在剩余候选里继续选，最多 `WORKER_RESELECT_LIMIT`（3）个；全部失败才新建 Worker。单个失效绑定不再让整次派发失败。
+- **自动选择**：`ensureWorker`（reflection 自动复用同样适用）只从「`allowAutoDispatch!==false`、idle、无 currentTicketId/活跃绑定、类型匹配（work/reflection）、cwd 匹配」的候选中选；原最近使用优先级不变。`false` 的 Worker 即使 idle、cwd 匹配，也跳过；resolve/状态读取后会再次校验，切换 `false` 不会被异步选择窗口漏掉。**已归档会话**（`workspaceRegistry.archivedSessionIds`）一律不参与选择——绑定保留，但不会派活。
+- **显式请求通道**：`chatbot_request`（仅 work 模式）可传 `workerId` 或 `workerSeq`，严格二选一；`workerSeq` 是 `chatbot_worker_config get` 中 work Worker 的正整数编号，不使用 reflection 的独立编号。seq 在建票时解析成固定 `workerId`，两者写入 ticket meta；ID/seq 参数格式错误、同时给两个 selector、或非 work 模式使用则拒绝，不建票。格式合法的 ID 会保留在工单上，实际可用性在派发时验证。
+- **显式派发优先级**：Advisor 的 `ticket_dispatch.workerSessionId` 若给定，是一次显式改派，优先于现有绑定；否则 `dispatchTicket` 优先采用 ticket meta `workerId`/`workerSeq`，只有完全无绑定时才走自动选择。`allowAutoDispatch=false` 可以通过这些显式通道派发，但仍必须通过归档、忙/活跃回合/队列、类型、cwd、Worker reservation 等既有校验。seq-only 旧元数据首次使用时解析并固定 ID，之后不追随新建同编号会话。
+- **指定 Worker 失效不改派**：指定 Worker 不存在、归档、忙、停止中、类型/cwd 不符或 resolve/prompt 失败时，初次派发直接转 `blocked(waitingOn=user)`，`blockedReason`/通知写指定 ID（或 seq）及具体原因，回执 `specified_worker_unavailable`，保留 `cause` 原错误码并写 `dispatch.worker_unavailable`。绝不自动换人或自动重建；`chatbot_resume` 继续原 executor/绑定（`resume_worker_unavailable`），仅同票仍在运行时沿用既有 rearm。换 Worker/重建/取消必须由用户决定。
+- **未指定时的失效候选**：自动选中后先 resolve；会话不存在/不可用时删除该绑定，写 `worker.resolve_failed`（workerId/error/latencyMs），在剩余可自动选择候选里继续选，最多 `WORKER_RESELECT_LIMIT`（3）个；全部失败才新建 Worker。此兜底不适用于显式指定的 Worker。
 - 启动时 `reconcileWorkerBindings()` 幂等清理「确认不存在」的绑定（写 `worker.reconcile_removed`）；临时的 resolve 失败不删绑定。
 - 归档/删除只影响 Worker 选择，不改 ticket 状态机。
 
@@ -195,7 +200,7 @@ v2 的提权不再依赖工具白名单或 `chatbot_grant`。每次 Worker 的�
 
 **`chatbot_request` 的 escalationPolicy**：工具新增可选 `escalationPolicy`（strict/auto-low/auto-low-medium）；仅 `mode=work` 写入 ticket meta，answer/reflection 忽略；非法值返回 `invalid_escalation_policy`。部署类工单可显式声明 auto-low-medium。
 
-**`chatbot_request` 的 workerPreset 与 `chatbot_worker_config`**：work 模式可选 `workerPreset`（白名单 ptc/standard/minimal，默认 ptc，仅新建 Worker 生效；answer/reflection 传会返回 `worker_preset_not_supported`）；idle Worker 复用时沿用原 preset。`chatbot_worker_config`（仅 Chatbot）支持 `get`（seq/title/cwd/workerType/preset/model/status）与 `set`：模型走 `sessionController.selectModel` 立即生效（下一轮）；preset 因 DSH 不支持运行中切换，未传 `recreate:true` 时返回 `worker_preset_requires_recreate`，recreate 停用旧绑定、同 cwd 新建、旧会话归档；变更写 `worker.config.changed`。
+**`chatbot_request` 的 workerPreset 与 `chatbot_worker_config`**：work 模式可选 `workerPreset`（白名单 ptc/standard/minimal，默认 ptc，仅新建 Worker 生效；answer/reflection 传会返回 `worker_preset_not_supported`）；idle Worker 复用时沿用原 preset。`chatbot_worker_config`（仅 Chatbot）支持 `get`（seq/title/cwd/workerType/preset/model/status/allowAutoDispatch）与 `set`：`allowAutoDispatch` 切换立即生效；模型走 `sessionController.selectModel` 立即生效（下一轮）；preset 因 DSH 不支持运行中切换，未传 `recreate:true` 时返回 `worker_preset_requires_recreate`，recreate 停用旧绑定、同 cwd 新建、旧会话归档；变更写 `worker.config.changed`。
 
 **`chatbot_models`**：仅 Chatbot 可调用的只读工具，用于在 `chatbot_worker_config set` 前确认准确模型 id。优先读取 DSH 模型注册表（`ctx.get('llm').listProviders/listModels`，source=`catalog`）；注册表不可用或全部 provider 拉取失败时回退内置 bundled catalog（`lib/v2/model-catalog.mjs`，source=`bundled-fallback`，带 `reason`，不整体报错）；`provider-api` 预留给未来直连 provider 的路径。参数：`provider`（精确过滤）、`query`（id/displayName 大小写不敏感子串）、`limit`（1–200，默认 50）；返回 `models[{provider,model,displayName,contextWindow?,maxOutput?,default?,source}]`、`count`（返回条数）、`total`（过滤后总数）、`source`、`cached`，空结果给 `message` 说明。进程内 5 分钟 TTL 内存缓存，无定时刷新/轮询。
 
@@ -248,7 +253,7 @@ ticket history 是状态快照，`audit.jsonl` 是审批/授权决策审计；�
 | `chatbot_steer` | 向运行中的 Worker 同步方向调整；pre-step 合并投递，不打断工具 |
 | `chatbot_stop_ticket` | 强制停止工单：cancelled + reason、清 inbox、硬中断/软停止、通知用户 |
 | `chatbot_resume` | 恢复 blocked 工单并重新派发 |
-| `chatbot_worker_config` | 查看/修改 Worker 模型与 preset（preset 需重建会话）；`get` 对有绑定工单的 Worker 返回同一套 stuck 字段 |
+| `chatbot_worker_config` | 查看/修改 Worker 模型、preset 与 allowAutoDispatch（preset 需重建会话，自动派活开关即时生效）；`get` 对有绑定工单的 Worker 返回同一套 stuck 字段 |
 | `chatbot_models` | 只读列出可用模型 |
 | `chatbot_sessions` / `chatbot_talk` / `chatbot_read` | 查找普通顶层会话、带话、读回复 |
 | `chatbot_direct` | 微信直通普通会话（内存态，不跨重启） |

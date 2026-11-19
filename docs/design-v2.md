@@ -224,15 +224,21 @@ ticket history 是状态快照，`audit.jsonl` 是审批/授权决策审计；�
 | `approval.asked` | v2 `onApprovalAsked` | `approvalId`、`toolName`、`reason`、`riskLevel`、`decision`、`policy`、`policySource` |
 | `approval.decided` | v2 `onApprovalDecided` | `approvalId`、`outcome`、`decision`、`riskLevel`、`toolName` |
 | `lesson.injected` | `dispatchTicket` 把经验写进 Worker brief 后 | `lessonIds`、`source`（workOrder/match） |
-| `steer.queued` | `chatbotSteer` 成功写 inbox 后 | `inboxId`、`summary`（≤120 字符）、`at`（ISO） |
-| `steer.delivered` | pre-step 注入、checkpoint 读取、done/failed/rearm 的收尾 prompt 成功、空闲直投 | `count`、`attempts`、`deliveryMode`（pre-step/checkpoint/done-retry）、`inboxIds`、`ticketIds`（多条或跨票时） |
-| `steer.undelivered` | done/failed/resume-rearm 仍有未读 inbox | `inboxId`、`summary`、`at`、`trigger`（done/failed/resume-rearm）、`attempts` |
+| `steer.queued` | `chatbotSteer` / resume 共用 `addManagerInbox` 写持久 inbox 后 | `inboxId`、`source`（resume/steer）、`workerId`、`ticketId`、`summary`（≤120 字符）、`at`（ISO） |
+| `steer.delivered` | resume / steer 的空闲直投、pre-step 注入、done/turn-end 补投及 checkpoint 读取 | `count`、`attempts`、`deliveryMode`（immediate/pre-step/done-retry；显式 checkpoint 另记 checkpoint）、`inboxIds`、`ticketIds`、`source/sources`、`messages[{inboxId,ticketId,workerId,source}]` |
+| `steer.undelivered` | 共用投递重试超限，或 failed 仍有未读 inbox | `inboxId`、`source`、`workerId`、`ticketId`、`summary`、`at`、`trigger`（idle-direct/resume-dispatch/resume-rearm/done/turn-end/failed）、`attempts` |
 | `ticket.cancelled` | `chatbot_stop_ticket` 成功取消工单后 | `reason`、`previousStatus`、`workerId`、`inboxCleared`、`hardAbort`、`abortAvailable`、`abortError?`、`by` |
 | `worker.stop.enforced` | pre-step 发现工单已 cancelled 但无法硬中断 | `ticketId`、`phase`（pre-step/reject-step）、`mode=soft`、`turn`、`step`；`reason=cancelled-by-stop` |
 
-**steer 投递时机（pre-step）**：边界是「当前工具调用返回之后、下一步模型调用开始之前」——即 `agent/pre-step` 回调内，绝不在工具执行中注入，也不调用 `agent.steer()`，因此不会打断正在跑的工具。每个边界读取该 Worker 名下所有 `working` 工单的 `pendingInbox`，按票和入队顺序取最多 `STEER_PRE_STEP_BATCH_SIZE=3` 条，合并成一条 host 消息注入下一步输入：`source.kind='ria-task-host'`、`source.form='steer'`、`source.ticketId`、`source.inboxId`（首批）与 `source.inboxIds`（全部）。注入成功后把这些条目 `markInboxDelivered`，并写 `steer.delivered`（`deliveryMode='pre-step'`）。超出 3 条的积压留到下一个边界，不丢弃；没有工具执行时不会凭空触发。
+**resume 与 steer 共用投递机制**：两种消息都先走 `addManagerInbox`，条目同为 `{id,ticketId,workerId,message,from,by,source,at}`；仅 `source=resume|steer` 与 `[Manager resume]` 前缀区分来源，不另建宿主 `inbox.next-turn` 旁路。空闲 resume 在原 Worker 重派 brief 内通过同一 `deliverSteerInbox` 消费，不再发送一次回复后又留一份未读副本；忙 resume/rearm 不调用 `prompt(mode=queue)` 提前标记送达。`recordInboxDelivered` 是共用消费审计，inbox 保留 `deliveryMode/deliveryAttempts/deliveredAt`。
 
-**steer 兜底**：整回合都没等到边界（例如最后的工具调用后直接 `worker_report(done)`）时，`done` 迁移前仍检查 `pendingInbox`，非空则先补一轮 prompt 交付；最多 `STEER_MAX_DELIVERY_ATTEMPTS=2` 次，仍失败转 `blocked(waitingOn=user)` 并写 `steer.undelivered` + Chatbot 通知。该路径事件标 `deliveryMode='done-retry'`；`failed` 与 `resume-rearm` 复用同一 helper（同为 done-retry）；`worker_checkpoint` 读取 inbox 时标 `deliveryMode='checkpoint'`；空闲直投标 `deliveryMode='pre-step'`（在下一轮首个 step 前送达）。steer 写入语义不变：仍无条件写 inbox。
+1. **immediate（空闲）**：仅在宿主状态可确认、没有活跃 turn、running=false 且 queue 为空时，恢复回复和 steer 立即作为新回合输入投递；状态未知时保留 inbox，不假定空闲；异步运行状态采样后重读 pending，避免与 pre-step/checkpoint 双重消费。恢复的原派发 reservation 内可把 WorkOrder 与回复合并一次发送。
+2. **pre-step（忙时）**：边界是「当前工具调用返回之后、下一步模型调用开始之前」的 `agent/pre-step`，不调用 `agent.steer()`，不打断工具。读取该 Worker 名下 working 工单的共同 `pendingInbox`，每步最多 `STEER_PRE_STEP_BATCH_SIZE=3` 条，按票和入队顺序合并一条 host 消息：`source.kind=ria-task-host`、`source.form=steer`、`source.source=resume|steer|mixed`、`sources`、`ticketId/ticketIds` 和 `inboxId/inboxIds`。注入成功才标记这批 delivered；剩余积压留下一边界，不丢弃。
+3. **done-retry（回合兜底）**：`worker_report(done)` 迁移前或正常 `turn/end` 后仍有未读 inbox，则复用同一 helper 补一轮 prompt；每批最多 `STEER_MAX_DELIVERY_ATTEMPTS=2` 次，重试沿用同一 requestId/content。仍失败统一转 `blocked(waitingOn=user)`，保留未读条目，写 `steer.undelivered` 并通知 Chatbot；不能因 prompt 失败又归类成指定 Worker 选择失败。
+
+**并发与回归**：immediate/done-retry 在同一 Worker 的投递锁内执行，持有的 inbox ids 不会同时被 pre-step/checkpoint 注入；取消/终态不再注入新方向。`worker_checkpoint` 是显式读取的兼容消费点（`deliveryMode=checkpoint`），failed 路径仍记录未读与通知；三种自动投递时机及成功/失败事件由 resume 与 steer 共用。原空闲 steer 事件曾误标 pre-step，本轮修正为 immediate；投递行为仍为空闲新回合、忙时下一步、收尾补投。
+
+**验证边界**：`test/v2-resume-inbox.mjs` 明确模拟忙时 queue→host next-turn（不是本轮输入），检查 resume 不走旁路及三时机、失败2次、通知与 steer 三模式；由既有 `test/v2-resume.mjs` 加入 `npm test`。mock 不是新 Worker 真机证据；真机验收由 Ria/Chatbot 新建小票并调用 resume/steer，确认模型输入与 deliveryMode，无需执行 Worker 越权管理会话。
 
 **强制停止（`chatbot_stop_ticket`）语义**：仅 Chatbot 可调用，参数 `ticketId`、`reason`（都必填）。校验顺序：工单不存在 → `ticket_missing`；已 `cancelled` → 幂等成功（`idempotent:true`，不重复迁移、不重复写 `ticket.cancelled`）；已 `done` → `ok:false, code='ticket_done'` 且状态保持 done；其它终态 → `ticket_closed`。之后按顺序执行：
 

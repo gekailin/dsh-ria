@@ -349,7 +349,12 @@ try {
   assert.equal(resumed.status, 'working')
   assert.equal(resumed.workerSessionId, worker)
   const afterResume = await fixture.callAs(worker, 'worker_checkpoint', { ticketId: created.ticketId })
-  assert.deepEqual(afterResume.messages.map(item => item.message), ['use Markdown'])
+  // Idle resume already delivered the reply in the new Worker turn; do not
+  // leave a duplicate for checkpoint/pre-step/done to replay.
+  assert.deepEqual(afterResume.messages, [])
+  assert.equal(resumed.deliveryMode, 'immediate')
+  assert.ok(fixture.prompts.some(prompt => prompt.sessionId === worker
+    && prompt.content[0].text.includes('[Manager resume]') && prompt.content[0].text.includes('use Markdown')))
 
   // A grant bound to a ticket must not outlive it. The next grant is still
   // active when the Worker reports done, so completion itself must restore it.

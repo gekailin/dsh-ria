@@ -23,6 +23,7 @@ try {
   assert.equal(queued.ok, true, JSON.stringify(queued))
   assert.equal(controller.v2.pendingInbox(ticket.ticketId, worker).length, 0)
   assert.ok(events().some(item => item.event === 'steer.queued' && item.payload.summary === 'check this'))
+  assert.ok(events().some(item => item.event === 'steer.delivered' && item.payload.deliveryMode === 'immediate' && item.payload.source === 'steer'))
 
   // A steer after the last checkpoint is consumed by an extra prompt at done.
   await fixture.callAs(chatbot, 'chatbot_steer', { ticketId: ticket.ticketId, message: 'late instruction' })
@@ -51,7 +52,9 @@ try {
   controller.v2.setTicketMeta(third.ticketId, { phase: 'working', workerId: worker })
   fixture.setPromptFailure(new Error('cannot wake'))
   const rearmed = await controller.rearmWorkingTicket(third.ticketId, worker, 'resume msg', 'chatbot')
-  assert.equal(rearmed.ok, true)
+  assert.equal(rearmed.ok, false)
+  assert.equal(rearmed.code, 'steer_undelivered')
+  assert.equal(fixture.service.store.ticket(third.ticketId).status, 'blocked')
   assert.ok(events().some(item => item.event === 'steer.undelivered' && item.ticketId === third.ticketId && item.payload.trigger === 'resume-rearm'))
   fixture.setPromptFailure(undefined)
 

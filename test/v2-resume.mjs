@@ -47,12 +47,15 @@ function promptTo(fixture, sessionId, after) {
     assert.equal(ticket.waitingOn, 'worker')
     const sent = promptTo(fixture, workerId, before)
     assert.ok(sent, 'resume must prompt the Worker')
-    assert.match(sent.content[0].text, /\[用户回复\]/)
+    assert.match(sent.content[0].text, /\[Manager resume\]/)
     assert.match(sent.content[0].text, /use Markdown/)
-    assert.deepEqual(
-      fixture.service.v2.v2.pendingInbox(ticketId, workerId).map(item => item.message),
-      ['use Markdown'],
-    )
+    assert.deepEqual(fixture.service.v2.v2.pendingInbox(ticketId, workerId), [])
+    const delivered = fixture.service.v2.v2.data.inbox.find(item => item.ticketId === ticketId)
+    assert.equal(delivered.source, 'resume')
+    assert.equal(delivered.deliveryMode, 'immediate')
+    assert.ok(fixture.service.routerEvents.query({ ticketId }).events.some(event =>
+      event.event === 'steer.delivered' && event.payload.deliveryMode === 'immediate' && event.payload.source === 'resume'))
+    assert.equal(fixture.prompts.slice(before).filter(prompt => prompt.sessionId === workerId).length, 1)
   } finally {
     fixture.cleanup()
   }
@@ -125,6 +128,8 @@ function promptTo(fixture, sessionId, after) {
     const worker = fixture.service.v2.v2.worker(workerId)
     assert.equal(worker.status, 'working')
     assert.equal(worker.currentTicketId, ticketId)
+    // A working binding alone is not a live turn: model the host running signal.
+    fixture.setRunning(workerId, true)
 
     const before = fixture.prompts.length
     const resumed = await fixture.callAs(chatbot, 'chatbot_resume', { ticketId, message: 'continue please' })
@@ -137,15 +142,21 @@ function promptTo(fixture, sessionId, after) {
     assert.equal(ticket.executor, workerId)
     assert.equal(typeof ticket.attempt.confirmedAt, 'number')
     assert.equal(typeof ticket.attempt.rearmedAt, 'number')
-    // The resume reply was handed to the busy worker and marked delivered, so
-    // it is no longer pending for the next checkpoint.
+    // Busy resume stays in Ria's durable inbox, never the host next-turn queue.
+    assert.equal(promptTo(fixture, workerId, before), undefined)
+    assert.equal(fixture.service.v2.v2.pendingInbox(ticketId, workerId).length, 1)
+    const decision = await fixture.emit('agent/pre-step',
+      { agent: fixture.agentFor(workerId), turn: 1, step: 2 },
+      async () => ({ kind: 'enter', messages: [] }))
+    assert.equal(decision.messages.length, 1)
+    assert.match(decision.messages[0].content[0].text, /\[Manager resume\]/)
+    assert.match(decision.messages[0].content[0].text, /continue please/)
+    assert.equal(decision.messages[0].source.form, 'steer')
+    assert.equal(decision.messages[0].source.source, 'resume')
     assert.deepEqual(fixture.service.v2.v2.pendingInbox(ticketId, workerId), [])
-    assert.equal(fixture.service.v2.v2.data.inbox.find(item => item.ticketId === ticketId).deliveredAt > 0, true)
-    const wake = promptTo(fixture, workerId, before)
-    assert.ok(wake, 'the busy worker must receive the user reply')
-    assert.match(wake.content[0].text, /\[Manager resume\]/)
-    assert.match(wake.content[0].text, /continue please/)
-    assert.equal(wake.mode, 'queue')
+    assert.equal(fixture.service.v2.v2.data.inbox.find(item => item.ticketId === ticketId).deliveryMode, 'pre-step')
+    assert.ok(fixture.service.routerEvents.query({ ticketId }).events.some(event =>
+      event.event === 'steer.delivered' && event.payload.deliveryMode === 'pre-step' && event.payload.source === 'resume'))
   } finally {
     fixture.cleanup()
   }
@@ -315,3 +326,6 @@ for (const unavailable of ['archived', 'missing', 'unresolvable']) {
 }
 
 console.log('v2 resume ok')
+
+// Exercise shared inbox admission and the host next-turn semantics in npm test.
+await import('./v2-resume-inbox.mjs')

@@ -256,10 +256,21 @@ ticket history 是状态快照，`audit.jsonl` 是审批/授权决策审计；�
 | `chatbot_worker_config` | 查看/修改 Worker 模型、preset 与 allowAutoDispatch（preset 需重建会话，自动派活开关即时生效）；`get` 对有绑定工单的 Worker 返回同一套 stuck 字段 |
 | `chatbot_models` | 只读列出可用模型 |
 | `chatbot_sessions` / `chatbot_talk` / `chatbot_read` | 查找普通顶层会话、带话、读回复 |
-| `chatbot_direct` | 微信直通普通会话（内存态，不跨重启） |
+| `chatbot_direct` | 微信直通普通会话；入站保留多模态 content（内存态，不跨重启） |
+| `chatbot_send_image` | Chatbot-only：向当前微信 Claw 回复目标发送 1–5 张本地图片，返回逐张结果 |
 | `chatbot_grant` | 调试/应急权限调整；不是正常提权通道 |
 | `chatbot_watch` | 协管普通会话 |
 | `chatbot_propose` / `chatbot_new_session` | 记忆提案、新建普通会话 |
+
+### 微信 Claw 图片输入与显式发送
+
+实现位于 `lib/v2/controller.mjs`；不新增宿主 API，不重写 Claw 上传协议。
+
+- **direct 多模态**：`directRelay` 仅用 `contentText` 识别直通命令。纯文本仍将原字符串交给 `promptSession`；含非文本 part 时保留原 content 数组（text、encoded image 或 durable image ref），由宿主检查附件和目标模型能力。`promptSession` 接受字符串或 content parts，不改变原文本的 mode/requestId。明确的图片 admission 拒绝才由 `promptWithImageFallback` 回退为纯文字，并在目标消息和直通提示中写「图片未能附带」；同一 requestId 避免重复投递，timeout/未知发送失败不盲目重试。
+- **`chatbot_talk` 带图**：增加可选 `images: string[]`（本地绝对路径）与 `attachments: (string | {attachmentId?, path?, mediaType?, name?})[]`（路径或宿主持久图片引用）。两者合计 ≤5 张、单张 ≤10MB、总量 ≤20MB；`prepareChatbotImages`/`readChatbotImage` 在投递前检查普通文件、字节大小与 PNG/JPEG/WebP/GIF 文件头，拒绝相对路径、缺失/空/非图片文件，返回可读 `code/message`。引用优先经宿主 `imageHostPath` 定位；按 attachmentId 定位的内容核对 SHA-256。目标模型不支持图片时只发送文字及降级提示，返回 `imagesAttached:0`、`imagesDegraded:true`、`warning` 与逐张 `imageWarnings[{path,reason}]`，不静默丢图。成功时返回 `imagesAttached` 与原有 reply/cursor 等字段；纯文字返回行为不变。
+- **`chatbot_send_image`**：参数 `paths: string[]`（1–5 个本地图片绝对路径）、可选 `caption`（≤2000 字符）。同样限制单张10MB/总20MB，Chatbot caller 守卫拒绝其他角色；无登录/连接返回 `claw_not_connected`，无当前回复目标返回 `claw_no_peer`，暂停返回 `claw_paused`，都不发图。复用 `Outbound.enqueueImage → WechatClawService.sendImage → uploadClawImage → sendItems`：密文二进制上传后发送 `image_item.media.encrypt_query_param`，不是图片 base64/裸 URL 或 file_item。caption 在第一张有效图片前发送一次，结果独立返回；无效单图或发送失败不阻止后续有效图片，结果含 `results[{path,ok,messageId?,code?,error?}]`、sent/failed，部分成功为 `images_partial`。批次数量或总量超限时整批不发送。
+
+**验证与生效**：`test/v2-chatbot-images.mjs` 使用 fixture + 受 fetch 护栏限制的 127.0.0.1 假 Claw/CDN，覆盖 direct 原 content/纯文字、talk 图片与可见降级、工具权限/限额/无连接、逐张失败及 image_item/AES 协议断言，已加入 `npm test`。测试不加载真实凭据、不发真实微信。**本轮未部署、未重启；新增工具需获用户批准后重启才出现在现有 Chatbot 工具面**，不得为了验收自行重启。
 
 **每条记录字段**：`ts`（epoch ms）、`event`、`ticketId`、`sessionId`、`actor`（chatbot/advisor/router/host）、`reason`、`payload`（对象或 null）。写失败只记 warn，不影响派发或审批。
 

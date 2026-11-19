@@ -20,7 +20,7 @@ const SAGE_FORBIDDEN = [
 const CHATBOT_TOOLS = [
   'chatbot_direct', 'chatbot_grant', 'chatbot_models', 'chatbot_new_session',
   'chatbot_propose', 'chatbot_read', 'chatbot_request', 'chatbot_resume',
-  'chatbot_sessions', 'chatbot_status', 'chatbot_steer', 'chatbot_stop_ticket',
+  'chatbot_send_image', 'chatbot_sessions', 'chatbot_status', 'chatbot_steer', 'chatbot_stop_ticket',
   'chatbot_talk', 'chatbot_watch', 'chatbot_worker_config',
 ]
 // Preset/global tools this fixture mounts. It deliberately mirrors the families

@@ -34,6 +34,18 @@ try {
   assert.ok(principlesPart.length <= SAGE_PRINCIPLES_MAX_CHARS + 120, String(principlesPart.length))
   const indexPart = prompt.split('[COGNITION INDEX]')[1].split('\n\n语气')[0]
   assert.ok(indexPart.length <= SAGE_INDEX_MAX_CHARS + 180, String(indexPart.length))
+  assert.equal(controller.v2.sagePromptText, prompt)
+
+  // The prompt is rebuilt for each assembly, so an INDEX change is visible on
+  // the next turn without rebuilding the Sage session.
+  const createsBefore = fixture.creates.length
+  controller.cognition.write('projects/added-after-creation.md', '新增项目事实', { reason: 'test' })
+  const refreshed = controller.sageSystemPrompt(sage, { fresh: true })
+  assert.ok(refreshed.includes('added-after-creation.md'))
+  assert.equal(fixture.creates.length, createsBefore)
+
+  // The persisted creation snapshot remains available as a fallback.
+  assert.equal(controller.sageSystemPrompt(sage), prompt)
 
   // No old injection messages/events; repeat ensure and compact do nothing.
   const beforePrompts = fixture.prompts.length

@@ -86,16 +86,16 @@ Sage 只暴露三个 scoped 工具，使用 standard preset（非 PTC）：
 
 **系统提示词内置 INDEX**：
 
-Sage 的系统提示词由三部分组成，在会话创建时构建并固定：
+Sage 的系统提示词由三部分组成，**每次 prompt 组装时动态生成**（DSH 的 `systemPrompt.section.text()` 在每个模型 step 前调用，见 `dsh-system-prompt/lib/index.js` 的 assembly 逻辑）：
 
 - 角色与职责：大脑、只维护认知、不执行任务/不写代码/不派 Worker；
 - `principles.md` 摘要，上限 **800 字符**，超出截断并标注；
 - `cognition/INDEX` 快照，上限 **2000 字符**：文件清单 + 每条一行摘要 + version/time；超长时降级为只保留文件名与一行摘要。
 - 明确导航说明：INDEX 可能滞后，以实际文件为准；需要最新内容时用 `sage_read` 重新读取。
 
-**权衡**：INDEX 变化不会自动更新系统提示词，直到 Sage 会话被重建；因此提示词只作导航，文件才是权威源。没有额外的 INDEX 注入消息/事件，也没有注入时机与版本去重；compact 后不额外发消息，需要时 Sage 自己 `sage_read`。
+**刷新语义**：不是重建会话，也无索引注入消息/事件。INDEX 变化后，**下一次 prompt 组装**就会使用新快照；上下文不丢失，不需要重建/防抖窗口。创建会话时仍持久化一份 `sagePromptText` 作为恢复/生成失败 fallback，但正常路径每轮动态生成。
 
-**崩溃恢复**：DSH session 本身持久化；进程重启后按 sessionId 恢复，不重放旧对话；恢复失败（session 不存在/损坏）时新建会话，用新的系统提示词快照重建认知导航。未完成提案保持 pending 等 Sage 重新读取。
+**崩溃恢复**：DSH session 本身持久化；进程重启后按 sessionId 恢复，不重放旧对话；恢复失败（session 不存在/损坏）时新建会话，用当前 INDEX 重新生成提示词。未完成提案保持 pending 等 Sage 重新读取。
 
 **阻塞隔离**：Sage 的审阅、调研请求都是异步的；Router/Advisor 不等待 Sage。Sage 超时或不可用时：
 
@@ -108,7 +108,7 @@ Sage 的系统提示词由三部分组成，在会话创建时构建并固定：
 ```text
 v2.json.sage = {
   sessionId, status: 'active' | 'paused' | 'recovered',
-  createdAt, lastUsedAt, lastCompactAt?, indexVersion, lastSnapshotVersion
+  createdAt, lastUsedAt, lastCompactAt?, sagePromptText?
 }
 ```
 
@@ -408,7 +408,7 @@ advisor.plan({ ticket, brief, snapshot }) -> { workOrder, proposals, cognitionSt
 
 ### 8.3 运维命令（建议）
 
-- `/sage status`：session、lastCompactAt（可选）、indexVersion、pending proposals、最近采纳/拒绝。
+- `/sage status`：session、lastCompactAt（可选）、pending proposals、最近采纳/拒绝。
 - `/sage adopt <proposalId>`：用户显式采纳（仍走 Router 单写者与审计）。
 - `/cognition verify`：校验文件/hash/投影一致性。
 - `/cognition revert <version>`：回滚认知版本（需用户确认）。
@@ -418,7 +418,7 @@ advisor.plan({ ticket, brief, snapshot }) -> { workOrder, proposals, cognitionSt
 ### 8.4 状态字段
 
 ```text
-v2.json.sage = { sessionId, status, createdAt, lastUsedAt, lastCompactAt?, indexVersion, lastSnapshotVersion }
+v2.json.sage = { sessionId, status, createdAt, lastUsedAt, lastCompactAt?, sagePromptText? }
 v2.json.advisorMode = "legacy" | "sage"        # 回滚开关，默认 legacy 直到 P4
 v2.json.cognition = { version, lastAppliedAt, pendingProposals, lastError }
 ```

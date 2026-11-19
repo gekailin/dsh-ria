@@ -33,7 +33,7 @@
 - 缺口：`toolRequest()`（`lib/index.js:3311-3424`）只检查 `isTerminal(ticket.status)`，`blocked + waitingOn=user` 的工单仍可被再次 `ria_request`。
 - steer 无目标预检：`ria_request` 的 busy 预检只对 `mode === queue` 生效；DSH controller 在 `dsh-api-session-controller/lib/index.js:857` 对 steer 直接 `agent.steer()`，`:932` 才检查目标必须 running。
 - 重启回执无强制点：`startup()` 在无未收敛 ticket / pending delivery 时于 `lib/index.js:4253` 直接 return，干净重启不产生任何回执。
-- restart-method 实测命令：`systemd-run --user --collect --on-active=6s --property=KillMode=process --unit=ria-restart-$(date +%H%M%S) dsh-daemon restart`，预期 down ≈ 4–5s。
+- restart-method 实测命令（现行统一 30s）：`systemd-run --user --collect --on-active=30s --property=KillMode=process --unit=ria-restart-$(date +%H%M%S) dsh-daemon restart`，预期 down ≈ 4–5s；延迟只影响触发时刻，不改变空窗。
 - 两个失败模式的实测代价：`setsid + nohup` 会被 web 关闭时的 `--kill-who=all` 连坐杀掉，watchdog 等 120s 锁过期，实测 128s 空窗；不带 `KillMode=process` 时 systemd 按 control-group 回收，实测 24s 空窗（首代 web 被回收后由 watchdog 补起）。
 - restart-report 的现行做法：重启前用 `schedule_create` 挂约 60s 的一次性任务（`target=this_session`），触发后核验 health 与插件 HEAD 再汇报；2026-11-11 决定不为此改插件代码。
 

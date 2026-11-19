@@ -119,6 +119,21 @@ Advisor 的产物只有两种：
 - **复盘票流转**：Chatbot 或用户提出复盘需求 → `chatbot_request(mode=reflection)` 建票 → Advisor 写 WorkOrder（读哪些会话、产出什么报告）→ `ticket_dispatch` 路由到 reflection Worker（当前没有就现场创建一个）→ Worker 用 session_* 与 read 取证，`worker_report(done)` 回传结论与证据 → Router 收口，Chatbot 转述。
 - **为什么不给 Worker 子代理能力**：委派工具族对直管 Worker 全部关闭（`subagent`、`subagent_fork`、`list_agents`、`send_message`、`interrupt_agent`，以及 agent-team 的 `spawn_teammate`/`wait_agent` 若挂载）。① **执行末端**：Worker 是责任链的末端，工单已由 Advisor 拆到可执行粒度，再向下派会让“谁在做这张票”失去单一答案。② **责任链**：Worker 只对 Ria 下结论、只领一张票；子代理没有工单、没有 checkpoint、没有报告，失败无法归因，Ria 也无法纠偏。③ **绕过 checkpoint/report**：现有协作靠 `worker_report`/`worker_checkpoint` 的里程碑与 steer；子代理在本轮内部黑盒跑完，等于绕开这两个唯一可观测点。④ **并发不可控**：一张票同一时间只允许一个执行者（lease/attempt 语义）；子代理会制造绕过 lease 的并发写与重复产物，Ria 也无法暂停/恢复它们。实现口径：`restrictWorker` 按可用名求交集后以 deny-list 下发整个委派工具族，未知名自动跳过；Advisor/Chatbot 的工具面不受影响。
 
+### Worker preset 与模型配置
+
+| Worker 类型 | 默认 preset | 说明 |
+|---|---|---|
+| work | `ptc` | 可执行工具；创建时可用 `workerPreset` 覆盖 |
+| reflection | `ptc` + 只读限制 | preset 固定，工具面由 `workerType` 收窄 |
+| Advisor | `ptc` | 无状态，不涉及 Worker 配置 |
+| Chatbot / Sage | `standard` | 仅 `chatbot_*` / `sage_*` 工具 |
+
+- **白名单**：`ptc`、`standard`、`minimal`（可用 `options.workerPresets` 覆盖）；非法值返回 `invalid_worker_preset` 并列出允许值。
+- **新建生效**：`chatbot_request`（work）可带 `workerPreset`，写入 ticket meta；`ensureWorker` 新建会话时使用它，不填用默认 `ptc`。
+- **复用不重配**：已有 idle Worker 被复用时沿用其创建时的 preset（`worker.preset`），请求里的 `workerPreset` 不会改写它；要改配置走 `chatbot_worker_config`。
+- **运行中切换**：模型支持（`sessionController.selectModel`，下一轮生效）；**preset 不支持**（DSH 只在 create/reuse 时解析 preset）。因此 `set preset` 返回 `worker_preset_requires_recreate`，传 `recreate:true` 才执行：停用旧绑定、同 cwd/同类型新建 Worker、旧会话归档保留。
+- **审计**：每次变更写 `worker.config.changed`（workerId、field、before、after；recreate 另带 newWorkerId/archivedOld）。
+
 ### 派发选人与失效绑定
 
 - 可复用 Worker 只从「idle、无 currentTicketId、类型匹配（work/reflection）、cwd 匹配」的绑定里选；**已归档会话**（`workspaceRegistry.archivedSessionIds`）一律不参与选择——绑定保留，但不会派活。
@@ -179,6 +194,8 @@ v2 的提权不再依赖工具白名单或 `chatbot_grant`。每次 Worker 的�
 **风险规则 `plugin-install`**：`dsh plugin` 的 add/update/remove/install（无论 `--profile` 在子命令前后，目标为 `~/.dsh/profiles/**` 或 `file:...`）判 **medium**，rule id `plugin-install`，reason 写「向 profile 安装/更新插件：dsh plugin <action> <target>」；action 无法识别时保持 unknown 并写清。工单设 `escalationPolicy=auto-low-medium` 时该请求自动放行；`strict` 下仍需人工确认。
 
 **`chatbot_request` 的 escalationPolicy**：工具新增可选 `escalationPolicy`（strict/auto-low/auto-low-medium）；仅 `mode=work` 写入 ticket meta，answer/reflection 忽略；非法值返回 `invalid_escalation_policy`。部署类工单可显式声明 auto-low-medium。
+
+**`chatbot_request` 的 workerPreset 与 `chatbot_worker_config`**：work 模式可选 `workerPreset`（白名单 ptc/standard/minimal，默认 ptc，仅新建 Worker 生效；answer/reflection 传会返回 `worker_preset_not_supported`）；idle Worker 复用时沿用原 preset。`chatbot_worker_config`（仅 Chatbot）支持 `get`（seq/title/cwd/workerType/preset/model/status）与 `set`：模型走 `sessionController.selectModel` 立即生效（下一轮）；preset 因 DSH 不支持运行中切换，未传 `recreate:true` 时返回 `worker_preset_requires_recreate`，recreate 停用旧绑定、同 cwd 新建、旧会话归档；变更写 `worker.config.changed`。
 
 ### Router 事件日志
 

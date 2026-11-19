@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { V2Store } from '../lib/v2/store.mjs'
@@ -235,6 +235,49 @@ async function planned(fixture, chatbot, request, advisor) {
     const raw = JSON.parse(readFileSync(join(dir, 'lessons.json'), 'utf8'))
     assert.equal(Object.keys(raw.entries).length, 101)
     assert.equal(raw.schemaVersion, 1)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+// ⑦ A leftover temp file from an earlier failed write cannot poison every retry.
+{
+  const dir = mkdtempSync(join(tmpdir(), 'ria-lessons-stale-temp-'))
+  try {
+    const file = join(dir, 'lessons.json')
+    const legacyTemp = file + '.tmp-' + process.pid
+    writeFileSync(legacyTemp, 'unrelated leftover; do not overwrite or delete')
+    const store = new LessonStore({ stateDir: dir })
+    assert.equal(store.save(), true, 'a stale PID temp must not block a new save')
+    assert.equal(store.save(), true, 'later retries stay usable')
+    assert.equal(JSON.parse(readFileSync(file, 'utf8')).schemaVersion, 1)
+    assert.equal(statSync(file).mode & 0o777, 0o600)
+    assert.equal(readFileSync(legacyTemp, 'utf8'), 'unrelated leftover; do not overwrite or delete')
+    assert.deepEqual(readdirSync(dir).sort(), ['lessons.json', 'lessons.json.tmp-' + process.pid].sort())
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+// ⑧ A failed atomic rename cleans only its own temp and preserves the old file.
+{
+  const dir = mkdtempSync(join(tmpdir(), 'ria-lessons-rename-failure-'))
+  try {
+    const warnings = []
+    const store = new LessonStore({ stateDir: dir, log: (level, message) => warnings.push({ level, message }) })
+    assert.equal(store.save(), true)
+    const file = store.file
+    const before = readFileSync(file, 'utf8')
+    const blockedTarget = join(dir, 'blocked-target')
+    mkdirSync(blockedTarget)
+    store.file = blockedTarget
+    assert.equal(store.save(), false, 'rename onto a directory must fail visibly')
+    assert.ok(warnings.some(item => item.level === 'warn' && item.message.includes('could not write')))
+    assert.deepEqual(readdirSync(dir).sort(), ['blocked-target', 'lessons.json'], 'failed attempt leaves no owned temp')
+    assert.equal(readFileSync(file, 'utf8'), before, 'the existing library stays intact')
+    store.file = file
+    assert.equal(store.save(), true, 'saving recovers after the target failure is resolved')
+    assert.deepEqual(readdirSync(dir).sort(), ['blocked-target', 'lessons.json'])
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

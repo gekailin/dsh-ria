@@ -255,13 +255,14 @@ const REFLECTION_DEFAULTS = {
 }
 
 function expectedSettings(patch = {}) {
-  const { reflection, reflectionStatus, style, memory, memoryStatus, approvalAutoAllow, escalationPolicy, ...rest } = patch
+  const { reflection, reflectionStatus, style, memory, memoryStatus, approvalAutoAllow, escalationPolicy, blockDirectUserMessages, ...rest } = patch
   const memoryLimits = { maxChars: 2400, maxEntries: 12, maxEntryChars: 300, ...(memory || {}) }
   return {
     progressCards: false,
     wechatAutoPause: true,
     approvalAutomation: true,
     approvalAutoAllow: { enabled: false, tools: [], ...(approvalAutoAllow || {}) },
+    blockDirectUserMessages: blockDirectUserMessages === undefined ? true : blockDirectUserMessages,
     escalationPolicy: escalationPolicy || 'auto-low',
     wechatClawImage: { inbound: true, outbound: true },
     style: { ...STYLE_SETTINGS_DEFAULTS, ...(style || {}), effectiveText: (style && style.effectiveText) || '' },
@@ -358,6 +359,14 @@ assert.equal(escalationBad.status, 400)
 const escalationReset = await request('POST', '/plugins/dsh-ria/api/settings', { escalationPolicy: 'auto-low' })
 assert.equal(escalationReset.status, 200)
 assert.deepEqual(escalationReset.body, expectedSettings())
+const blockDirectOff = await request('POST', '/plugins/dsh-ria/api/settings', { blockDirectUserMessages: false })
+assert.equal(blockDirectOff.status, 200)
+assert.deepEqual(blockDirectOff.body, expectedSettings({ blockDirectUserMessages: false }))
+const blockDirectBad = await request('POST', '/plugins/dsh-ria/api/settings', { blockDirectUserMessages: 'no' })
+assert.equal(blockDirectBad.status, 400)
+const blockDirectOn = await request('POST', '/plugins/dsh-ria/api/settings', { blockDirectUserMessages: true })
+assert.equal(blockDirectOn.status, 200)
+assert.deepEqual(blockDirectOn.body, expectedSettings())
 // Claw image transfer is fixed on. Older clients may still try to turn it off;
 // the field is accepted and ignored so their save does not fail.
 const clawImageOff = await request('POST', '/plugins/dsh-ria/api/settings', { wechatClawImage: { inbound: false, outbound: false } })

@@ -142,6 +142,8 @@ v2 的提权不再依赖工具白名单或 `chatbot_grant`。每次 Worker 的�
 
 简单单条输出重定向（`cmd > path` / `cmd >> path`）按目标路径判定；含管道或复合重定向仍是 unknown。unknown 永远按高风险处理，不会自动放行。
 
+**PTC 传输层：分类看内层命令，不看传输层工具名。** Worker 的命令经常经 `run_code` 执行，`approval/request` 里的 `toolName` 是 `run_code`。`parseTransportCall` 从 `tools/pre-execute` 缓存的 `args.code` 中静态提取内层 `tools.bash({ command: '<字面量>' })`、`tools.write({ file_path: '<字面量>' })` 等调用；多条内层命令/路径取最高风险。reasons 前置 `[via-run_code] 经由 run_code，实际命令：X`（多命令列前 3 条）；审计行保留外层 `tool=run_code`，`argv` 记内层命令、`paths` 记内层路径，并带 `transport=run_code`；自动放行/阻塞通知也展示内层命令。动态插值、变量拼接、`eval`/动态构造、缺 `code` 时回退 unknown，reasons 明确写「无法解析 run_code 内部命令」。`PTC_TRANSPORTS` 是传输层集合，未来同类 PTC 包装工具按同一规则扩展。
+
 **策略优先级**：工单 `meta.escalationPolicy` > 全局 `settings.escalationPolicy` > 默认。默认 **`auto-low`**。`ticket_plan` 可传 `escalationPolicy`：
 
 | 策略 | low | medium | high / unknown |
@@ -162,6 +164,8 @@ v2 的提权不再依赖工具白名单或 `chatbot_grant`。每次 Worker 的�
 **通知**：低/中风险自动放行发一条信息性通知（谁、工具、命令/路径、等级、reasons、策略与来源），例如「已自动放行低风险提权：ticket_x 工具 bash「git status」；判为 risk:low [read-only-git] 只读 Git 命令：git status（策略 auto-low，来源 default）。」；需要人工判断的阻塞通知带 `[risk:high ...]` / `[risk:unknown ...]` 与全部 reasons。
 
 **`chatbot_grant` 的定位**：仅调试/应急。正常提权走上述逐条风险审批，不得用 grant 绕过审批或解开被审批卡住的 Worker。`action=set` 必须写 reason，并用 `kind=debug|emergency` 标明性质；每次调用写 `grant/set`（或 `grant/rejected`）审计并带 `grant_kind`。
+
+**grant 落地会结算该 session 的挂起审批**：Worker 的 ask 请求会保留一个可结算句柄（`pendingSettlers`，按 `sessionId|callId`），同时照常把请求交给宿主 UI；只有临时提权 grant（`kind=temporary`）会按方案 A 对每个句柄结算 `allowed-once`（等价于「此刻批准」），纯降权（永久 grant）不会替挂起请求做批准，宿主随后的 `approval/decided` 会把工单从 `blocked(waitingOn=approval)` 恢复为 `working`。每个被放行的请求写一行审计：`decision=auto-allow`、`reason=grant-applied`、`grantId` 关联、保留 `tool/ticketId/callId/level/reasons`；通知写「授权已生效，并已放行此前挂起的请求」。没有可结算句柄的旧记录（正常 live 请求不会出现）只标记为未结算并提示 Worker/用户重试；监听器只有 `AbortSignal`、无法替宿主取消请求，因此不假装已取消。全程事件驱动，无轮询。
 
 ### Router 事件日志
 
@@ -248,7 +252,8 @@ session_events { "sessionId": "session-abc", "types": ["approval/*", "turn/*"], 
 - 一个看板 + 一个 Chatbot。看板的主语是“事”，不是 session；第一屏是“需要你”收件箱，只有这里弹通知；其余分为进行中、最近完成、异常/叫停。
 - 看板是只读投影：动作写回现有路径，不在看板里另建一套状态；直管卡没有输入框，独立卡可以打开会话。
 - 独立 worker 可按授权只读观察目标、状态、消息元数据、产物和卡点；建议默认给用户，观察不等于指挥。
-- **直通（direct）归属**：状态、命令解析、目标解析、入站转发全部在 v2 controller（`directCommand` / `directInfo` / `enableDirect` / `directRelay` / `forwardDirectReply`，见 `lib/v2/controller.mjs`）；微信 Claw 只在入站时调用注入的 `directRelay` 钩子（`lib/channels/wechat-claw.mjs`），`lib/index.js` 负责把 `v2.directRelay` 接进去，v1 没有直通。`chatbot_direct` 工具与 `/直通`、`/直通状态`、`/退出直通` 是同一实现的模型入口与用户命令入口，不冗余，保留为唯一实现。后续若其他渠道也要直通，只复用 controller 的 `directRelay`/`directInfo`，不在渠道内复制状态与命令解析；把 `directCommand` 正则与提示文案抽成独立模块列为可选重构（不改变行为）。
+- **用户直连 Advisor/Worker**：这两个角色只接受 Ria 注入的消息（`host_` / `ria-task-host`）。用户在 DSH 界面手输的非 `host_` 消息不会被执行、不会转发给 Chatbot、不改工单，只由 `onPreStep` 把本回合模型输入替换为固定指令，模型正常回一条「请通过 Ria 下达任务。Advisor/Worker 只接受 Ria 派发的工单，直接对话不会被处理。」。例外：工单处于 `blocked(waitingOn=user)` 时放行，让用户能回答澄清。开关 `settings.blockDirectUserMessages` 默认 `true`，关闭后恢复原行为；Chatbot 与普通独立会话不受影响。`steer` 中途插入只在 step 边界生效。
+- **直通（direct）归属**：状态、命令解析、目标解析、入站转发全部在 v2 controller（`directCommand` / `directInfo` / `enableDirect` / `directRelay` / `forwardDirectReply`，见 `lib/v2/controller.mjs`）；微信 Claw 只在入站时调用注入的 `directRelay` 钩子（`lib/channels/wechat-claw.mjs`），`lib/index.js` 负责把 `v2.directRelay` 接进去，v1 没有直通。`chatbot_direct` 工具与 `/直通`、`/直通状态`、`/退出直通` 是同一实现的模型入口与用户命令入口，不冗余，保留为唯一实现。后续若其他渠道也要直通，只复用 controller 的 `directRelay`/`directInfo`，不在渠道内复制状态与命令解析；把 `directCommand` 正则与提示文案抽成独立模块列为可选重构（不改变行为）。直通只改前缀与入站路由：Chatbot 的 assistant 文本仍经 Claw 转发（直通生效时加 `【Ria】`），直通回复带 `【直通·<标题>】`；直通发送失败在内存中有界重试（1s/3s/9s，≤3 次、≤2 分钟、按 `eventSeq` 去重），超限发可见失败提示，不写 outbox、不在恢复时重放；Chatbot 普通消息的恢复补发折叠为最近 5 条 + 一条 `【Ria·补发】` 汇总。
 
 ## 9. 边界
 
@@ -259,7 +264,7 @@ session_events { "sessionId": "session-abc", "types": ["approval/*", "turn/*"], 
 
 ## 10. 当前实现（MVP）
 
-已实现：Chatbot（standard，仅 `chatbot_*`）、Global Advisor（PTC，只读核对 + `ticket_*`，不含会话只读工具）、managed Worker（PTC，两种 `workerType`：work 持 `worker_*` + 执行工具；reflection 只读仓库与会话日志，持 `worker_*` + `session_list`/`session_events`）；Worker 提权按四档风险逐条审批（`lib/v2/risk.mjs`，工单策略 > 全局设置 > 默认 auto-low），low 自动 allowed-once、medium 按策略、high/unknown 一律阻塞并通知，每次决策写 `audit.jsonl`；`chatbot_grant` 降级为调试/应急工具（set/list/reset），只有用户明确要求时才可用且写 `grant_kind` 审计；纯降权永久生效，任何提权必须带 TTL；自动恢复只撤销提权字段，同一 grant 里的降权保留，显式 reset 才撤销全部字段；绑定 ticket 时随 done/cancelled 恢复，重启会 reconcile，审计写 `audit.jsonl`；ticket 的 intake → open → working → blocked/done/failed 主链路；研究类票（`chatbot_request mode=answer`）由 Advisor 只读调查后 `ticket_answer` 直接 `open → done`，不派 Worker；`chatbot_resume` 恢复 blocked 票；startup 把中断的 working 票置为 blocked(environment)；微信 Claw 通过 Chatbot 复用入站与 assistant 转发；微信直通模式（`/直通 <会话名>`、`/直通状态`、`/退出直通`）把消息直接 steer 给普通独立会话，只转发正式文本；启动时向已连接通道发送一条重启通知。`chatbot_request` 可带 `workspace` 绝对路径：给定已有项目目录时 Worker 用该项目 cwd、产物放 `{$cwd}/ria-runs/<workerId>/`；不填则用全局 worker 根目录。状态文件为 `ria.json`（ticket）+ `v2.json`（绑定、Request、WorkOrder、报告、inbox）。
+已实现：Chatbot（standard，仅 `chatbot_*`）、Global Advisor（PTC，只读核对 + `ticket_*`，不含会话只读工具）、managed Worker（PTC，两种 `workerType`：work 持 `worker_*` + 执行工具；reflection 只读仓库与会话日志，持 `worker_*` + `session_list`/`session_events`）；Worker 提权按四档风险逐条审批（`lib/v2/risk.mjs`，工单策略 > 全局设置 > 默认 auto-low），low 自动 allowed-once、medium 按策略、high/unknown 一律阻塞并通知，每次决策写 `audit.jsonl`；`chatbot_grant` 降级为调试/应急工具（set/list/reset），只有用户明确要求时才可用且写 `grant_kind` 审计；Chatbot 可用 `chatbot_watch`（add/remove/list/status）协管独立会话，与 direct 无耦合；Advisor/Worker 拦截用户直连消息（`settings.blockDirectUserMessages` 默认 true，`waitingOn=user` 例外），只回固定提示；纯降权永久生效，任何提权必须带 TTL；自动恢复只撤销提权字段，同一 grant 里的降权保留，显式 reset 才撤销全部字段；绑定 ticket 时随 done/cancelled 恢复，重启会 reconcile，审计写 `audit.jsonl`；ticket 的 intake → open → working → blocked/done/failed 主链路；研究类票（`chatbot_request mode=answer`）由 Advisor 只读调查后 `ticket_answer` 直接 `open → done`，不派 Worker；`chatbot_resume` 恢复 blocked 票；startup 把中断的 working 票置为 blocked(environment)；微信 Claw 通过 Chatbot 复用入站与 assistant 转发；微信直通模式（`/直通 <会话名>`、`/直通状态`、`/退出直通`）把消息直接 steer 给普通独立会话，只转发正式文本；启动时向已连接通道发送一条重启通知。`chatbot_request` 可带 `workspace` 绝对路径：给定已有项目目录时 Worker 用该项目 cwd、产物放 `{$cwd}/ria-runs/<workerId>/`；不填则用全局 worker 根目录。状态文件为 `ria.json`（ticket）+ `v2.json`（绑定、Request、WorkOrder、报告、inbox）。
 
 暂缓：Project 路由与 Project Advisor、知识层、SQLite 迁移、独立 worker 的创建与观察、Topic 亲和、看板动作的 v2 收口、旧 legacy ticket 的迁移。
 

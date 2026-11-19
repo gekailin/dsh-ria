@@ -34,6 +34,9 @@ try {
   const chatbot = (await controller.ensureChatbot()).sessionId
   const advisor = (await controller.ensureAdvisor('global')).sessionId
   const worker1 = (await controller.ensureWorker('global')).sessionId
+  // New Workers are created idle and are reusable for the next ticket, so
+  // occupy the first one before asking for a second distinct Worker.
+  controller.v2.addWorker(worker1, { status: 'working', currentTicketId: 'ticket-seq-1' })
   const worker2 = (await controller.ensureWorker('global')).sessionId
   const reflection1 = (await controller.ensureReflectionWorker('global')).sessionId
 

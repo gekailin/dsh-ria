@@ -52,7 +52,7 @@ try {
   const ensured = await fixture.service.ensure()
   const chatbot = fixture.service.v2.v2.chatbotSessionId
   assert.equal(ensured.sessionId, chatbot)
-  assert.deepEqual(fixture.visibleTools(chatbot).sort(), ['chatbot_direct', 'chatbot_grant', 'chatbot_read', 'chatbot_request', 'chatbot_resume', 'chatbot_sessions', 'chatbot_status', 'chatbot_steer', 'chatbot_talk', 'chatbot_watch'])
+  assert.deepEqual(fixture.visibleTools(chatbot).sort(), ['chatbot_direct', 'chatbot_grant', 'chatbot_propose', 'chatbot_read', 'chatbot_request', 'chatbot_resume', 'chatbot_sessions', 'chatbot_status', 'chatbot_steer', 'chatbot_talk', 'chatbot_watch'])
   // WeChat Claw resolves its peer session through these two callbacks. In v2
   // they must point at the Chatbot, not at the retired legacy manager.
   assert.equal(fixture.service.wechatClaw.getRiaId(), chatbot)
@@ -427,7 +427,8 @@ try {
     })
     assert.equal(project.ok, true)
     assert.equal(project.workspace, workspace)
-    assert.ok(fixture.prompts.some(item => item.sessionId === advisor && item.content[0].text.includes('Workspace: ' + workspace)))
+    const projectAdvisor = fixture.service.v2.v2.ticketMeta(project.ticketId).advisorSessionId
+    assert.ok(fixture.prompts.some(item => item.sessionId === projectAdvisor && item.content[0].text.includes('Workspace: ' + workspace)))
     await fixture.callAs(advisor, 'ticket_plan', {
       ticketId: project.ticketId,
       summary: 'edit README',
@@ -458,7 +459,8 @@ try {
   assert.equal(resumedAdvisor.ok, true)
   assert.equal(resumedAdvisor.status, 'open')
   assert.equal(fixture.service.store.ticket(blockedTicket.ticketId).status, 'open')
-  assert.ok(fixture.prompts.some(item => item.sessionId === advisor && /用户回复: use Markdown/.test(item.content[0].text)))
+  const resumedAdvisorSession = fixture.service.v2.v2.ticketMeta(blockedTicket.ticketId).advisorSessionId
+  assert.ok(fixture.prompts.some(item => item.sessionId === resumedAdvisorSession && /用户回复: use Markdown/.test(item.content[0].text)))
 
   // Stale direct-mode fallbacks (including “[tool run_code]”) must never be
   // replayed as a “补发” burst after a restart. Ordinary fallbacks stay.
@@ -507,7 +509,7 @@ try {
   const chatbot = second.service.v2.v2.chatbotSessionId
   assert.ok(chatbot)
   assert.equal(second.service.store.riaSessionId, chatbot)
-  assert.deepEqual(second.visibleTools(chatbot).sort(), ['chatbot_direct', 'chatbot_grant', 'chatbot_read', 'chatbot_request', 'chatbot_resume', 'chatbot_sessions', 'chatbot_status', 'chatbot_steer', 'chatbot_talk', 'chatbot_watch'])
+  assert.deepEqual(second.visibleTools(chatbot).sort(), ['chatbot_direct', 'chatbot_grant', 'chatbot_propose', 'chatbot_read', 'chatbot_request', 'chatbot_resume', 'chatbot_sessions', 'chatbot_status', 'chatbot_steer', 'chatbot_talk', 'chatbot_watch'])
   await second.service.startup()
   const parked = second.service.store.ticket(workingTicketId)
   assert.equal(parked.status, 'blocked')

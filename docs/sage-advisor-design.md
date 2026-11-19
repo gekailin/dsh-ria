@@ -483,3 +483,15 @@ v2.json.cognition = { version, lastAppliedAt, pendingProposals, lastError }
 
 **遗留待评审**：compact 后 principles 摘要的注入时序；Chatbot 记忆文件的容量与过期策略；用户直连 Sage 是否开放。
 
+## 14. 实现口径（2026-11-19，简化交付）
+
+本次实现按用户确认的简化口径落地，和上文长期目标的差异：
+
+- **Sage 单例，无写队列/优先级/批处理**：提案直接写 `cognition/proposals/`，积压不阻塞 Ria；用户提案 priority=high 仅用于排序。
+- **Sage 独占写、原子写、INDEX 更新**；不做 TTL 自动清理、不做冲突检测引擎、不做版本回滚 UI；过期/冲突由 Sage 自己维护。
+- **Advisor 每票新建会话**：`createAdvisorForTicket`，prompt = brief + cognition snapshot；旧 Global Advisor 启动时清绑定并尝试归档（`advisorMode=stateless`）。
+- **Chatbot 记忆**：由 `onPreStep` 以 host 消息注入只读摘要，记忆变化才重注；用户提案走 `chatbot_propose`。
+- **bootstrap**：`bootstrapCognition()` 从 DESIGN 五原则、architecture/limitations 摘要、memory.md、lessons 生成初始 principles/projects/chatbot 文件，`.bootstrapped` 幂等。
+- **Sage 工具**：`sage_read` / `sage_write` / `sage_request`；`sage_write` 遇 `resolveProposal` 标记提案已采纳。
+- **compact**：监听 Sage 的 `compaction/end` 重读 INDEX；不创建 epoch 会话。
+

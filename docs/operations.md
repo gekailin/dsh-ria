@@ -191,3 +191,50 @@ systemctl --user daemon-reload
 3. 若列表仍缺，再查搜索索引 `~/.dsh/state/session-query.sqlite` 的 revision 是否停在旧日期，必要时重建索引；**不要删除日志正文**，备份文件（`.bak-*`）保留用于回滚。
 
 安全脚本：`node scripts/repair-session.mjs --session <id>`（默认 dry-run，打印帧数、内容 sha256、行数、最后事件与缓存状态）；确认无误后加 `--apply`（必要时 `--force`）执行「备份 → 按行重新分帧并校验内容 sha256 → 备份并移除 projcache」。脚本不访问网络、不重启服务、不删除日志正文。
+
+## 代码 review 的标准流程
+
+代码 review 与实现任务分开管理：review 只做只读审查，不顺手修代码，也不复用会话。每次 review 都按下面五条约定执行。
+
+### 五条约定
+
+1. **每次 review 新开专用 worker，不复用。** 不复用上一轮的 review worker、不改它的 preset/cwd 继续用；每张 review 工单创建独立的 review worker，结束即归档。
+2. **模型固定 `mccodex/ide/gpt-6.1-sol`，`reasoningEffort=max`。** 创建 review worker 时显式指定 provider/model 与 reasoningEffort，不继承默认会话模型；模型不可用时阻塞上报，不降级到其它模型。
+3. **在独立目录用 `git worktree` checkout 指定 commit 后只读审查。** review worker 的 cwd 必须是该 worktree，而不是主工作树；这样主工作树上的并发改动、未提交改动或后续提交都不会影响 review 基线。review 只允许读取、搜索、`git diff/log/show` 等只读操作，不改文件、不 commit、不安装依赖、不跑构建。
+4. **review worker 一次性使用，任务结束即归档。** 一张 review 工单对应一个 review worker；报告交回后归档该会话/worktree，不复用于下一张 review。
+5. **其它类型任务不得派给 review worker。** 实现、修 bug、部署、数据迁移等任务走普通 WorkOrder 与普通 Worker；review worker 只审查代码并给出结论。
+
+### 创建与清理 worktree
+
+review 的基线是一个明确的 commit，不是「当前 HEAD」。用仓库脚本在仓库父目录创建独立 worktree（脚本用法见文件头部注释）：
+
+~~~bash
+# 1) 为基线 commit 创建 worktree（默认目录：<repo 父目录>/ria-review-<短sha>-<yyyymmddHHMMSS>）
+scripts/review-worktree.sh --repo /path/to/dsh-ria --commit <完整或短 sha>
+# 输出：
+# worktree=/path/to/ria-review-9ad03f38-20261119190500
+# head=9ad03f389897055da1739abe9b74b99bac05b581
+
+# 2) 需要固定目录名时显式 --dir
+scripts/review-worktree.sh --repo /path/to/dsh-ria --commit <sha> --dir /tmp/ria-review-<name>
+
+# 3) review 结束后清理（可重复执行；目录已不存在视为成功）
+scripts/review-worktree.sh --repo /path/to/dsh-ria --cleanup /tmp/ria-review-<name>
+~~~
+
+- worktree 以 `--detach` 检出指定 commit，不切换/创建分支；不要在主工作树里做 review。
+- 重复执行同一个 `--dir` + 同一 commit 是幂等的：直接复用并输出同样的路径与 HEAD；目录已存在但 HEAD 不同则报错，绝不覆盖。
+- 清理使用 `git worktree remove --force`，随后 `git worktree prune`；目录已不存在时清理也返回成功，便于重试。
+- 脚本失败时向 stderr 输出一行可读原因并以非 0 退出（缺 `--repo`/`--commit`、路径不是 git 仓库、commit 无法解析、worktree 归属不符、目标 HEAD 不符等）。
+
+### 报告开头必须记录基线
+
+每份 review 报告的第一段必须显式写明基线，禁止只写短 sha 或「当前 HEAD」：
+
+~~~text
+基线 commit: <完整 40 位 sha>
+worktree: <worktree 绝对路径>
+模型: mccodex/ide/gpt-6.1-sol（reasoningEffort=max）
+~~~
+
+基线 commit 必须等于 `git -C <worktree> rev-parse HEAD` 的实际值；worktree 路径必须是本次 review 专用的目录。报告中的文件行号、diff 结论都以该 commit + 该 worktree 为准。

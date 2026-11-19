@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { createFixture } from './support/ria-fixture.mjs'
 
 const fixture = await createFixture({
@@ -7,6 +9,9 @@ const fixture = await createFixture({
     { sessionId: 'session-user-design', running: false, blank: false, updatedAt: 30, cwd: '/tmp', projections: { values: { title: 'Ria 顶层设计' } } },
     { sessionId: 'session-legacy-worker', running: false, blank: false, updatedAt: 29, cwd: '/tmp', projections: { values: { title: 'Worker 1' } } },
     { sessionId: 'session-legacy-reflection', running: false, blank: false, updatedAt: 28, cwd: '/tmp', projections: { values: { title: 'Reflection Worker' } } },
+    { sessionId: 'session-sage', running: false, blank: false, updatedAt: 27, cwd: '/tmp' },
+    { sessionId: 'session-read-fail', running: false, blank: false, updatedAt: 26, cwd: '/tmp' },
+    { sessionId: 'session-rename-fail', running: false, blank: false, updatedAt: 25, cwd: '/tmp' },
   ],
 })
 try {
@@ -84,6 +89,54 @@ try {
   assert.equal(titles.includes('Worker 1'), false)
   assert.equal(titles.includes('Reflection Worker'), false)
   assert.ok(titles.includes('Ria 顶层设计'))
+
+  // Read/rename failures are isolated, observable, and the read path now passes
+  // a real AbortSignal to projections().
+  {
+    controller.v2.setSage('session-sage')
+    controller.v2.addWorker('session-read-fail', { workerType: 'work', status: 'idle', seq: 50 })
+    controller.v2.addWorker('session-rename-fail', { workerType: 'work', status: 'idle', seq: 51 })
+    await sc.rename({ sessionId: 'session-sage', title: 'Sage' })
+    await sc.rename({ sessionId: 'session-read-fail', title: 'Worker 50' })
+    await sc.rename({ sessionId: 'session-rename-fail', title: 'Worker 51' })
+
+    const warnings = []
+    const originalLog = controller.log.bind(controller)
+    controller.log = (level, message) => { if (level === 'warn') warnings.push(String(message)); return originalLog(level, message) }
+    const originalProjections = sc.projections.bind(sc)
+    let sawSignal = false
+    sc.projections = async (request, signal) => {
+      if (String(request.sessionId) === 'session-read-fail') throw new TypeError('signal.throwIfAborted is not a function')
+      if (signal && typeof signal.throwIfAborted === 'function') sawSignal = true
+      return await originalProjections(request, signal)
+    }
+    const countedRename = sc.rename
+    sc.rename = async request => {
+      if (String(request.sessionId) === 'session-rename-fail') throw new Error('rename boom')
+      return await countedRename(request)
+    }
+
+    const rawTitle = async id => {
+      const projection = await originalProjections({ sessionId: id })
+      return projection && projection.values ? projection.values.title : null
+    }
+    const result = await controller.renameRoleSessions()
+    assert.equal(sawSignal, true)
+    assert.equal(await rawTitle('session-sage'), 'Ria Sage')
+    assert.equal(await rawTitle('session-read-fail'), 'Worker 50')
+    assert.equal(await rawTitle('session-rename-fail'), 'Worker 51')
+    assert.ok(warnings.some(text => text.includes('session-read-fail') && text.includes('signal.throwIfAborted')))
+    assert.ok(warnings.some(text => text.includes('session-rename-fail') && text.includes('rename boom')))
+    const events = readFileSync(join(fixture.stateDir, 'router-events.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
+    assert.ok(events.some(item => item.event === 'role.rename.failed' && item.sessionId === 'session-read-fail' && item.reason === 'read-title' && item.payload.phase === 'read-title'))
+    assert.ok(events.some(item => item.event === 'role.rename.failed' && item.sessionId === 'session-rename-fail' && item.reason === 'rename' && item.payload.phase === 'rename'))
+    assert.ok(result.skipped.some(item => item.sessionId === 'session-read-fail' && item.reason === 'unavailable'))
+    assert.ok(result.skipped.some(item => item.sessionId === 'session-rename-fail' && item.reason === 'rename-failed'))
+    const beforeIdempotent = renameCalls
+    const again = await controller.renameRoleSessions()
+    assert.equal(again.renamed.length, 0)
+    assert.equal(renameCalls, beforeIdempotent)
+  }
 
   console.log('v2 session titles ok')
 } finally {

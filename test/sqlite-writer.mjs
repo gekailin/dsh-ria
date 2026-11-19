@@ -57,6 +57,44 @@ const guarded = new StateWriter({ onError: error => notified.push(error.message)
 guarded.runSync('notify-throws', () => guarded.afterCommit(() => { throw new Error('notice failed') }))
 assert.deepEqual(notified, ['notice failed'])
 
+// A diagnostic sink is also best effort: it cannot turn a committed write into
+// a failure or create an unhandled rejection while reporting a failed notice.
+const syncSinkErrors = []
+const throwingSink = new StateWriter({ onError: cause => { syncSinkErrors.push(cause.message); throw new Error('diagnostic sink failed') } })
+assert.equal(throwingSink.runSync('throwing-sink', () => {
+  throwingSink.afterCommit(() => { throw new Error('sync notice failed') })
+  return 42
+}), 42)
+assert.deepEqual(syncSinkErrors, ['sync notice failed'])
+assert.equal(throwingSink.stats().committed, 1)
+assert.equal(throwingSink.runSync('after-throwing-sink', () => 'ok'), 'ok')
+
+const asyncSinkErrors = []
+const unhandled = []
+const onUnhandled = cause => unhandled.push(cause)
+process.on('unhandledRejection', onUnhandled)
+try {
+  const asyncThrowingSink = new StateWriter({ onError: cause => { asyncSinkErrors.push(cause.message); throw new Error('async diagnostic sink failed') } })
+  const rejectingSink = new StateWriter({ onError: cause => { asyncSinkErrors.push(cause.message); return Promise.reject(new Error('diagnostic sink rejected')) } })
+  assert.equal(await asyncThrowingSink.run('async-notice', () => {
+    asyncThrowingSink.afterCommit(() => Promise.reject(new Error('async notice failed')))
+    return 'committed'
+  }), 'committed')
+  assert.equal(rejectingSink.runSync('sync-notice-async-sink', () => {
+    rejectingSink.afterCommit(() => { throw new Error('sync notice with async sink') })
+    return 'committed'
+  }), 'committed')
+  assert.equal(await rejectingSink.run('async-notice-async-sink', () => {
+    rejectingSink.afterCommit(() => Promise.reject(new Error('async notice with async sink')))
+    return 'committed'
+  }), 'committed')
+  await new Promise(resolve => setImmediate(resolve))
+  assert.deepEqual(asyncSinkErrors, ['async notice failed', 'sync notice with async sink', 'async notice with async sink'])
+  assert.deepEqual(unhandled, [], 'diagnostic failures must not create unhandled rejections')
+} finally {
+  process.removeListener('unhandledRejection', onUnhandled)
+}
+
 // Repository keeps RiaStore's synchronous API: writes go through the writer,
 // nested store calls made from inside one write stay in the same transaction.
 class FakeStore {

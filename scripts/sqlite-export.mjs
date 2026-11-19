@@ -1,8 +1,18 @@
-import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdirSync, openSync, closeSync, writeSync, fsyncSync, readFileSync, renameSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { openDatabase } from '../lib/state/sqlite/db.mjs'
 import { SqliteTicketAdapter } from '../lib/state/sqlite/adapter.mjs'
+
+const TICKET_LOG = 'tickets.log.jsonl'
+
+function writeAtomic(file, text) {
+  mkdirSync(dirname(file), { recursive: true })
+  const temp = file + '.' + process.pid + '.tmp'
+  const fd = openSync(temp, 'w', 0o600)
+  try { writeSync(fd, text); fsyncSync(fd) } finally { closeSync(fd) }
+  renameSync(temp, file)
+}
 
 export function exportTickets({ stateDir, dbPath = join(stateDir, 'ria.sqlite') }) {
   const db = openDatabase(dbPath, { readOnly: true })
@@ -18,10 +28,48 @@ export function exportTickets({ stateDir, dbPath = join(stateDir, 'ria.sqlite') 
   } finally { db.close() }
 }
 
+/**
+ * One-command rollback: rebuild ria.json / v2.json / tickets.log.jsonl from the
+ * DB and set storage=json. The DB file is left in place for a later retry.
+ */
+export function writeExport({ stateDir, dbPath = join(stateDir, 'ria.sqlite'), now = Date.now() }) {
+  const exported = exportTickets({ stateDir, dbPath })
+  const ria = { ...exported.ria, storage: 'json' }
+  const v2 = { ...exported.v2 }
+  writeAtomic(join(stateDir, 'ria.json'), JSON.stringify(ria, null, 2) + '\n')
+  writeAtomic(join(stateDir, 'v2.json'), JSON.stringify(v2, null, 2) + '\n')
+  const archives = exported.archives
+    .filter(record => record && record.ticket && typeof record.ticket.ticketId === 'string')
+    .sort((a, b) => (a.closedAt || 0) - (b.closedAt || 0))
+  if (archives.length) writeAtomic(join(stateDir, TICKET_LOG), archives.map(record => JSON.stringify(record)).join('\n') + '\n')
+  return {
+    ok: true,
+    mode: 'rollback',
+    storage: 'json',
+    rolledBackAt: now,
+    counts: exported.counts,
+    files: ['ria.json', 'v2.json', ...(archives.length ? [TICKET_LOG] : [])],
+    next: 'Restart the service (or unset DSH_RIA_STORAGE) so storage=json takes effect; the DB file is kept for retry.',
+  }
+}
+
+export function cliArgs(argv) {
+  const result = {}
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i]
+    if (arg === '--state-dir') result.stateDir = argv[++i]
+    else if (arg === '--db') result.dbPath = argv[++i]
+    else if (arg === '--apply') result.apply = true
+    else throw new Error('Unknown argument: ' + arg)
+  }
+  if (!result.stateDir) throw new Error('Usage: node scripts/sqlite-export.mjs --state-dir <state-dir> [--db <path>] [--apply]')
+  return result
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
-    const args = process.argv.slice(2)
-    if (args[0] !== '--state-dir' || !args[1] || args.length !== 2) throw new Error('Usage: node scripts/sqlite-export.mjs --state-dir <offline-state-dir> (stdout only)')
-    console.log(JSON.stringify(exportTickets({ stateDir: args[1] }), null, 2))
+    const args = cliArgs(process.argv.slice(2))
+    const result = args.apply ? writeExport(args) : exportTickets(args)
+    console.log(JSON.stringify(result, null, 2))
   } catch (error) { console.error(error.message); process.exitCode = 1 }
 }

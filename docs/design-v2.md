@@ -255,6 +255,21 @@ session_events { "sessionId": "session-abc", "types": ["approval/*", "turn/*"], 
 - **用户直连 Advisor/Worker**：这两个角色只接受 Ria 注入的消息（`host_` / `ria-task-host`）。用户在 DSH 界面手输的非 `host_` 消息不会被执行、不会转发给 Chatbot、不改工单，只由 `onPreStep` 把本回合模型输入替换为固定指令，模型正常回一条「请通过 Ria 下达任务。Advisor/Worker 只接受 Ria 派发的工单，直接对话不会被处理。」。例外：工单处于 `blocked(waitingOn=user)` 时放行，让用户能回答澄清。开关 `settings.blockDirectUserMessages` 默认 `true`，关闭后恢复原行为；Chatbot 与普通独立会话不受影响。`steer` 中途插入只在 step 边界生效。
 - **直通（direct）归属**：状态、命令解析、目标解析、入站转发全部在 v2 controller（`directCommand` / `directInfo` / `enableDirect` / `directRelay` / `forwardDirectReply`，见 `lib/v2/controller.mjs`）；微信 Claw 只在入站时调用注入的 `directRelay` 钩子（`lib/channels/wechat-claw.mjs`），`lib/index.js` 负责把 `v2.directRelay` 接进去，v1 没有直通。`chatbot_direct` 工具与 `/直通`、`/直通状态`、`/退出直通` 是同一实现的模型入口与用户命令入口，不冗余，保留为唯一实现。后续若其他渠道也要直通，只复用 controller 的 `directRelay`/`directInfo`，不在渠道内复制状态与命令解析；把 `directCommand` 正则与提示文案抽成独立模块列为可选重构（不改变行为）。直通只改前缀与入站路由：Chatbot 的 assistant 文本仍经 Claw 转发（直通生效时加 `【Ria】`），直通回复带 `【直通·<标题>】`；直通发送失败在内存中有界重试（1s/3s/9s，≤3 次、≤2 分钟、按 `eventSeq` 去重），超限发可见失败提示，不写 outbox、不在恢复时重放；Chatbot 普通消息的恢复补发折叠为最近 5 条 + 一条 `【Ria·补发】` 汇总。
 
+### 角色会话命名
+
+| 角色 | 标题 | 规则 |
+|---|---|---|
+| Chatbot | `Ria` | 单例 |
+| Advisor | `Ria Advisor` | 单例（当前 Global；未来无状态 Advisor 同名） |
+| Worker | `Ria Worker <n>` | n 持久化递增，删除/回收不复用 |
+| Reflection Worker | `Ria Reflection Worker <n>` | 独立计数器，同上 |
+| Sage | `Ria Sage` | 预留；单例 |
+
+- 计数存 `v2.json.meta.workerSeq/reflectionSeq`；创建前自增并立即保存，编号只增不减。
+- 启动时幂等执行 `renameRoleSessions()`：只处理 v2 绑定里的 chatbot/advisor/managed workers（含 reflection），通过 `sessionController.rename` 写会话标题事件，`session_list` 与看板随之更新；已是目标标题则跳过，失败只记 warn 不阻断启动。
+- 用户自建的普通独立会话不在 v2 角色绑定里，**绝不重命名**；归档或不存在的角色会话跳过。
+- 旧会话缺少 `seq` 时在迁移中补齐并写回 meta；Sage 创建逻辑尚未落地，标题 helper 已预留。
+
 ## 9. 边界
 
 - 直管 ≠ 共享上下文或实时共思；双方只能通过消息、ticket 和 run record 协作。

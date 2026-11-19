@@ -147,3 +147,37 @@ Host 启动后延迟 1.5 秒：
 审批监听器以 prepend 注册，排在宿主 web 的浏览器转发器之前；不匹配 active 工单的请求会调用 `next()`，仍由原生 UI 决定。若某个 `approval/request` 到了 Ria 但没有匹配到 active 工单，会在 `stateDir/approval-diagnostics.jsonl` 留一行诊断（agentId、toolName、callId、原因），排查「worker 日志有 approval/asked、Ria 侧无记录」时先看这个文件。
 
 关闭设置里的「审批自动代批」后，回到旧行为：插件只观察、把工单标成 blocked 并通知，由用户在 worker 会话或原生 UI 决定，15 分钟 TTL 后恢复；`ria_approval` 可查看，`ria_approval_decision` 会返回 `approval_automation_disabled`。
+
+## daemon 重启不弹浏览器
+
+dsh web 由 daemon 的 watchdog 拉起时，命令一直带 `--no-open`（见 watchdog 日志的 `launched dsh web ... --no-open`）。重启后仍会新开页面的根因不在 `dsh web`，而在 watchdog 的**启动 token seed**：dsh 用启动 token 完成 30 天 cookie 的首次握手，watchdog 在检测到本次 launch 的新 token 后会主动打开一次 token URL 来 seed cookie，日志里表现为：
+
+~~~
+[watchdog] web auth URL out of date (recorded token is not from the running process) — re-seeding
+[watchdog] web auth token: http://127.0.0.1:3080/?token=…
+[watchdog] opening browser: http://127.0.0.1:3080/?token=…
+~~~
+
+是否开页面由生成期常量 `const OPEN_BROWSER` 决定（`~/.dsh/daemon/watchdog.js`）。它不是在运行时读取环境变量，而是**安装/重装（`dsh-daemon install|reinstall`）时**读取 `DSH_DAEMON_OPEN_BROWSER` 后写死进脚本（插件 `@chenkai114/dsh-daemon` 的 `lib/index.js`：`envVal('DSH_DAEMON_OPEN_BROWSER')` → `const OPEN_BROWSER = 1|0`）。默认是 `1`，所以每次重启都会开一次页面。
+
+关闭方式（一次重装 + 一处持久化）：
+
+~~~bash
+# 1) 用环境变量重新生成 watchdog（写死 const OPEN_BROWSER = 0;）
+DSH_DAEMON_OPEN_BROWSER=0 dsh-daemon reinstall
+
+# 2) 校验
+grep -n 'const OPEN_BROWSER' ~/.dsh/daemon/watchdog.js   # 应为 const OPEN_BROWSER = 0;
+
+# 3) 给 user unit 持久化，GUI 里再次 reinstall 也能继承
+systemctl --user edit --force --full dsh-watchdog.service   # 或在 [Service] 段加一行：
+# Environment=DSH_DAEMON_OPEN_BROWSER=0
+systemctl --user daemon-reload
+~~~
+
+生效后，重启日志会变成 `browser open disabled (DSH_DAEMON_OPEN_BROWSER=0) — open manually: …`，不再出现 `opening browser:`；token URL 仍然写入 `~/.dsh/daemon/.web-auth-url`（`dsh-daemon status` 也会显示），需要时手工打开即可。
+
+手动运行 `dsh web` 时同理：加 `--no-open` 即不打开页面（`dsh web --port 3080 --no-open`），URL 与实际 token 由进程自己打印。
+
+注意：`dsh plugin --profile web add … ` 只改 profile 的 node_modules/锁文件，**不会**改写 daemon 的启动参数或 `watchdog.js` 的 `OPEN_BROWSER`；排查“重启弹页面”时不要怀疑插件安装。
+

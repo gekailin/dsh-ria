@@ -84,18 +84,20 @@ Sage 只暴露三个 scoped 工具，使用 standard preset（非 PTC）：
 - 每次读取都带 `version/hash`；提案与决策引用具体文件版本，避免「我记得」式结论。
 - 「忘了什么」由索引显式回答：INDEX 里列出的文件与摘要就是 Sage 当前可依赖的全部长期认知；不在索引、也不在上下文里的内容，视为不存在（不猜）。
 
-**系统提示词内置 INDEX**：
+**固定提示词 + INDEX 变化通知**：
 
-Sage 的系统提示词由三部分组成，**每次 prompt 组装时动态生成**（DSH 的 `systemPrompt.section.text()` 在每个模型 step 前调用，见 `dsh-system-prompt/lib/index.js` 的 assembly 逻辑）：
+Sage 的系统提示词是静态字符串，只包含：
 
 - 角色与职责：大脑、只维护认知、不执行任务/不写代码/不派 Worker；
 - `principles.md` 摘要，上限 **800 字符**，超出截断并标注；
-- `cognition/INDEX` 快照，上限 **2000 字符**：文件清单 + 每条一行摘要 + version/time；超长时降级为只保留文件名与一行摘要。
-- 明确导航说明：INDEX 可能滞后，以实际文件为准；需要最新内容时用 `sage_read` 重新读取。
+- 认知库路径 `cognition/` 与索引路径 `cognition/INDEX.md`；
+- 一句规则：需要最新认知时用 `sage_read` 读 INDEX 与相关文件；INDEX 可能滞后，以实际文件为准。
 
-**刷新语义**：不是重建会话，也无索引注入消息/事件。INDEX 变化后，**下一次 prompt 组装**就会使用新快照；上下文不丢失，不需要重建/防抖窗口。创建会话时仍持久化一份 `sagePromptText` 作为恢复/生成失败 fallback，但正常路径每轮动态生成。
+提示词不包含 INDEX 内容、文件清单或版本，运行期不变；创建时持久化 `sagePromptText`，恢复时复用。
 
-**崩溃恢复**：DSH session 本身持久化；进程重启后按 sessionId 恢复，不重放旧对话；恢复失败（session 不存在/损坏）时新建会话，用当前 INDEX 重新生成提示词。未完成提案保持 pending 等 Sage 重新读取。
+**变化通知**：认知写入后对 `INDEX.md` 做 sha256（前 16 位）版本比较；变化时写 `cognition.index.changed`，payload 为 `{version, changedFiles, timestamp}`。通知器合并 60s 静默窗口内的多次变化（changedFiles 取并集），全局频率上限 5 分钟一次；同版本不重复。通知以非阻塞 host 消息投给 Sage，内容只给版本、变更文件名和「如需最新内容请 sage_read；不强制」；Sage 自行决定是否读取。投递失败只写 `cognition.index.notify_failed` 日志/事件，不影响认知写入和 Sage 运行。
+
+**崩溃恢复**：DSH session 本身持久化；进程重启后按 sessionId 恢复，不重放旧对话；恢复失败（session 不存在/损坏）时新建会话，提示词仍是静态模板（principles 取当前摘要）。未完成提案保持 pending 等 Sage 重新读取。
 
 **阻塞隔离**：Sage 的审阅、调研请求都是异步的；Router/Advisor 不等待 Sage。Sage 超时或不可用时：
 

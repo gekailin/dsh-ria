@@ -2,62 +2,68 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createFixture } from './support/ria-fixture.mjs'
-import { SAGE_INDEX_MAX_CHARS, SAGE_PRINCIPLES_MAX_CHARS } from '../lib/v2/prompts.mjs'
+import { SAGE_PRINCIPLES_MAX_CHARS } from '../lib/v2/prompts.mjs'
 
 const fixture = await createFixture({ v2Default: true })
 try {
   const controller = fixture.service.v2
-  controller.cognition.ensure()
-  controller.cognition.write('principles.md', '原则：' + '很长'.repeat(500), { reason: 'test' })
-  for (let index = 0; index < 24; index += 1) {
-    controller.cognition.write('projects/project-' + index + '.md', '项目事实 ' + index + '：' + '细节'.repeat(80), { reason: 'test' })
-  }
+  fixture.service.options.cognitionIndexNotifyDebounceMs = 15
+  fixture.service.options.cognitionIndexNotifyMinIntervalMs = 0
   const events = () => {
     try {
       return readFileSync(join(fixture.stateDir, 'router-events.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
     } catch { return [] }
   }
+  controller.cognition.ensure()
+  controller.cognition.write('principles.md', '原则：' + '很长'.repeat(500), { reason: 'test' })
+  controller.cognition.write('projects/project-static.md', '静态项目事实', { reason: 'test' })
   const sage = (await controller.ensureSage()).sessionId
   const prompt = fixture.systemPrompts.get(sage)
-  assert.ok(prompt, 'missing Sage system prompt')
   assert.ok(prompt.includes('你是 Sage（大脑）'))
-  assert.ok(prompt.includes('你不执行任务、不写代码'))
   assert.ok(prompt.includes('[PRINCIPLES 摘要]'))
-  assert.ok(prompt.includes('[COGNITION INDEX]'))
-  assert.ok(prompt.includes('INDEX 可能滞后；以实际文件为准'))
-  assert.ok(prompt.includes('sage_read'))
-  assert.ok(prompt.includes('project-0.md'))
-  assert.ok(prompt.includes('上限 ' + SAGE_PRINCIPLES_MAX_CHARS))
-  assert.ok(prompt.includes('上限 ' + SAGE_INDEX_MAX_CHARS))
+  assert.ok(prompt.includes('cognition/INDEX.md'))
+  assert.ok(prompt.includes('需要最新认知时用 sage_read'))
+  assert.equal(prompt.includes('[COGNITION INDEX]'), false)
+  assert.equal(prompt.includes('project-static.md'), false)
+  assert.equal(prompt.includes('上限 ' + SAGE_PRINCIPLES_MAX_CHARS), true)
 
-  const principlesPart = prompt.split('[PRINCIPLES 摘要]')[1].split('[COGNITION INDEX]')[0]
-  assert.ok(principlesPart.length <= SAGE_PRINCIPLES_MAX_CHARS + 120, String(principlesPart.length))
-  const indexPart = prompt.split('[COGNITION INDEX]')[1].split('\n\n语气')[0]
-  assert.ok(indexPart.length <= SAGE_INDEX_MAX_CHARS + 180, String(indexPart.length))
-  assert.equal(controller.v2.sagePromptText, prompt)
+  const beforeNotify = events().filter(item => item.event === 'cognition.index.notified').length
+  controller.cognition.write('projects/one.md', 'one', { reason: 'test' })
+  await new Promise(resolve => setTimeout(resolve, 40))
+  const changed = events().filter(item => item.event === 'cognition.index.changed')
+  assert.ok(changed.length >= 1)
+  assert.ok(changed.at(-1).payload.version)
+  assert.ok(changed.at(-1).payload.changedFiles.includes('projects/one.md'))
+  const notices = events().filter(item => item.event === 'cognition.index.notified')
+  assert.equal(notices.length, beforeNotify + 1)
+  const noticePrompt = fixture.prompts.find(item => item.sessionId === sage && String(item.content[0].text).includes('INDEX 已更新'))
+  assert.ok(noticePrompt)
+  assert.ok(String(noticePrompt.content[0].text).includes('one.md'))
+  assert.ok(String(noticePrompt.content[0].text).includes('不强制'))
 
-  // The prompt is rebuilt for each assembly, so an INDEX change is visible on
-  // the next turn without rebuilding the Sage session.
-  const createsBefore = fixture.creates.length
-  controller.cognition.write('projects/added-after-creation.md', '新增项目事实', { reason: 'test' })
-  const refreshed = controller.sageSystemPrompt(sage, { fresh: true })
-  assert.ok(refreshed.includes('added-after-creation.md'))
-  assert.equal(fixture.creates.length, createsBefore)
+  // Same version is not notified twice.
+  const version = changed.at(-1).payload.version
+  controller.onCognitionIndexChanged({ version, changedFiles: ['same.md'], timestamp: new Date().toISOString() })
+  await new Promise(resolve => setTimeout(resolve, 30))
+  assert.equal(events().filter(item => item.event === 'cognition.index.notified').length, notices.length)
 
-  // The persisted creation snapshot remains available as a fallback.
-  assert.equal(controller.sageSystemPrompt(sage), prompt)
+  // Multiple changes within the debounce window merge into one notice.
+  controller.cognition.write('projects/two.md', 'two', { reason: 'test' })
+  controller.cognition.write('projects/three.md', 'three', { reason: 'test' })
+  await new Promise(resolve => setTimeout(resolve, 45))
+  const merged = events().filter(item => item.event === 'cognition.index.notified')
+  assert.equal(merged.length, notices.length + 1)
+  const mergedPrompt = fixture.prompts.filter(item => item.sessionId === sage && String(item.content[0].text).includes('INDEX 已更新')).at(-1)
+  assert.ok(String(mergedPrompt.content[0].text).includes('two.md'))
+  assert.ok(String(mergedPrompt.content[0].text).includes('three.md'))
 
-  // No old injection messages/events; repeat ensure and compact do nothing.
-  const beforePrompts = fixture.prompts.length
-  await controller.ensureSage()
-  controller.onSessionEvent({ header: { id: sage } }, { type: 'compaction/end', data: {} })
-  await new Promise(resolve => setTimeout(resolve, 20))
-  assert.equal(fixture.prompts.length, beforePrompts)
-
-  // sage_read still reads INDEX.
-  const read = await fixture.callAs(sage, 'sage_read', { path: 'INDEX.md' })
-  assert.equal(read.ok, true, JSON.stringify(read))
-  assert.ok(String(read.content).toLowerCase().includes('cognition index'))
+  // Delivery failure must not affect the cognition write and only records an event.
+  fixture.setPromptFailure(new Error('sage unavailable'))
+  const write = controller.cognition.write('projects/four.md', 'four', { reason: 'test' })
+  assert.equal(write.ok, true)
+  await new Promise(resolve => setTimeout(resolve, 40))
+  assert.ok(events().some(item => item.event === 'cognition.index.notify_failed'))
+  fixture.setPromptFailure(undefined)
 
   console.log('v2 sage prompt ok')
 } finally {

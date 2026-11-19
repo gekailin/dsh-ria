@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -73,6 +73,24 @@ import { createFixture } from './support/ria-fixture.mjs'
     assert.deepEqual(corrupt.all(), [])
     assert.equal(corruptLog.some(item => item.level === 'error' && item.message.includes('corrupt')), true)
     assert.equal(existsSync(file + '.corrupt-' + clock), true)
+    assert.ok(corruptLog.some(item => item.level === 'error' && item.message.includes('has been moved to ' + file + '.corrupt-' + clock)))
+
+    // A failed backup must say the original was retained, not claim a move.
+    clock += 1
+    const blockedBackup = file + '.corrupt-' + clock
+    mkdirSync(blockedBackup)
+    writeFileSync(file, '{ still not json')
+    const backupFailureLog = []
+    const retained = new Outbox(file, { now: () => clock, log: (level, message) => backupFailureLog.push({ level, message }) })
+    assert.deepEqual(retained.all(), [])
+    assert.equal(readFileSync(file, 'utf8'), '{ still not json')
+    assert.deepEqual(backupFailureLog.map(item => item.level), ['error'])
+    const failureMessage = backupFailureLog[0].message
+    assert.ok(failureMessage.includes('corrupt'))
+    assert.ok(failureMessage.includes('retained at ' + file))
+    assert.ok(failureMessage.includes('backup to ' + blockedBackup + ' failed'))
+    assert.match(failureMessage, /EISDIR|EPERM|EACCES|EEXIST|ENOTEMPTY/)
+    assert.equal(failureMessage.includes('has been moved'), false)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

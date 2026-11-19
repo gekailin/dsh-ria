@@ -195,7 +195,14 @@ const noticesAbout = (fixture, chatbot, ticketId) => fixture.prompts
   assert.equal(justOver.activeTurn, true)
   assert.equal(justOver.lastEventAgeMinutes, 10 + 1 / 60)
   assert.equal(justOver.stuckSuspect, true)
-  assert.match(justOver.stuckReason, /10\.1 分钟/)
+  assert.equal(justOver.stuckReason, '回合未闭合且长时间无事件')
+  const longTurn = computeTicketHealth(ticket, { activeTurn: true, now: at(155) })
+  assert.equal(longTurn.lastEventAgeMinutes, 155)
+  assert.equal(longTurn.stuckSuspect, true)
+  assert.equal(longTurn.stuckReason, '回合未闭合且长时间无事件')
+  assert.equal(computeTicketHealth(ticket, { activeTurn: true, now: at(9) }).stuckSuspect, false)
+  assert.equal(computeTicketHealth(ticket, { activeTurn: true, now: at(20), thresholdMinutes: 20 }).stuckSuspect, false)
+  assert.equal(computeTicketHealth(ticket, { activeTurn: true, now: at(21), thresholdMinutes: 20 }).stuckSuspect, true)
   // Working without an active turn is a suspect even with a fresh event.
   const noTurn = computeTicketHealth(ticket, { activeTurn: false, now: at(0) })
   assert.equal(noTurn.stuckSuspect, true)
@@ -208,6 +215,9 @@ const noticesAbout = (fixture, chatbot, ticketId) => fixture.prompts
   const blocked = computeTicketHealth({ ...ticket, status: 'blocked', waitingOn: 'environment' }, { activeTurn: false, now: at(60) })
   assert.equal(blocked.stuckSuspect, false)
   assert.equal(blocked.stuckReason, null)
+  const blockedOpenTurn = computeTicketHealth({ ...ticket, status: 'blocked', waitingOn: 'approval' }, { activeTurn: true, now: at(155) })
+  assert.equal(blockedOpenTurn.stuckSuspect, false)
+  assert.equal(blockedOpenTurn.stuckReason, null)
   // Non-working tickets do not report age-based stuckness either.
   assert.equal(computeTicketHealth({ ...ticket, status: 'open' }, { activeTurn: false, now: at(60) }).stuckSuspect, false)
   // No timestamp at all: age is null and only the turn criterion can fire.
@@ -266,11 +276,11 @@ const noticesAbout = (fixture, chatbot, ticketId) => fixture.prompts
     const workerOld = await workerOf()
     assert.equal(viewOld.activeTurn, true)
     assert.equal(viewOld.stuckSuspect, true)
-    assert.match(viewOld.stuckReason, /最后一个事件/)
+    assert.equal(viewOld.stuckReason, '回合未闭合且长时间无事件')
     assert.equal(workerOld.stuckSuspect, viewOld.stuckSuspect)
     // The age text advances between the two reads; the criterion, the verdict
     // and the age itself (within milliseconds) must still agree.
-    assert.match(workerOld.stuckReason, /最后一个事件/)
+    assert.equal(workerOld.stuckReason, '回合未闭合且长时间无事件')
     assert.ok(Math.abs(workerOld.lastEventAgeMinutes - viewOld.lastEventAgeMinutes) < 0.01)
 
     // A blocked ticket is not a stuck suspect even with an old event.

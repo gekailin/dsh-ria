@@ -9,6 +9,7 @@ import {
   ESCALATION_POLICIES,
   classify,
   decideEscalation,
+  mergeRiskLevels,
   resolveEscalationPolicy,
 } from '../lib/v2/risk.mjs'
 
@@ -76,6 +77,59 @@ const WORKSPACE = process.cwd()
   assert.equal(mixed.level, 'high')
   assert.ok(mixed.signals.ruleIds.includes('privileged-command'))
   assert.ok(mixed.reasons.length >= 2)
+}
+
+// Unsafe arguments/shell forms cannot inherit the command-name allow-list.
+{
+  const dangerous = [
+    'rm -rf build', 'git checkout -- .', 'git checkout -f main', 'git restore .',
+    'ls --force', 'git branch -D topic', 'git branch --list --delete topic',
+    'echo x > /etc/hosts', 'echo x > /etc/hosts ignored', 'echo x >/etc/hosts ignored',
+    'echo x >"/etc/hosts"', 'echo x 2>/etc/hosts', 'echo x >/etc/hosts >out',
+    'echo x &>/etc/hosts', 'echo x >|/etc/hosts', 'echo x <>/etc/hosts',
+    'sudo ls', 'ls; rm -rf build', 'ls && sudo id', 'ls || rm -rf build',
+    'echo script | sh', 'printf script | /bin/bash', 'ls | xargs rm -rf',
+    'xargs rm -rf', 'xargs -I{} sh -c "rm -rf {}"', 'echo $(rm -rf build)',
+    'echo <(rm -rf build)', 'echo hi\nrm -rf build',
+    'sort -o /etc/hosts input', 'sort --output=/etc/hosts input', 'uniq input /etc/hosts',
+    'sed -i.bak s/a/b/ /etc/hosts', 'sed --in-place=.bak s/a/b/ /etc/hosts',
+    'awk "BEGIN {system(\"id\")}"', 'rg --pre=id text',
+    'node --eval "1" test/v2.mjs', 'git diff --ext-diff', 'command rm -rf build',
+    'git remote set-url origin https://example.com', 'cat .env',
+  ]
+  dangerous.push('echo ' + String.fromCharCode(96) + 'rm -rf build' + String.fromCharCode(96))
+  for (const command of dangerous) {
+    const risk = classify({ toolName: 'bash', command, cwd: WORKSPACE, workspace: WORKSPACE })
+    assert.notEqual(risk.level, 'low', command + ': ' + JSON.stringify(risk))
+    assert.ok(risk.reasons.length > 0)
+  }
+  for (const command of ['rm -rf build', 'git checkout -- .', 'ls --force', 'sudo ls', 'echo x > /etc/hosts']) {
+    const risk = classify({ toolName: 'bash', command, cwd: WORKSPACE, workspace: WORKSPACE })
+    assert.equal(risk.level, 'high', command)
+    assert.equal(decideEscalation(risk.level, 'auto-low-medium'), 'ask')
+  }
+  for (const command of ['ls -la', 'git status', 'git remote -v', 'git branch --list', 'npm test', 'node --check lib/v2/risk.mjs', 'sort input', 'sed -n 1p input']) {
+    assert.equal(classify({ toolName: 'bash', command, cwd: WORKSPACE, workspace: WORKSPACE }).level, 'low', command)
+  }
+  const missing = classify({ toolName: 'bash', command: 'ls -la' })
+  assert.equal(missing.level, 'unknown')
+  assert.ok(missing.reasons.some(reason => reason.includes('workdir')))
+  assert.equal(classify({ toolName: 'bash', command: 'echo x > probe.txt', args: { workdir: '/etc' }, cwd: WORKSPACE, workspace: WORKSPACE }).level, 'high')
+}
+
+// Risk aggregation must be order-independent, with missing/invalid levels fail-closed.
+{
+  for (const levels of [['high', 'low'], ['low', 'high'], ['medium', 'high', 'low'], ['high', 'low', 'medium']]) {
+    assert.equal(mergeRiskLevels(levels), 'high', JSON.stringify(levels))
+  }
+  assert.equal(mergeRiskLevels(['medium', 'low']), 'medium')
+  assert.equal(mergeRiskLevels(['low', 'low']), 'low')
+  for (const invalid of ['unknown', 'invalid', '', null, undefined, 'toString', '__proto__']) {
+    assert.equal(mergeRiskLevels([invalid, 'high', 'low']), 'unknown')
+    assert.equal(mergeRiskLevels(['low', 'high', invalid]), 'unknown')
+    assert.equal(decideEscalation(mergeRiskLevels(['low', invalid]), 'auto-low-medium'), 'ask')
+  }
+  assert.equal(mergeRiskLevels([]), 'unknown')
 }
 
 // 2. Policy priority and the decision matrix. High/unknown never auto-allow.

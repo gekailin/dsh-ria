@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createFixture } from './support/ria-fixture.mjs'
-import { PTC_TRANSPORTS, parseTransportCall } from '../lib/v2/risk.mjs'
+import { PTC_MAX_NESTING, PTC_TRANSPORTS, parseTransportCall } from '../lib/v2/risk.mjs'
+import { V2Controller } from '../lib/v2/controller.mjs'
 
 const BT = String.fromCharCode(96)
 const probe = '/home/gkl/Desktop/ria-risk-probe.txt'
@@ -37,6 +38,64 @@ const probe = '/home/gkl/Desktop/ria-risk-probe.txt'
   assert.match(missing.reason, /缺少/)
 }
 
+// Regression: a trailing low finding must never overwrite an earlier high/unknown.
+{
+  const context = { cwd: '/repo', workspace: '/repo' }
+  const riskFor = commands => V2Controller.prototype.classifyTransportRisk.call({}, parseTransportCall('run_code', {
+    code: commands.map(command => 'await tools.bash(' + JSON.stringify({ command, workdir: '/repo' }) + ')').join(';'),
+  }), 'run_code', context)
+  for (const commands of [['rm -rf build', 'git status'], ['git status', 'rm -rf build']]) {
+    assert.equal(riskFor(commands).level, 'high')
+  }
+  for (const commands of [['git status', 'unknown-command'], ['unknown-command', 'git status']]) {
+    assert.equal(riskFor(commands).level, 'unknown')
+  }
+}
+
+// Incomplete extraction and unknown workdir are explicit unknown, never low.
+{
+  const context = { cwd: '/repo', workspace: '/repo' }
+  const riskFor = (code, ctx = context) => V2Controller.prototype.classifyTransportRisk.call({}, parseTransportCall('run_code', { code }), 'run_code', ctx)
+  const low = 'await tools.bash(' + JSON.stringify({ command: 'git status', workdir: '/repo' }) + ')'
+  assert.equal(riskFor(low).level, 'low')
+  for (const code of [
+    low + '; await tools.deploy({ target: "/etc/hosts" })',
+    low + '; await tools["bash"]({ command: "rm -rf /repo" })',
+    low + '; const call = tools.bash; await call({ command: "rm -rf /repo" })',
+    low + '; await tools.bash({ command: cmd, workdir: "/repo" })',
+    low + '; await tools.bash({ command: "git status", workdir: target })',
+    low + '; await tools.bash({ command: "git status", ...extra })',
+    low + '; await tools.run_code({ code: "return 1" })',
+    low + ';' + '('.repeat(PTC_MAX_NESTING + 1) + '1' + ')'.repeat(PTC_MAX_NESTING + 1),
+  ]) {
+    const parsed = parseTransportCall('run_code', { code })
+    assert.equal(parsed.complete, false, code)
+    const risk = riskFor(code)
+    assert.equal(risk.level, 'unknown', code)
+    assert.equal(risk.signals.complete, false)
+    assert.ok(risk.reasons.some(reason => reason.includes('run_code-inner-missing')))
+  }
+  const missing = riskFor('await tools.bash({ command: "git status" })')
+  assert.equal(missing.level, 'unknown')
+  assert.ok(missing.reasons.some(reason => /缺少 workdir\/cwd/.test(reason)))
+  assert.equal(riskFor(low, {}).level, 'low', 'absolute workdir remains resolvable for read-only command')
+  assert.equal(riskFor('await tools.bash({ command: "git status", workdir: "relative" })', {}).level, 'unknown')
+  const relative = riskFor('await tools.bash({ command: "git status", workdir: "subdir" })')
+  assert.equal(relative.level, 'low')
+  assert.equal(relative.signals.cwd, '/repo/subdir', 'relative workdir resolves exactly once')
+  const outside = riskFor('await tools.bash({ command: "echo x > probe.txt", workdir: "/etc" })')
+  assert.equal(outside.level, 'high')
+  assert.equal(outside.signals.cwd, '/etc')
+  const multi = riskFor('await tools.bash({ command: "echo x > probe.txt", workdir: "/etc" });' + low)
+  assert.equal(multi.level, 'high', 'a later workdir must not rebase an earlier command')
+  assert.deepEqual(multi.signals.workdirs, ['/etc', '/repo'])
+  const write = riskFor('await tools.write({ file_path: "probe.txt", cwd: "/etc" });' + low)
+  assert.equal(write.level, 'high')
+  const escapedCode = 'await tools.bash(' + JSON.stringify({ command: 'git status\nrm -rf build', workdir: '/repo' }) + ')'
+  assert.equal(parseTransportCall('run_code', { code: escapedCode }).commands[0], 'git status\nrm -rf build')
+  assert.equal(riskFor(escapedCode).level, 'unknown')
+}
+
 const fixture = await createFixture({ v2Default: true })
 const settle = () => new Promise(resolve => setTimeout(resolve, 20))
 const chatbot = fixture.service.v2.v2.chatbotSessionId
@@ -56,6 +115,8 @@ try {
   const dispatched = await fixture.callAs(advisor, 'ticket_dispatch', { ticketId: made.ticketId })
   const ticketId = made.ticketId
   const worker = dispatched.workerSessionId
+  const workerCwd = fixture.service.v2.v2.worker(worker).cwd
+  const bashCode = command => 'await tools.bash(' + JSON.stringify({ command, workdir: workerCwd }) + ')'
   const ticket = () => fixture.service.store.ticket(ticketId)
   const cache = (callId, code) => fixture.emit(
     'tools/pre-execute',
@@ -79,7 +140,7 @@ try {
   const auditFor = callId => transportAudits().find(item => item.callId === callId)
 
   // Low: run_code wrapping git status is classified from the inner command.
-  await cache('rc-low', "const r = await tools.bash({ command: 'git status' })")
+  await cache('rc-low', bashCode('git status'))
   asked('apr_rc_low', 'rc-low')
   assert.equal(ticket().status, 'working')
   assert.equal(await request('rc-low', next), 'allowed-once')
@@ -95,7 +156,7 @@ try {
   decided('apr_rc_low')
 
   // High: redirect outside the workspace blocks and records the inner command/path.
-  await cache('rc-high', "const r = await tools.bash({ command: 'echo probe > " + probe + "' })")
+  await cache('rc-high', bashCode('echo probe > ' + probe))
   asked('apr_rc_high', 'rc-high', '写工作区外')
   assert.equal(ticket().status, 'blocked')
   assert.equal(ticket().waitingOn, 'approval')
@@ -147,7 +208,7 @@ try {
   decided('apr_rc_missing')
 
   // Multiple inner commands take the highest risk.
-  await cache('rc-multi', "await tools.bash({ command: 'git status' }); await tools.bash({ command: 'echo x > /home/gkl/Desktop/ria-risk-multi.txt' })")
+  await cache('rc-multi', bashCode('git status') + ';' + bashCode('echo x > /home/gkl/Desktop/ria-risk-multi.txt'))
   asked('apr_rc_multi', 'rc-multi', '多命令')
   assert.equal(ticket().status, 'blocked')
   assert.equal(await request('rc-multi', next), 'rejected')

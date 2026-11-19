@@ -38,6 +38,7 @@ export async function createFixture(options = {}) {
   const renames = []
   const effects = []
   const llmCalls = []
+  const systemPrompts = new Map()
   let llmFailureCount = options.llmFailures || 0
   const archivedSessions = []
   const listeners = new Map()
@@ -106,7 +107,7 @@ export async function createFixture(options = {}) {
     id: riaId,
     ctx: {
       tools: toolsApi(riaId, installed),
-      systemPrompt: { section(section) { if (!Number.isFinite(section && section.order)) throw new TypeError('prompt section order must be finite'); return () => {} } },
+      systemPrompt: { section(section) { if (!Number.isFinite(section && section.order)) throw new TypeError('prompt section order must be finite'); systemPrompts.set(String(riaAgent.id), String(section.text())); return () => {} } },
     },
     model: { current() { return models.get(String(riaAgent.id)) } },
     steer(message) { steered.push(message) },
@@ -130,7 +131,7 @@ export async function createFixture(options = {}) {
       id,
       ctx: {
         tools: toolsApi(id, tools),
-        systemPrompt: { section(section) { if (!Number.isFinite(section && section.order)) throw new TypeError('prompt section order must be finite'); return () => {} } },
+        systemPrompt: { section(section) { if (!Number.isFinite(section && section.order)) throw new TypeError('prompt section order must be finite'); systemPrompts.set(id, String(section.text())); return () => {} } },
       },
       model: { current() { return model } },
       session: {
@@ -633,6 +634,7 @@ export async function createFixture(options = {}) {
     schedules,
     scheduleCalls,
     llmCalls,
+    systemPrompts,
     archivedSessions,
     riaAgent,
     agentFor(sessionId) { return makeAgent(String(sessionId)) },

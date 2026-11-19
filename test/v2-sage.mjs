@@ -28,11 +28,11 @@ try {
   assert.equal(sageTools.includes('write'), false)
   assert.equal(sageTools.includes('edit'), false)
 
-  // A compaction event re-reads INDEX (no polling).
+  // Compaction no longer injects an INDEX message; the system prompt is fixed.
   const beforeCompact = fixture.prompts.filter(item => String(item.sessionId) === String(sage)).length
   controller.onSessionEvent({ header: { id: sage } }, { type: 'compaction/end', data: {} })
   await new Promise(resolve => setTimeout(resolve, 20))
-  assert.ok(fixture.prompts.filter(item => String(item.sessionId) === String(sage)).length > beforeCompact)
+  assert.equal(fixture.prompts.filter(item => String(item.sessionId) === String(sage)).length, beforeCompact)
 
   // Cognition bootstrap is idempotent and creates the expected files.
   const first = await controller.bootstrapCognition()
@@ -139,9 +139,9 @@ try {
     const migratedSummary = (await fixture.service.ctx.sessionController.list({})).items.find(item => String(item.sessionId) === String(migrated.sessionId))
     assert.equal(migratedSummary.cwd, controller.stateDir)
     assert.ok(fixture.archivedSessions.includes(oldId))
-    const sagePrompts = fixture.prompts.filter(item => String(item.sessionId) === String(migrated.sessionId)).map(item => String(item.content[0].text))
-    assert.ok(sagePrompts.some(text => text.includes('[认知 INDEX')))
-    assert.ok(sagePrompts.some(text => text.includes('[PRINCIPLES 摘要]')))
+    const migratedPrompt = fixture.systemPrompts.get(migrated.sessionId)
+    assert.ok(String(migratedPrompt).includes('[COGNITION INDEX]'))
+    assert.ok(String(migratedPrompt).includes('[PRINCIPLES 摘要]'))
     const migratedEvents = events().filter(item => item.event === 'sage.migrated')
     assert.equal(migratedEvents.length, 1)
     assert.equal(migratedEvents[0].sessionId, oldId)

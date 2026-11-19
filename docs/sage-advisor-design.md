@@ -84,14 +84,18 @@ Sage 只暴露三个 scoped 工具，使用 standard preset（非 PTC）：
 - 每次读取都带 `version/hash`；提案与决策引用具体文件版本，避免「我记得」式结论。
 - 「忘了什么」由索引显式回答：INDEX 里列出的文件与摘要就是 Sage 当前可依赖的全部长期认知；不在索引、也不在上下文里的内容，视为不存在（不猜）。
 
-**常驻最低信息与注入时机**：
+**系统提示词内置 INDEX**：
 
-- `principles.md` 摘要（**≤800 字**）+ `cognition/INDEX` 只在三种时机注入：**新建 Sage 会话一次**（reason=`new-session`）、**compact/end 之后一次**（reason=`after-compact`）、可选的 **index 变化**（reason=`index-changed`，默认关闭）。
-- 已有 Sage 会话在 dsh web 重启/startup 时**不再注入**；重启只恢复会话。
-- 注入内容带 `indexVersion`（INDEX+principles 的 sha1 前 16 位）；同一版本不重复注入；每次注入写 `sage.index.injected` 事件，含 reason/indexVersion。首次 compact 在新建注入之后仍允许一次；重复 compact 同版本跳过。
-- 注入只给清单/摘要，不塞全文，也不内联图片或二进制。
+Sage 的系统提示词由三部分组成，在会话创建时构建并固定：
 
-**崩溃恢复**：DSH session 本身持久化；进程重启后按 sessionId 恢复，不重放旧对话；恢复失败（session 不存在/损坏）时新建会话并按 `new-session` 注入一次。未完成提案保持 pending 等 Sage 重新读取。
+- 角色与职责：大脑、只维护认知、不执行任务/不写代码/不派 Worker；
+- `principles.md` 摘要，上限 **800 字符**，超出截断并标注；
+- `cognition/INDEX` 快照，上限 **2000 字符**：文件清单 + 每条一行摘要 + version/time；超长时降级为只保留文件名与一行摘要。
+- 明确导航说明：INDEX 可能滞后，以实际文件为准；需要最新内容时用 `sage_read` 重新读取。
+
+**权衡**：INDEX 变化不会自动更新系统提示词，直到 Sage 会话被重建；因此提示词只作导航，文件才是权威源。没有额外的 INDEX 注入消息/事件，也没有注入时机与版本去重；compact 后不额外发消息，需要时 Sage 自己 `sage_read`。
+
+**崩溃恢复**：DSH session 本身持久化；进程重启后按 sessionId 恢复，不重放旧对话；恢复失败（session 不存在/损坏）时新建会话，用新的系统提示词快照重建认知导航。未完成提案保持 pending 等 Sage 重新读取。
 
 **阻塞隔离**：Sage 的审阅、调研请求都是异步的；Router/Advisor 不等待 Sage。Sage 超时或不可用时：
 
@@ -462,7 +466,7 @@ v2.json.cognition = { version, lastAppliedAt, pendingProposals, lastError }
 
 ## 12. 开放问题
 
-- DSH compact 后 principles 摘要的注入时序（首条消息 vs 每次 pre-step）如何保证一定可见？
+- Sage 系统提示词里的 INDEX 快照只在会话重建时刷新；是否需要显式刷新命令？
 - principles 的修改是否需要用户二次确认（涉及全局行为）？建议高风险变更需用户显式批准。
 - 项目 key 对同一 realpath 的不同挂载点是否需要 inode/device 去重？
 - 金丝雀 scope 如何选择样本票（按项目/按主题/按风险级别）？
@@ -479,11 +483,11 @@ v2.json.cognition = { version, lastAppliedAt, pendingProposals, lastError }
 | 记忆范围 | 只维护 Advisor 用的共享认知 | **Ria 全量记忆**：Advisor 认知 + Chatbot 长期记忆（`chatbot/preferences.md`、`agreements.md`、`decisions-digest.md`、`INDEX.md`）；Chatbot 只读、只能提案 |
 | 提案来源 | Worker / reflection / Advisor | 增加**用户**（优先级最高）与无状态 Advisor 的 WorkOrder 提案；明确四类入口、必填字段与优先级 |
 | 命名 | — | Sage 会话标题固定 **`Ria Sage`** |
-| 状态字段 | `epoch` / `lastEpochAt` | `lastCompactAt?` / `indexVersion`；删除 `/sage epoch` 命令 |
+| 状态字段 | `epoch` / `lastEpochAt` | `lastCompactAt?`；删除 `/sage epoch` 命令 |
 
 **未改**：Router 两阶段、单写者落档、risk approval 边界、Advisor 无状态与快照预算、分阶段迁移开关与回滚。
 
-**遗留待评审**：compact 后 principles 摘要的注入时序；Chatbot 记忆文件的容量与过期策略；用户直连 Sage 是否开放。
+**遗留待评审**：Chatbot 记忆文件的容量与过期策略；用户直连 Sage 是否开放。
 
 ## 14. 实现口径（2026-11-19，简化交付）
 

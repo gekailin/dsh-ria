@@ -294,3 +294,31 @@
 ## 8. 推荐结论（一句话版）
 
 先用文件/现有 JSON 把 **Router 事件日志** 与 **项目级 Advisor 设计** 固化；然后按 **P1 tickets+history（单写者+WAL）→ P2 事件流进 `ticket_events` → P3 其余（advisors/lessons/workers 优先）** 推进。项目级 Advisor 的多例落地必须等 P1 的单写者/事务与 P3a 的 advisors/lessons 表，不能在 JSON 上先并行写；`router-events.jsonl` 在 P2 进库、保留只读导出，不长期维持双权威。
+
+## 9. 实现进度（P1：tickets + ticket_history）
+
+> 本节由 P1 实现票补充；§7.6 的“本轮不写实现代码”是设计阶段的约束，已被实现票取代。
+> 状态：**代码、测试、文档已完成**；真实迁移与 `storage=sqlite` 切换**尚未执行**，需用户批准后在维护窗口进行（见 [operations.md](operations.md) 的 “SQLite 迁移与回滚”）。
+
+| 步骤 | 状态 | 落地内容 |
+|---|---|---|
+| C1 schema/adapter | 完成 | `lib/state/sqlite/{schema,db,adapter,source}.mjs`；`tickets` 含 `meta` JSON 列、`ticket_history` 主键 `(ticket_id, seq)` + `(ticket_id, at)` 索引 + append-only 触发器、`schema_meta`；WAL / `synchronous=NORMAL` / `busy_timeout=5000` / `foreign_keys=ON`；缺失或版本不符 fail-closed |
+| C2 单写者 + 仓储 | 完成 | `lib/state/writer.mjs`（进程内 FIFO、每 job 一个事务、AsyncLocalStorage 重入抛 `writer_reentrant`、async job 抛 `async_transaction`、post-commit 效果在队列外执行）；`lib/state/tickets-repository.mjs`（保留 RiaStore 同步 API、`expectedRevision` 透传、compound 事务）；`onTicketsCommitted` 等通知移到 commit 之后 |
+| C3 迁移校验 | 完成 | `scripts/sqlite-migrate.mjs`：`state/backup/<ts>/` + manifest（bytes/sha256/importId/sourceSha256/counts）、计数逐项比对、分层抽样 20 票深比（ticket/meta/archivedAt/archiveRecords/history）、`PRAGMA integrity_check`、`PRAGMA foreign_key_check`、孤儿 history、`--verify-only`；先建 `<db>.tmp`，全过才 rename 发布；失败删 tmp 与 JSON 不动；同源重跑幂等（`import_id`/`source_sha256`），异源需 `--replace` |
+| C4 storage 开关 | 完成 | `lib/state/sqlite/runtime.mjs`：`storage` 默认 `json`，`DSH_RIA_STORAGE` 或 `ria.json.storage` 切到 `sqlite`，非法值 fail-closed；启动从 DB 水合 tickets；写路径在单写者事务内 upsert 变更行；JSON 变成 post-commit 去抖原子写的只读镜像；归档用 `archived_at`，`historyRecords`/`findArchivedTicket` 读 DB；`scripts/sqlite-export.mjs --apply` 一键重建 JSON 并置 `storage=json` |
+| C5 文档与测试链 | 完成 | 本节 + operations runbook；`package.json` 的 `npm test` 覆盖 `test/sqlite-{schema,writer,migrate,runtime}.mjs` |
+
+### 9.1 相对设计草案的偏差（已确认）
+
+1. **meta 合并方式**：设计写“ticket meta 合并”，实现用 `tickets.meta` 一个 JSON 列同时承载 v2 meta、未建模字段、归档快照，不另建 meta 表。迁移与导出往返无损（C1 测试覆盖）。
+2. **读路径**：`storage=sqlite` 启动时把 tickets 从 DB 水合进内存，读走内存副本而非每条查询都开游标；**真源仍是 DB**（改 JSON 不影响读）。这是为了不重写状态机做的折中，写路径严格走 DB 事务。
+3. **归档**：DB 用 `archived_at` 表达归档；`tickets.log.jsonl` 不再由 sqlite 模式写，回滚时由导出器从 DB 重建。
+4. **outbox 未与 ticket 同事务**：P1 不迁 outbox，保持现有 JSON 幂等与 reconcile（设计 §3.2 的“outbox 同事务”留给 P3）。
+5. **事件后置**：`router-events.jsonl` 仍由 RouterEventLog 在 commit 后写，P2 才进库。
+6. **单写者与模型调用**：事务内禁止 await 模型/session（writer 直接拒绝 async job），既有 await 点都在队列外。
+
+### 9.2 P1 明确不做
+
+- 不迁 `reports`/`workOrders`/`workers`/`advisors`/`lessons`/`outbox`（继续 JSON，接受跨存储多步、无单事务）。
+- 不迁 transcript/reflections/memory/attachments/profile。
+- 不自动 fallback：DB 缺失或损坏时 `storage=sqlite` 直接报错，回滚是显式运维动作。

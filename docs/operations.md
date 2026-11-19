@@ -238,3 +238,91 @@ worktree: <worktree 绝对路径>
 ~~~
 
 基线 commit 必须等于 `git -C <worktree> rev-parse HEAD` 的实际值；worktree 路径必须是本次 review 专用的目录。报告中的文件行号、diff 结论都以该 commit + 该 worktree 为准。
+
+## SQLite 迁移与回滚（P1 runbook）
+
+P1 只迁 `tickets` 与 `ticket_history`；`reports`/`workOrders`/`workers`/`advisors`/`lessons`/`outbox` 继续留 JSON。默认 `storage=json`，**切换前必须走维护窗口**：迁移脚本假设离线/停写的 state 目录，服务运行中直接迁移会丢写。
+
+状态目录（下称 `<stateDir>`）默认是：
+
+~~~text
+DSH_HOME/state/ria
+~~~
+
+### 1. 迁移前
+
+1. 停止写路径：停服务，或至少确保没有 turn 在写 `ria.json`。
+2. 记录当前 JSON 的指纹，便于事后核对：`sha256sum <stateDir>/ria.json <stateDir>/v2.json`。
+3. 确认 Node 带 `node:sqlite`（仓库要求 Node >= 24；实测 Node 26 的 SQLite 3.53.1 可用）。
+
+### 2. 备份（迁移脚本自动做）
+
+`sqlite-migrate` 在写任何 DB 之前，会把 `ria.json`、`v2.json`、`outbox.json`、`tickets*.jsonl` 复制到 `<stateDir>/backup/<UTC 时间戳>/`，并写 `manifest.json`（文件、大小、sha256、importId、sourceSha256、counts）。替换已有 DB 时，旧 `ria.sqlite` 也会一起进备份目录。
+
+需要恢复时：把备份目录里的文件复制回 `<stateDir>` 即可（DB 文件在备份里叫 `ria.sqlite`）。
+
+### 3. 迁移 + 校验
+
+~~~bash
+# 迁移（建 <db>.tmp，全过校验后原子 rename 成 ria.sqlite；失败删 tmp，JSON 不动）
+node scripts/sqlite-migrate.mjs --state-dir <stateDir>
+
+# 只校验，不写任何东西（切换后巡检也用这个）
+node scripts/sqlite-migrate.mjs --state-dir <stateDir> --verify-only
+
+# 抽样大小可调（默认 20 票分层抽样深比）
+node scripts/sqlite-migrate.mjs --state-dir <stateDir> --verify-only --sample 40
+~~~
+
+校验覆盖：每表行数逐项相等、20 票分层深比（ticket/meta/archivedAt/archiveRecords/history）、`PRAGMA integrity_check`、`PRAGMA foreign_key_check`、孤儿 history、`import_id`/`source_sha256` 来源一致。
+
+同一份 JSON 重复迁移是幂等的：第二次返回 `mode: "idempotent-reuse"`，行数与备份都不变。**换了 JSON 内容又想重建**，必须在维护窗口加 `--replace`（脚本会先备份旧 DB）。
+
+### 4. 切换到 sqlite
+
+两种等价方式，二选一：
+
+~~~bash
+# 方式 A：环境变量（推荐，便于回滚时立即生效）
+export DSH_RIA_STORAGE=sqlite
+
+# 方式 B：写进状态文件（镜像里会保留 storage 字段）
+#   "storage": "sqlite"
+~~~
+
+切换后：读写以 `ria.sqlite` 为准；`ria.json` 变成只读镜像（每次 commit 后去抖、原子重写），**不要再手工编辑 `ria.json` 的 tickets**，改了也不会被读到。
+
+切换后立刻巡检一次：
+
+~~~bash
+node scripts/sqlite-migrate.mjs --state-dir <stateDir> --verify-only   # 期望 ok: true
+~~~
+
+### 5. 回滚到 json
+
+~~~bash
+# 1) 用 DB 重建 ria.json / v2.json / tickets.log.jsonl，并把 storage 置回 json
+node scripts/sqlite-export.mjs --state-dir <stateDir> --apply
+
+# 2) 重启服务，并确认 DSH_RIA_STORAGE 未设置或等于 json
+unset DSH_RIA_STORAGE
+~~~
+
+回滚保留 `ria.sqlite`（不删），方便下次重试或事后取证。若需要回到迁移前状态，再用第 2 步的备份覆盖 JSON。
+
+### 6. 失败处置
+
+| 现象 | 原因 | 处置 |
+|---|---|---|
+| `sqlite_missing` | `storage=sqlite` 但 DB 不存在 | 先跑迁移；或回退 `storage=json` |
+| `sqlite_schema_missing` / `sqlite_schema_version` | DB 不存在 schema 或版本不符 | 不要手改 schema；重建或回滚 |
+| `import_conflict` | 已有 DB 的来源 sha 与当前 JSON 不同 | 维护窗口确认后用 `--replace` |
+| `migration_verification_failed` | 计数/抽样/integrity/来源校验没过 | JSON 未动、tmp DB 已删；按输出里的 mismatches 修数据后重跑 |
+| `sqlite_corrupt` | `integrity_check` 失败 | 用备份恢复 JSON，删掉损坏 DB 后重迁 |
+
+### 7. 观测与注意
+
+- 镜像滞后：JSON 只是镜像，服务刚写完时可能比 DB 旧一拍（默认 ~25ms 去抖）。巡检以 `--verify-only` 或 DB 为准，不要拿刚写的 JSON 判断丢写。
+- WAL 文件：`ria.sqlite-wal` / `-shm` 属正常状态；备份 DB 时请连同 WAL 一起拷，或先停服务。
+- 单写者：一个进程只有一个写者队列；不要起两个进程写同一个 `ria.sqlite`。
+- 事件流仍是 `router-events.jsonl`（P2 才进库）。

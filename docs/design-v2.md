@@ -167,6 +167,12 @@ v2 的提权不再依赖工具白名单或 `chatbot_grant`。每次 Worker 的�
 
 **grant 落地会结算该 session 的挂起审批**：Worker 的 ask 请求会保留一个可结算句柄（`pendingSettlers`，按 `sessionId|callId`），同时照常把请求交给宿主 UI；只有临时提权 grant（`kind=temporary`）会按方案 A 对每个句柄结算 `allowed-once`（等价于「此刻批准」），纯降权（永久 grant）不会替挂起请求做批准，宿主随后的 `approval/decided` 会把工单从 `blocked(waitingOn=approval)` 恢复为 `working`。每个被放行的请求写一行审计：`decision=auto-allow`、`reason=grant-applied`、`grantId` 关联、保留 `tool/ticketId/callId/level/reasons`；通知写「授权已生效，并已放行此前挂起的请求」。没有可结算句柄的旧记录（正常 live 请求不会出现）只标记为未结算并提示 Worker/用户重试；监听器只有 `AbortSignal`、无法替宿主取消请求，因此不假装已取消。全程事件驱动，无轮询。
 
+**审批终态与取消竞态**：grant 成功 settle 时同时写 `approvalTerminals`（按 approvalId，缺失时按 callId；容量 500、写入时惰性清理 24h），并把 pending record 标 `terminal=grant-applied`。之后 `onApprovalDecided` 若看到终态且 outcome 是 cancelled/denied/unavailable，直接忽略：不改工单、不写 failure、不发「审批被取消/拒绝」通知，只记 info 日志；allowed-once 仍按正常路径恢复 working，并补记终态 allowed，防止后到的 cancelled 再改状态。这样 allowed/cancelled 两种事件顺序都不会把已结算的工单打回 cancelled。
+
+**风险规则 `plugin-install`**：`dsh plugin` 的 add/update/remove/install（无论 `--profile` 在子命令前后，目标为 `~/.dsh/profiles/**` 或 `file:...`）判 **medium**，rule id `plugin-install`，reason 写「向 profile 安装/更新插件：dsh plugin <action> <target>」；action 无法识别时保持 unknown 并写清。工单设 `escalationPolicy=auto-low-medium` 时该请求自动放行；`strict` 下仍需人工确认。
+
+**`chatbot_request` 的 escalationPolicy**：工具新增可选 `escalationPolicy`（strict/auto-low/auto-low-medium）；仅 `mode=work` 写入 ticket meta，answer/reflection 忽略；非法值返回 `invalid_escalation_policy`。部署类工单可显式声明 auto-low-medium。
+
 ### Router 事件日志
 
 ticket history 是状态快照，`audit.jsonl` 是审批/授权决策审计；两者都不记录“为什么派发、派发给谁、确认了没有”。Router 事件日志补上这条过程流，append-only，事件驱动，复盘时可以直接按 ticket 还原时间线。
@@ -263,12 +269,31 @@ session_events { "sessionId": "session-abc", "types": ["approval/*", "turn/*"], 
 | Advisor | `Ria Advisor` | 单例（当前 Global；未来无状态 Advisor 同名） |
 | Worker | `Ria Worker <n>` | n 持久化递增，删除/回收不复用 |
 | Reflection Worker | `Ria Reflection Worker <n>` | 独立计数器，同上 |
-| Sage | `Ria Sage` | 预留；单例 |
+| Sage | `Ria Sage` | 单例 |
 
 - 计数存 `v2.json.meta.workerSeq/reflectionSeq`；创建前自增并立即保存，编号只增不减。
 - 启动时幂等执行 `renameRoleSessions()`：只处理 v2 绑定里的 chatbot/advisor/managed workers（含 reflection），通过 `sessionController.rename` 写会话标题事件，`session_list` 与看板随之更新；已是目标标题则跳过，失败只记 warn 不阻断启动。
 - 用户自建的普通独立会话不在 v2 角色绑定里，**绝不重命名**；归档或不存在的角色会话跳过。
-- 旧会话缺少 `seq` 时在迁移中补齐并写回 meta；Sage 创建逻辑尚未落地，标题 helper 已预留。
+- 旧会话缺少 `seq` 时在迁移中补齐并写回 meta；Sage 创建逻辑已落地，标题 helper 统一生成。
+
+### Sage 与无状态 Advisor（实现补充）
+
+- **Sage**：单例标准会话，标题 `Ria Sage`，cwd `stateDir/sage`；工具仅 `sage_read`/`sage_write`/`sage_request`，无 bash/write/edit/run_code。启动与 compaction 后读 `cognition/INDEX.md`。
+- **认知库**：`stateDir/cognition/` 下 `principles.md`、`projects/<key>.md`、`chatbot/{preferences,agreements,decisions}.md`、自动生成的 `INDEX.md`、`proposals/`；仍复用 `stateDir/lessons.json`。所有写入 0600 + tmp+fsync+rename，Sage 独占写，写后更新 INDEX 与 router-events。
+- **无状态 Advisor**：每张进入 Advisor 阶段的票由 `createAdvisorForTicket` 新建会话（标题 `Ria Advisor`），prompt = ticket brief + 认知快照；不跨票复用上下文；检索失败时 prompt 显式标 `cognition_status: degraded`。
+- **Chatbot 记忆**：Ria 在 `onPreStep` 以 host 消息注入只读摘要（记忆变化才重新注入）；Chatbot 无写认知工具，用户提案走 `chatbot_propose`（priority=high）。
+- **提案通道**：Advisor `ticket_plan.cognitionProposal`、Worker/Reflection `worker_report.lessons`、用户 `chatbot_propose` 都落 `proposals/`；Sage 采纳后写记忆，积压不阻塞派单。
+- **退役与 bootstrap**：启动时 `bootstrapCognition()` 一次性生成初始记忆（已有 `.bootstrapped` 则跳过），`retireLegacyAdvisor()` 清空 global 旧绑定并尝试归档会话，`advisorMode=stateless`。
+- **简化口径**：Sage 单例，不做写队列/优先级/冲突引擎/TTL；记忆冲突与过期由 Sage 人工维护。与 `docs/sage-advisor-design.md` 一致，后者补充了更完整的长期目标。
+
+### 阻塞通知范围
+
+独立会话的提问/审批默认**不再推送 Chatbot**：
+
+- 只有用户显式 `chatbot_watch` 的会话，才由协管路径发 `【协管·<标题>】在等你回答…` / `【协管·<标题>】需要你决定的提权…`；通用 `noticeQuestion`/`noticeApproval` 继续跳过 watched，避免双份。
+- 未协管会话只写 `router-events.jsonl` 的 `notice.suppressed`（sessionId、kind=question/approval、question/toolName/reason、时间），不打扰用户。
+- Chatbot/Advisor/Worker 角色会话始终静默，不写 suppressed。
+- **代价**：未协管会话卡住时不会主动提醒，只能靠打开会话或事后查 router-events 发现；需要推送就先 `chatbot_watch`。
 
 ## 9. 边界
 

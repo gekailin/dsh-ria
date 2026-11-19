@@ -60,6 +60,11 @@ try {
   assert.equal(granted.settledApprovals[0].approvalId, 'apr_grant_pending')
   const outcome = await pendingRequest
   assert.equal(outcome, 'allowed-once')
+  assert.equal(ticket().status, 'working', 'grant settlement must unblock without waiting for decided')
+  assert.equal(fixture.service.v2.pendingApprovals.has('apr_grant_pending'), false)
+  assert.equal(granted.supersededApprovals[0].status, 'superseded')
+  assert.equal(granted.supersededApprovals[0].grantId, granted.grant.grantId)
+  assert.ok(fixture.service.routerEvents.query({ ticketId }).events.some(item => item.event === 'approval.superseded'))
 
   // The host appends approval/decided after the request returns; the ticket must
   // go blocked -> open -> working without a cancelled failure.
@@ -134,10 +139,7 @@ try {
   assert.equal(added.some(text => text.includes('已放行此前挂起的请求')), false)
   await fixture.callAs(chatbot, 'chatbot_grant', { action: 'reset', grantId: second.grant.grantId })
 
-  // Fallback: a stale pending record without a live settler cannot be settled
-  // (the host only exposes AbortSignal, not its controller). It is marked
-  // unresolved so the Worker/operator is told to retry; live requests always
-  // have a settler and are covered by scheme A.
+  // Stale records without a live settler are superseded, not kept blocking.
   const controller = fixture.service.v2
   const staleKey = controller.approvalKey(worker, 'bash', 'call_stale')
   controller.pendingApprovals.set('apr_stale', {
@@ -153,12 +155,73 @@ try {
     policySource: 'default',
     decision: 'ask',
   })
-  const fallback = controller.settleApprovalsForGrant(worker, { grantId: 'grant_stale', kind: 'temporary' })
+  const fallback = controller.settleApprovalsForGrant(worker, { grantId: 'grant_stale', ticketId, kind: 'temporary' })
   assert.equal(fallback.settled.length, 0)
-  assert.equal(fallback.unresolved.length, 1)
-  assert.equal(fallback.unresolved[0].approvalId, 'apr_stale')
-  assert.equal(controller.pendingApprovals.get('apr_stale').grantUnresolved, true)
-  controller.pendingApprovals.delete('apr_stale')
+  assert.equal(fallback.unresolved.length, 0)
+  assert.equal(fallback.superseded[0].approvalId, 'apr_stale')
+  assert.equal(controller.pendingApprovals.has('apr_stale'), false)
+  assert.equal(controller.approvalTerminals.get('apr_stale').decision, 'superseded')
+
+  // Ticket-wide grant supersedes stale records from an old executor, not another ticket.
+  controller.pendingApprovals.set('apr_old_worker', { ticketId, sessionId: 'old-worker', toolName: 'bash', callId: 'old-call', key: 'old-key' })
+  controller.pendingApprovals.set('apr_other_ticket', { ticketId: 'different-ticket', sessionId: worker, toolName: 'bash', callId: 'other-call', key: 'other-key' })
+  const all = controller.settleApprovalsForGrant(worker, { grantId: 'grant_ticket_all', ticketId, kind: 'temporary' })
+  assert.equal(all.superseded.some(item => item.approvalId === 'apr_old_worker'), true)
+  assert.equal(controller.pendingApprovals.has('apr_old_worker'), false)
+  assert.equal(controller.pendingApprovals.has('apr_other_ticket'), true)
+  controller.pendingApprovals.delete('apr_other_ticket')
+  const saved = controller.v2.ticketMeta(ticketId).supersededApprovals
+  assert.ok(saved.some(item => item.approvalId === 'apr_old_worker' && item.grantId === 'grant_ticket_all'))
+
+  // A completion report arriving before the next grant is finalized, not timed out.
+  const complete = fixture.service.store.addTicket({ status: 'blocked', executor: worker, waitingOn: 'approval', blockedReason: 'old approval',
+    attempt: { startedAt: Date.now() - 1000 }, failure: { code: 'approval_timeout', message: 'legacy timeout' } })
+  controller.v2.setTicketMeta(complete.ticketId, { phase: 'blocked', workerId: worker })
+  controller.v2.addReport({ reportId: 'saved_done', ticketId: complete.ticketId, workerId: worker, status: 'done', summary: 'already completed', evidence: ['exit 0'], at: Date.now() })
+  controller.pendingApprovals.set('apr_saved_done', { ticketId: complete.ticketId, sessionId: worker, toolName: 'bash', callId: 'saved-done-call', key: 'saved-done-key' })
+  const completingGrant = await fixture.callAs(chatbot, 'chatbot_grant', { action: 'set', ticketId: complete.ticketId,
+    sandboxMode: 'danger-full-access', approvalPolicy: 'never', reason: 'finish recorded result' })
+  assert.equal(completingGrant.ok, true, JSON.stringify(completingGrant))
+  assert.equal(fixture.service.store.ticket(complete.ticketId).status, 'done')
+  assert.equal(fixture.service.store.ticket(complete.ticketId).failure, null)
+  fixture.service.onSessionEvent({ header: { id: worker } }, { type: 'approval/decided', data: { id: 'apr_saved_done', outcome: 'cancelled' } })
+  assert.equal(fixture.service.store.ticket(complete.ticketId).status, 'done')
+
+  // Only a matching successful operation clears a pending approval; failure doesn't.
+  const successful = fixture.service.store.addTicket({ status: 'blocked', executor: worker, waitingOn: 'approval', blockedReason: 'stale command' })
+  controller.v2.setTicketMeta(successful.ticketId, { phase: 'blocked', workerId: worker })
+  controller.pendingApprovals.set('apr_success', { ticketId: successful.ticketId, sessionId: worker, toolName: 'bash', callId: 'success-call', key: 'success-key' })
+  controller.recordSuccessfulApprovalOperation(worker, { callId: 'other-call', exitCode: 0 })
+  controller.recordSuccessfulApprovalOperation(worker, { callId: 'success-call', exitCode: 1 })
+  assert.equal(controller.pendingApprovals.has('apr_success'), true)
+  controller.recordSuccessfulApprovalOperation(worker, { callId: 'success-call', exitCode: 0 })
+  assert.equal(controller.pendingApprovals.has('apr_success'), false)
+  assert.equal(fixture.service.store.ticket(successful.ticketId).status, 'working')
+  const done = await fixture.callAs(worker, 'worker_report', { ticketId: successful.ticketId, status: 'done', summary: 'operation finished', evidence: ['matching exit 0'] })
+  assert.equal(done.ok, true, JSON.stringify(done))
+  fixture.service.onSessionEvent({ header: { id: worker } }, { type: 'approval/decided', data: { id: 'apr_success', outcome: 'cancelled' } })
+  assert.equal(fixture.service.store.ticket(successful.ticketId).status, 'done')
+  assert.equal(fixture.service.store.ticket(successful.ticketId).failure, null)
+
+  // Saved done wins when cancellation arrives first; no approval_timeout is written.
+  const late = fixture.service.store.addTicket({ status: 'blocked', executor: worker, waitingOn: 'approval', blockedReason: 'late budget cancel', attempt: { startedAt: Date.now() - 1000 } })
+  controller.v2.setTicketMeta(late.ticketId, { phase: 'blocked', workerId: worker })
+  controller.v2.addReport({ reportId: 'done-before-cancel', ticketId: late.ticketId, workerId: worker, status: 'done', summary: 'finished before cancel', evidence: ['success'], at: Date.now() })
+  controller.pendingApprovals.set('apr_late_done', { ticketId: late.ticketId, sessionId: worker, toolName: 'bash', callId: 'late-done-call', key: 'late-done-key' })
+  fixture.service.onSessionEvent({ header: { id: worker } }, { type: 'approval/decided', data: { id: 'apr_late_done', outcome: 'cancelled' } })
+  await settle()
+  assert.equal(fixture.service.store.ticket(late.ticketId).status, 'done')
+  assert.equal(fixture.service.store.ticket(late.ticketId).failure, null)
+  assert.ok(controller.v2.ticketMeta(late.ticketId).supersededApprovals.some(item => item.approvalId === 'apr_late_done'))
+
+  // Completion also clears a request that arrived before its approval/asked event.
+  const orphan = fixture.service.store.addTicket({ status: 'blocked', executor: worker, waitingOn: 'approval', blockedReason: 'orphan request' })
+  controller.v2.setTicketMeta(orphan.ticketId, { phase: 'blocked', workerId: worker })
+  const orphanSettler = controller.createApprovalSettler(worker, 'bash', 'orphan-call', '', { ticketId: orphan.ticketId })
+  const orphanDone = await fixture.callAs(worker, 'worker_report', { ticketId: orphan.ticketId, status: 'done', summary: 'orphan finished', evidence: ['done output'] })
+  assert.equal(orphanDone.ok, true, JSON.stringify(orphanDone))
+  assert.equal(await orphanSettler.promise, 'rejected', 'completion cannot authorize an obsolete request')
+  assert.equal(controller.pendingSettlers.has(orphanSettler.key), false)
 
   console.log('v2 grant pending ok')
 } finally {

@@ -261,4 +261,57 @@ for (const unavailable of ['archived', 'missing', 'unresolvable']) {
   } finally { fixture.cleanup() }
 }
 
+// 9. Explicit worker reassignment automatically reapplies the ticket grant before dispatch.
+{
+  const { fixture, chatbot } = await setup()
+  try {
+    const permissions = new Map()
+    const sessionIds = new Map()
+    const resolve = fixture.ctx.sessionController.resolveAgent.bind(fixture.ctx.sessionController)
+    fixture.ctx.sessionController.resolveAgent = async id => {
+      const resolved = await resolve(id)
+      if (resolved.agent) {
+        const agent = resolved.agent
+        sessionIds.set(agent.session, String(id))
+        if (!permissions.has(String(id))) permissions.set(String(id), { sandbox: 'workspace-write', approval: 'ask' })
+        const append = agent.session.append.bind(agent.session)
+        agent.session.append = (type, data) => {
+          if (type === 'sandbox/mode') permissions.get(String(id)).sandbox = data.mode
+          return append(type, data)
+        }
+      }
+      return resolved
+    }
+    fixture.ctx.sandboxPolicy.resolve = ({ session }) => ({ mode: permissions.get(sessionIds.get(session)).sandbox })
+    fixture.ctx.sandboxPolicy.overrideOf = session => permissions.get(sessionIds.get(session)).sandbox
+    fixture.ctx.approval.effectivePolicy = session => permissions.get(sessionIds.get(session)).approval
+    fixture.ctx.approval.overrideOf = session => permissions.get(sessionIds.get(session)).approval
+    fixture.ctx.approval.setPolicy = (agent, value) => { permissions.get(String(agent.id)).approval = value }
+
+    const { ticketId, workerId, advisor } = await planAndDispatch(fixture, chatbot)
+    const granted = await fixture.callAs(chatbot, 'chatbot_grant', { action: 'set', ticketId,
+      sandboxMode: 'danger-full-access', approvalPolicy: 'never', reason: 'explicit ticket grant', ttlSeconds: 60 })
+    assert.equal(granted.ok, true, JSON.stringify(granted))
+    assert.equal(granted.grant.ticketId, ticketId)
+    await fixture.callAs(workerId, 'worker_report', { ticketId, status: 'blocked', summary: 'handoff', question: 'choose worker?' })
+    fixture.service.v2.turnStartedAt.set(workerId, Date.now())
+    const replacement = await fixture.service.v2.ensureWorker('global')
+    fixture.service.v2.turnStartedAt.delete(workerId)
+    // Explicitly dispatch a chosen replacement; resume itself must never choose it.
+    fixture.service.store.transitionTicket(ticketId, 'open', { actor: 'router', executor: 'advisor', waitingOn: 'ria' })
+    const sent = await fixture.callAs(advisor, 'ticket_dispatch', { ticketId, workerSessionId: replacement.sessionId })
+    assert.equal(sent.ok, true, JSON.stringify(sent))
+    const grant = fixture.service.grants.activeForTicket(ticketId, replacement.sessionId)[0]
+    assert.equal(grant.grantId, granted.grant.grantId)
+    assert.equal(grant.expiresAt, granted.grant.expiresAt)
+    assert.equal(permissions.get(workerId).sandbox, 'workspace-write')
+    assert.equal(permissions.get(replacement.sessionId).sandbox, 'danger-full-access')
+    assert.equal(permissions.get(replacement.sessionId).approval, 'never')
+    assert.ok(grant.scopeKey.startsWith('ticket:'))
+    await fixture.callAs(chatbot, 'chatbot_grant', { action: 'reset', grantId: grant.grantId })
+    assert.equal(permissions.get(replacement.sessionId).sandbox, 'workspace-write')
+    assert.equal(permissions.get(replacement.sessionId).approval, 'ask')
+  } finally { fixture.cleanup() }
+}
+
 console.log('v2 resume ok')

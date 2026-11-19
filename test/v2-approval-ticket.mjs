@@ -5,8 +5,8 @@ import { join } from 'node:path'
 import { createFixture } from './support/ria-fixture.mjs'
 
 // A Worker that stops for an approval must show up as blocked(waitingOn=approval)
-// on its ticket, get a Chatbot notice, and never be marked done while the
-// approval is unresolved. Everything here is driven by session events.
+// on its ticket and get a Chatbot notice. Valid completed work supersedes old
+// approvals instead of being reported as an approval timeout.
 
 const independentCwd = mkdtempSync(join(tmpdir(), 'ria-independent-'))
 const fixture = await createFixture({
@@ -141,8 +141,7 @@ try {
     assert.equal(ticketOf(ticketId).failure, null)
   }
 
-  // No decided at all (budget cancelled the call): the ticket stays blocked and
-  // a done report is refused instead of closing the ticket.
+  // No decided at all: valid completed work supersedes the obsolete approval.
   asked(worker, { id: 'apr_4', toolName: 'bash', callId: 'call-4', reason: '无决定' })
   assert.equal(ticketOf(ticketId).status, 'blocked')
   assert.equal(ticketOf(ticketId).waitingOn, 'approval')
@@ -150,16 +149,19 @@ try {
     const progress = await fixture.callAs(worker, 'worker_report', { ticketId, status: 'progress', summary: 'still waiting' })
     assert.equal(progress.ok, true)
     assert.equal(progress.status, 'blocked')
-    const done = await fixture.callAs(worker, 'worker_report', { ticketId, status: 'done', summary: 'pretend finished', evidence: ['noop'] })
-    assert.equal(done.ok, false)
-    assert.equal(done.code, 'approval_timeout')
-    assert.equal(done.status, 'blocked')
+    const done = await fixture.callAs(worker, 'worker_report', { ticketId, status: 'done', summary: 'finished', evidence: ['command exit 0'] })
+    assert.equal(done.ok, true, JSON.stringify(done))
+    assert.equal(done.status, 'done')
     const ticket = ticketOf(ticketId)
-    assert.equal(ticket.status, 'blocked')
-    assert.equal(ticket.waitingOn, 'approval')
-    assert.equal(ticket.failure.code, 'approval_timeout')
+    assert.equal(ticket.status, 'done')
+    assert.equal(ticket.waitingOn, 'none')
+    assert.equal(ticket.failure, null)
+    assert.equal(fixture.service.v2.pendingApprovals.has('apr_4'), false)
+    decided(worker, { id: 'apr_4', outcome: 'cancelled' })
+    assert.equal(ticket.status, 'done')
+    assert.equal(ticket.failure, null)
     await settle()
-    assert.match(textOf(notices().at(-1)), /approval_timeout/)
+    assert.equal(notices().some(item => /approval_timeout/.test(textOf(item))), false)
   }
 
   // Ordinary independent sessions keep their read-only notice, and their
@@ -186,7 +188,7 @@ try {
     assert.ok(events.some(item => item.event === 'notice.suppressed' && item.sessionId === 'session-independent' && item.payload && item.payload.kind === 'approval'))
     fixture.service.onSessionEvent({ header: { id: 'session-independent' } }, { type: 'approval/asked', time: Date.now(), data: { id: 'apr_ind', toolName: 'bash' } })
     assert.equal(ticketOf(ticketId).revision, revision)
-    assert.equal(ticketOf(ticketId).status, 'blocked')
+    assert.equal(ticketOf(ticketId).status, 'done')
   }
 
   // The store records the whitelist in settings(), defaulting to off.

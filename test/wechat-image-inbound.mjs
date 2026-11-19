@@ -45,10 +45,11 @@ function fakeCtx(store) {
   }
 }
 
+let serviceSequence = 0
 function makeService(dir, ctx, options = {}) {
   return new WechatService({
     ctx,
-    stateDir: dir,
+    stateDir: join(dir, 'service-' + serviceSequence++),
     ensureRia: async () => 'ria-1',
     getRiaId: () => 'ria-1',
     ...options,
@@ -246,9 +247,11 @@ try {
       client: { sentIds: new Set(), async downloadImage() { throw new Error('network down') } },
     }
     await service.deliverImageFromWechat(imageMessage(444))
+    assert.equal(ctx.prompts.length, 0)
+    await service.deliverFromWechat('check failed image', { from: '@user' })
     assert.equal(ctx.prompts.length, 1)
     assert.deepEqual(ctx.prompts[0].content.map(part => part.type), ['text'])
-    assert.match(ctx.prompts[0].content[0].text, new RegExp(IMAGE_PLACEHOLDER))
+    assert.match(ctx.prompts[0].content[0].text, /^check failed image/)
     assert.match(ctx.prompts[0].content[0].text, /\[图片接收失败：下载失败：network down\]/)
     assert.ok(logs.some(item => item.level === 'warn' && /image 444 rejected/.test(item.message)))
   }
@@ -263,6 +266,8 @@ try {
     assert.equal(service.inboundImageMaxBytes, 1024)
     service.session = { client: { sentIds: new Set(), async downloadImage() { return PNG } } }
     await service.deliverImageFromWechat(imageMessage(555))
+    assert.equal(ctx.prompts.length, 0)
+    await service.deliverFromWechat('validation failed image', { from: '@user' })
     assert.equal(ctx.prompts.length, 1)
     assert.match(ctx.prompts[0].content[0].text, /附件校验失败：host rejected image/)
 
@@ -276,19 +281,22 @@ try {
     }
     const retry = makeService(dir, retryCtx)
     retry.session = { client: { sentIds: new Set(), async downloadImage() { return PNG } } }
-    await retry.deliverImageFromWechat(imageMessage(666))
+    // Already-captioned mixed messages preserve the prior visible text fallback.
+    await retry.deliverImageFromWechat(imageMessage(666, 'caption <img />'))
     assert.equal(attempts, 2)
     assert.equal(retryCtx.prompts.length, 1)
     assert.match(retryCtx.prompts[0].content[0].text, /\[图片接收失败：投递失败：agent rejected image\]/)
   }
 
-  // 9. InboundBridge delivers the normal text+image composite through the service.
+  // 9. InboundBridge buffers a bare image and merges it with the next text.
   {
     const ctx = fakeCtx()
     const service = makeService(dir, ctx)
     service.session = { client: { sentIds: new Set(), async downloadImage() { return PNG } } }
     const bridge = new InboundBridge(service)
     await bridge.handle(imageMessage(777))
+    assert.equal(ctx.prompts.length, 0)
+    await bridge.handle({ id: 'text-777', from: '@user', to: 'filehelper', type: 1, text: 'next text' })
     assert.equal(ctx.prompts.length, 1)
     assert.deepEqual(ctx.prompts[0].content.map(part => part.type), ['text', 'image'])
     assert.match(ctx.prompts[0].content[0].text, /（图片已保存：/)

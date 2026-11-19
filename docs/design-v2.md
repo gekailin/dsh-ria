@@ -373,6 +373,18 @@ session_events { "sessionId": "session-abc", "types": ["approval/*", "turn/*"], 
 - **用户直连 Advisor/Worker/Sage**：这三个角色只接受 Ria 注入的消息（`host_` / `ria-task-host`）。用户在 DSH 界面手输的非 `host_` 消息不会被执行、不会转发给 Chatbot、不改工单、不写记忆，只由 `onPreStep` 把本回合模型输入替换为固定指令：Advisor/Worker 回「请通过 Ria 下达任务。Advisor/Worker 只接受 Ria 派发的工单，直接对话不会被处理。」；Sage 回「请通过 Ria 与 Sage 交互。Sage 只接受 Ria/Sage 内部提案，直接对话不会被处理。」。例外：Advisor/Worker 的工单处于 `blocked(waitingOn=user)` 时放行；Sage 目前无此例外。开关 `settings.blockDirectUserMessages` 默认 `true`，关闭后三者均恢复透传；Chatbot 与普通独立会话不受影响。`steer` 中途插入只在 step 边界生效。
 - **直通（direct）归属**：状态、命令解析、目标解析、入站转发全部在 v2 controller（`directCommand` / `directInfo` / `enableDirect` / `directRelay` / `forwardDirectReply`，见 `lib/v2/controller.mjs`）；微信 Claw 只在入站时调用注入的 `directRelay` 钩子（`lib/channels/wechat-claw.mjs`），`lib/index.js` 负责把 `v2.directRelay` 接进去，v1 没有直通。`chatbot_direct` 工具与 `/直通`、`/直通状态`、`/退出直通` 是同一实现的模型入口与用户命令入口，不冗余，保留为唯一实现。后续若其他渠道也要直通，只复用 controller 的 `directRelay`/`directInfo`，不在渠道内复制状态与命令解析；把 `directCommand` 正则与提示文案抽成独立模块列为可选重构（不改变行为）。直通只改前缀与入站路由：Chatbot 的 assistant 文本仍经 Claw 转发（直通生效时加 `【Ria】`），直通回复带 `【直通·<标题>】`；直通发送失败在内存中有界重试（1s/3s/9s，≤3 次、≤2 分钟、按 `eventSeq` 去重），超限发可见失败提示，不写 outbox、不在恢复时重放；Chatbot 普通消息的恢复补发折叠为最近 5 条 + 一条 `【Ria·补发】` 汇总。
 
+### 通道入站图片缓冲与合并
+
+微信手机端不能把“先发图、再发文字”组成一条混合消息，因此入站适配器先聚合，再交给宿主；微信 Claw 与微信文件传输助手共用此规则，QQ 当前纯文本路径不变。
+
+- **隔离与内容**：buffer key 为 `channel + sessionId + peerId`，同一用户/通道内按到达顺序保存图片；保留 `fileName/size/mime/timestamp/receivedAt/sourceMessageId/path`，来源时间与实际到达时间分别记录。纯图（没有用户 caption/文字、没有普通文件）只下载/校验/保存并入 buffer，不立即 prompt、不触发 turn 或 typing；图片下载/校验失败也保留失败条目，后续以可见提示投递，不吞消息。
+- **文本合并**：同一会话下一条有文本的消息到达，把此前全部图片附到这条文本，文本原内容及现有保存路径/失败提示保持兼容；旧图先于本条混合消息自带的新图排列。一次提交 `content=[text parts, buffered image parts, current image parts]`，成功后清空；buffer 为空的纯文本不写图片 buffer 事件、不启计时器，仍按原 idle=queue / busy=steer 投递。Claw 聚合发生在已有 directRelay 前，不复制或修改直通控制逻辑。
+- **默认参数与配置**：`channels.wechat.imageBuffer`、`channels['wechat-claw'].imageBuffer` 均支持 `timeoutMs`（默认 **120000ms / 120 秒**）和 `maxImages`（默认 **10 张**）。均取正整数，非法值回退默认；按现有插件 options 配置注入，不改运行中服务配置、不自动重启。超时在首图入缓冲时固定，新图**不重置**；新的 buffer 才读取新超时值，上限每次入图读取。
+- **兜底选择**：首图到达 120 秒后，全部图片**合并成一条 turn** 单独投递，reason=`timeout`；数量**达到** 10 张立即合并一条投递，reason=`limit`。单条消息含多图而超过上限时整批一次投递（上限是 flush 触发阈值，不丢尾图），第 11 张独立消息在第 10 张 flush 后进入新 buffer。文本、超时与上限共享用户级串行锁；flush 取消计时器，过期回调校验身份，不能与文本路径重复投递同一图片。
+- **去重与失败**：同一 `sourceMessageId` 不重复入缓冲；已处理 id 有界保留最近 500 个，未投递图片/批次 id 不被淘汰；用户/通道隔离，不把不同用户的相同 id 当作同一消息。缺 id 的消息保序但无法按 id 去重。flush 在 prompt 前原子保存不可变 content/requestId，失败保留批次、写失败事件并在 1 秒后重试同一 requestId（宿主对已接受请求去重）；后续文本也排在失败批次后保存，不被前一错误吞掉。普通既有混合消息保留原文字降级行为。
+- **生命周期**：待投递图片及批次存于私有 `<stateDir>/<wechat|wechat-claw>/image-buffer.json`（目录 0700、文件 0600、tmp+fsync+rename），未 flush 图片保存路径/元数据而不重复存 base64；已创建待重试 batch 保存准确 content 以保证 requestId 语义。断线/停止/进程退出代码清理 timer 并保存队列，重新连接后按首图截止时间恢复，过期项及时 flush；不为此实际重启服务。进程内串行锁避免竞争，不声称跨不同 DSH 进程的全局 exactly-once。
+- **可观测**：`channel.image_buffered`（reason=`awaiting-text`）、`channel.image_flushed`（reason=`text-arrived|timeout|limit`）沿用 router-events；含顶层 `sessionId/reason` 与 payload `count/reason/sessionId/channel/peerId`，另带图片元数据（不含二进制/密钥）、flush 的 requestId。失败另写 `channel.image_flush_failed`，带 count/reason/sessionId/error；观测失败不阻断投递。
+
 ### 角色会话命名
 
 | 角色 | 标题 | 规则 |

@@ -94,3 +94,6 @@ try {
 }
 
 console.log('inbound delivery ok')
+
+// Keep the image-buffer mock suite in the existing npm test entry point.
+await import('./image-buffer.mjs')

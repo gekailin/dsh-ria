@@ -499,7 +499,7 @@ v2.json.cognition = { version, lastAppliedAt, pendingProposals, lastError }
 - **Sage 独占写、原子写、INDEX 更新**；不做 TTL 自动清理、不做冲突检测引擎、不做版本回滚 UI；过期/冲突由 Sage 自己维护。
 - **Advisor 默认无 session**：`planTicketStateless` 单次 LLM 调用（最多 2 次尝试/120s）产出 plan/answer/block；输入 brief + cognition snapshot，degraded 显式；`advisor.plan` 记录 `sessionId:''`、latencyMs、usage、cognitionIds、brief/workOrder 摘要；失败先写 `advisor.plan.failed` 再由调用点落 blocked。`advisorMode=legacy` 才保留 `createAdvisorForTicket` 建会话与 `ticket_plan` 回滚路径。
 - **Sage cwd = stateDir 根**：旧 `stateDir/sage` 会话启动迁移时归档一次并写 `sage.migrated`，随后新建/绑定 cwd=stateDir 的 Sage；已是 stateDir 的 Sage 幂等复用；注入 INDEX + principles 摘要（≤800 字）。
-- **Chatbot 记忆**：由 `onPreStep` 以 host 消息注入只读摘要，记忆变化才重注；用户提案走 `chatbot_propose`。
+- **Chatbot 记忆**：作为 system 提示词 section 动态注入（`section.text(context)` 每个 model step 重新读取 `cognition/chatbot/`，经 `chatbotDigest()` 汇总，1.5k 字符预算）；不再使用 `onPreStep` host 消息、事件或版本去重。用户提案走 `chatbot_propose`。
 - **bootstrap**：`bootstrapCognition()` 从 DESIGN 五原则、architecture/limitations 摘要、memory.md、lessons 生成初始 principles/projects/chatbot 文件，`.bootstrapped` 幂等。
 - **Sage 工具**：`sage_read` / `sage_write` / `sage_request`；`sage_write` 遇 `resolveProposal` 标记提案已采纳。
 - **compact**：监听 Sage 的 `compaction/end` 重读 INDEX；不创建 epoch 会话。

@@ -39,6 +39,7 @@ export async function createFixture(options = {}) {
   const effects = []
   const llmCalls = []
   const systemPrompts = new Map()
+  const promptSections = new Map()
   let llmFailureCount = options.llmFailures || 0
   const archivedSessions = []
   const listeners = new Map()
@@ -106,11 +107,17 @@ export async function createFixture(options = {}) {
     },
   })
 
+  const registerPromptSection = (id, section) => {
+    if (!Number.isFinite(section && section.order)) throw new TypeError('prompt section order must be finite')
+    promptSections.set(String(id), section)
+    systemPrompts.set(String(id), String(typeof section.text === 'function' ? section.text({}) : section.text))
+    return () => {}
+  }
   const riaAgent = {
     id: riaId,
     ctx: {
       tools: toolsApi(riaId, installed),
-      systemPrompt: { section(section) { if (!Number.isFinite(section && section.order)) throw new TypeError('prompt section order must be finite'); systemPrompts.set(String(riaAgent.id), String(section.text())); return () => {} } },
+      systemPrompt: { section(section) { return registerPromptSection(riaAgent.id, section) } },
     },
     model: { current() { return models.get(String(riaAgent.id)) } },
     steer(message) { steered.push(message) },
@@ -134,7 +141,7 @@ export async function createFixture(options = {}) {
       id,
       ctx: {
         tools: toolsApi(id, tools),
-        systemPrompt: { section(section) { if (!Number.isFinite(section && section.order)) throw new TypeError('prompt section order must be finite'); systemPrompts.set(id, String(section.text())); return () => {} } },
+        systemPrompt: { section(section) { return registerPromptSection(id, section) } },
       },
       model: { current() { return model } },
       session: {
@@ -655,6 +662,11 @@ export async function createFixture(options = {}) {
     scheduleCalls,
     llmCalls,
     systemPrompts,
+    assembleSystemPrompt(sessionId, context = {}) {
+      const section = promptSections.get(String(sessionId))
+      if (!section) return ''
+      return String(typeof section.text === 'function' ? section.text(context) : section.text)
+    },
     archivedSessions,
     riaAgent,
     agentFor(sessionId) { return makeAgent(String(sessionId)) },

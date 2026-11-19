@@ -99,16 +99,21 @@ try {
   assert.ok(fixture.prompts.filter(item => String(item.sessionId) === String(degradedSession)).some(item => String(item.content[0].text).includes('cognition_status: degraded')))
   cognition.retrieve = originalRetrieve
 
-  // Chatbot memory injection: first step, then unchanged, then changed.
+  // Chatbot memory is part of the dynamic system prompt, not a pre-step host
+  // message. Re-assembling sees a cognition write without any event.
   const chatAgent = fixture.agentFor(chatbot)
+  cognition.write('chatbot/preferences.md', '用户偏好：先给结论，再展开。', { reason: 'change' })
+  const chatPrompt = fixture.assembleSystemPrompt(chatbot, { scope: chatAgent })
+  assert.ok(chatPrompt.includes('以下为长期记忆摘要，可能滞后；细节以 cognition 文件为准'))
+  assert.ok(chatPrompt.includes('用户偏好：先给结论，再展开。'))
   const decision = () => ({ kind: 'enter', messages: [] })
   const firstStep = await controller.onPreStep({ agent: chatAgent, turn: 1 }, async () => decision())
-  assert.ok(firstStep.messages.some(item => item && item.source && item.source.form === 'chatbot-memory'))
-  const secondStep = await controller.onPreStep({ agent: chatAgent, turn: 2 }, async () => decision())
-  assert.equal(secondStep.messages.length, 0)
-  cognition.write('chatbot/preferences.md', '用户偏好：先给结论，再展开。', { reason: 'change' })
+  assert.equal(firstStep.messages.length, 0)
+  cognition.write('chatbot/preferences.md', '用户偏好：先给结论，再展开；必要时附证据。', { reason: 'change' })
+  const nextPrompt = fixture.assembleSystemPrompt(chatbot, { scope: chatAgent })
+  assert.ok(nextPrompt.includes('必要时附证据'))
   const thirdStep = await controller.onPreStep({ agent: chatAgent, turn: 3 }, async () => decision())
-  assert.ok(thirdStep.messages.some(item => item && item.source && item.source.form === 'chatbot-memory'))
+  assert.equal(thirdStep.messages.length, 0)
 
   // Legacy retirement only runs in stateless mode; legacy mode is a rollback switch.
   controller.v2.setAdvisorMode('stateless')

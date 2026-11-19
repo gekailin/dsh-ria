@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createFixture } from './support/ria-fixture.mjs'
@@ -181,8 +181,9 @@ try {
     assert.equal(outcome, 'rejected')
     await settle()
     const sent = notices().slice(before)
-    assert.equal(sent.length, 1)
-    assert.match(textOf(sent[0]), /Independent Session/)
+    assert.equal(sent.length, 0)
+    const events = readFileSync(join(fixture.stateDir, 'router-events.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
+    assert.ok(events.some(item => item.event === 'notice.suppressed' && item.sessionId === 'session-independent' && item.payload && item.payload.kind === 'approval'))
     fixture.service.onSessionEvent({ header: { id: 'session-independent' } }, { type: 'approval/asked', time: Date.now(), data: { id: 'apr_ind', toolName: 'bash' } })
     assert.equal(ticketOf(ticketId).revision, revision)
     assert.equal(ticketOf(ticketId).status, 'blocked')

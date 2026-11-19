@@ -84,12 +84,14 @@ Sage 只暴露三个 scoped 工具，使用 standard preset（非 PTC）：
 - 每次读取都带 `version/hash`；提案与决策引用具体文件版本，避免「我记得」式结论。
 - 「忘了什么」由索引显式回答：INDEX 里列出的文件与摘要就是 Sage 当前可依赖的全部长期认知；不在索引、也不在上下文里的内容，视为不存在（不猜）。
 
-**常驻最低信息**：
+**常驻最低信息与注入时机**：
 
-- `principles.md` 摘要（**≤800 字**）注入系统提示/首条消息，保证 compact 后仍知道底线与硬边界。
-- `cognition/INDEX` 在启动与每次需要时重读；它只列文件名、摘要、版本、更新时间，不塞全文。
+- `principles.md` 摘要（**≤800 字**）+ `cognition/INDEX` 只在三种时机注入：**新建 Sage 会话一次**（reason=`new-session`）、**compact/end 之后一次**（reason=`after-compact`）、可选的 **index 变化**（reason=`index-changed`，默认关闭）。
+- 已有 Sage 会话在 dsh web 重启/startup 时**不再注入**；重启只恢复会话。
+- 注入内容带 `indexVersion`（INDEX+principles 的 sha1 前 16 位）；同一版本不重复注入；每次注入写 `sage.index.injected` 事件，含 reason/indexVersion。首次 compact 在新建注入之后仍允许一次；重复 compact 同版本跳过。
+- 注入只给清单/摘要，不塞全文，也不内联图片或二进制。
 
-**崩溃恢复**：DSH session 本身持久化；进程重启后按 sessionId 恢复。恢复失败（session 不存在/损坏）时新建一个 Sage 会话并写 `sage/recovered` 审计，然后重读 `cognition/INDEX` 重建认知上下文；不重放旧对话，未完成提案保持 pending 等 Sage 重新读取。
+**崩溃恢复**：DSH session 本身持久化；进程重启后按 sessionId 恢复，不重放旧对话；恢复失败（session 不存在/损坏）时新建会话并按 `new-session` 注入一次。未完成提案保持 pending 等 Sage 重新读取。
 
 **阻塞隔离**：Sage 的审阅、调研请求都是异步的；Router/Advisor 不等待 Sage。Sage 超时或不可用时：
 

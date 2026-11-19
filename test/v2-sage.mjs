@@ -140,7 +140,7 @@ try {
     assert.equal(migratedSummary.cwd, controller.stateDir)
     assert.ok(fixture.archivedSessions.includes(oldId))
     const sagePrompts = fixture.prompts.filter(item => String(item.sessionId) === String(migrated.sessionId)).map(item => String(item.content[0].text))
-    assert.ok(sagePrompts.some(text => text.includes('[认知 INDEX]')))
+    assert.ok(sagePrompts.some(text => text.includes('[认知 INDEX')))
     assert.ok(sagePrompts.some(text => text.includes('[PRINCIPLES 摘要]')))
     const migratedEvents = events().filter(item => item.event === 'sage.migrated')
     assert.equal(migratedEvents.length, 1)

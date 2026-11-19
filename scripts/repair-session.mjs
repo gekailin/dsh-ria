@@ -19,17 +19,18 @@
 // 约束：不访问网络、不重启服务。
 
 import { copyFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, openSync, fsyncSync, closeSync, chmodSync } from 'node:fs'
-import { constants as zc, zstdCompressSync } from 'node:zlib'
+import { constants as zc, zstdCompressSync, zstdDecompressSync } from 'node:zlib'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 function parseArgs(argv) {
-  const out = { apply: false, chunkSize: 64 * 1024, keepProjcache: false, dshHome: join(homedir(), '.dsh') }
+  const out = { apply: false, force: false, chunkSize: 64 * 1024, keepProjcache: false, dshHome: join(homedir(), '.dsh') }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (a === '--apply') out.apply = true
+    else if (a === '--force') out.force = true
     else if (a === '--keep-projcache') out.keepProjcache = true
     else if (a === '--session') out.session = argv[++i]
     else if (a === '--dsh-home') out.dshHome = argv[++i]
@@ -60,13 +61,29 @@ function frameCount(path) {
   return m ? Number(m[1]) : -1
 }
 
-function reframe(content, chunkSize) {
+function compressFrame(buf) {
+  return zstdCompressSync(buf, { params: { [zc.ZSTD_c_checksumFlag]: 1 } })
+}
+
+// DSH 读取日志 header 的方式是「解压第一个 zstd frame，要求它恰好是一行」，
+// 因此重分帧必须按行一帧（与 DSH 自己的追加写一致）。
+function reframe(content) {
   const frames = []
-  for (let off = 0; off < content.length; off += chunkSize) {
-    const chunk = content.subarray(off, Math.min(off + chunkSize, content.length))
-    frames.push(zstdCompressSync(chunk, { params: { [zc.ZSTD_c_checksumFlag]: 1 } }))
+  let start = 0
+  for (let i = 0; i < content.length; i++) {
+    if (content[i] === 10) {
+      frames.push(compressFrame(content.subarray(start, i + 1)))
+      start = i + 1
+    }
   }
+  if (start < content.length) frames.push(compressFrame(content.subarray(start)))
+  const firstFramePlain = require_zstd_decompress(frames[0])
+  if (firstFramePlain.indexOf(10) !== firstFramePlain.length - 1) throw new Error('first frame is not exactly one header line')
   return Buffer.concat(frames)
+}
+
+function require_zstd_decompress(frame) {
+  return zstdDecompressSync(frame)
 }
 
 function main() {
@@ -92,7 +109,7 @@ function main() {
   console.log('projcache     :', existsSync(projcachePath) ? projcachePath : '(absent)')
   console.log('mode          :', opts.apply ? 'APPLY' : 'dry-run (add --apply to write)')
 
-  const needReframe = framesBefore === 1
+  const needReframe = framesBefore === 1 || opts.force
   if (!needReframe) console.log('reframe       : skipped (frames > 1)')
   if (!opts.apply) {
     console.log('would reframe :', needReframe)
@@ -106,7 +123,7 @@ function main() {
     if (statSync(bak).size !== statSync(logPath).size) throw new Error('backup size mismatch')
     console.log('backup        :', bak)
 
-    const packed = reframe(content, opts.chunkSize)
+    const packed = reframe(content)
     const tmp = join(dir, '.session.v4.jsonl.zstd.reframe-' + ts)
     writeFileSync(tmp, packed)
     const fd = openSync(tmp, 'r')

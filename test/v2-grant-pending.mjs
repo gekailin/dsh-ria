@@ -83,6 +83,40 @@ try {
   await settle()
   assert.ok(notices().some(text => text.includes('授权已生效') && text.includes('已放行此前挂起的请求')), 'missing grant settlement notice')
 
+  // A late cancelled/denied event for the same approval must not undo the grant.
+  {
+    const beforeCancel = notices().length
+    fixture.service.onSessionEvent(
+      { header: { id: worker } },
+      { type: 'approval/decided', time: Date.now(), data: { id: 'apr_grant_pending', outcome: 'cancelled' } },
+    )
+    await settle()
+    assert.equal(ticket().status, 'working')
+    assert.equal(ticket().failure, null)
+    assert.equal(notices().slice(beforeCancel).some(text => text.includes('审批被取消')), false)
+  }
+
+  // Reverse order: cancellation arrives before the allowed-once event, but the
+  // grant terminal is already recorded.
+  {
+    const reverse = fixture.service.store.addTicket({
+      status: 'blocked', executor: worker, waitingOn: 'approval', blockedReason: 'reverse race',
+    })
+    const reverseId = 'apr_grant_reverse'
+    fixture.service.v2.rememberApprovalTerminal(reverseId, { decision: 'grant-applied', grantId: 'grant_reverse', at: Date.now() })
+    fixture.service.onSessionEvent(
+      { header: { id: worker } },
+      { type: 'approval/decided', time: Date.now(), data: { id: reverseId, outcome: 'cancelled' } },
+    )
+    assert.equal(fixture.service.store.ticket(reverse.ticketId).status, 'blocked')
+    fixture.service.onSessionEvent(
+      { header: { id: worker } },
+      { type: 'approval/decided', time: Date.now(), data: { id: reverseId, outcome: 'allowed-once' } },
+    )
+    assert.equal(fixture.service.store.ticket(reverse.ticketId).status, 'working')
+    assert.equal(fixture.service.store.ticket(reverse.ticketId).failure, null)
+  }
+
   // No pending request: grant still works and must not claim it settled anything.
   await fixture.callAs(chatbot, 'chatbot_grant', { action: 'reset', grantId: granted.grant.grantId })
   const before = notices().length

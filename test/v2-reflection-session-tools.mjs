@@ -70,7 +70,7 @@ try {
     'glob', 'grep', 'lesson_review', 'lesson_search', 'read', 'ticket_answer', 'ticket_block', 'ticket_dispatch', 'ticket_plan', 'ticket_read',
   ])
   assert.deepEqual(fixture.visibleTools(reflection.sessionId).sort(), [
-    'glob', 'grep', 'read', 'session_events', 'session_list', 'worker_checkpoint', 'worker_report',
+    'glob', 'grep', 'read', 'session_events', 'session_list', 'worker_report',
   ])
 
   const listAs = args => fixture.callAs(reflection.sessionId, 'session_list', args)

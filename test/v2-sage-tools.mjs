@@ -94,7 +94,7 @@ try {
     'task', 'web_fetch', 'web_search', 'plugin_manager', 'present',
     'schedule_create', 'skill', 'todo_write', 'workflow', 'working_directory',
     'create_goal', 'get_goal', 'update_goal', 'ask_user_question', 'job_list',
-    'list_subagent_models', 'exit_plan_mode', 'worker_checkpoint', 'worker_report', 'write',
+    'list_subagent_models', 'exit_plan_mode', 'worker_report', 'write',
   ].sort())
   for (const name of WORKER_DENY) {
     assert.equal(workerTools.includes(name), false, name + ' must stay denied to Workers')

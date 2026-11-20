@@ -262,13 +262,16 @@ try {
   assert.equal(working.attempt.legacy, false)
 
   const worker = dispatch.workerSessionId
-  assert.deepEqual(fixture.visibleTools(worker).sort(), ['bash', 'edit', 'read', 'run_code', 'worker_checkpoint', 'worker_report', 'write'])
-  const checkpoint = await fixture.callAs(worker, 'worker_checkpoint', { ticketId: created.ticketId })
-  assert.equal(checkpoint.ok, true)
-  assert.equal(checkpoint.ticket.status, 'working')
-  assert.equal(checkpoint.workOrder.summary, 'read the notes and write a paragraph')
-  assert.match(checkpoint.cwd, /workers$/)
-  assert.match(checkpoint.artifactDir, /workers\/runs\//)
+  assert.deepEqual(fixture.visibleTools(worker).sort(), ['bash', 'edit', 'read', 'run_code', 'worker_report', 'write'])
+  // The retired polling tool is absent; use the host's ordinary missing-tool
+  // error, never a compatibility handler that could consume pending messages.
+  const retiredTool = ['worker', 'checkpoint'].join('_')
+  assert.equal(fixture.visibleTools(worker).includes(retiredTool), false)
+  await assert.rejects(fixture.callAs(worker, retiredTool, { ticketId: created.ticketId }), /tool not installed/)
+  assert.equal(fixture.service.v2.v2.workOrder(created.ticketId).summary, 'read the notes and write a paragraph')
+  const workerMeta = fixture.service.v2.v2.worker(worker)
+  assert.match(workerMeta.cwd, /workers$/)
+  assert.ok(workerMeta.artifactDir.includes('/workers/runs/'))
 
   // The Chatbot can change any top-level session's permissions on an explicit
   // user request, not just managed Workers. A pure downgrade is permanent: no
@@ -316,12 +319,15 @@ try {
     message: 'keep it under 120 words',
   })
   assert.equal(steer.ok, true)
-  const afterSteer = await fixture.callAs(worker, 'worker_checkpoint', { ticketId: created.ticketId })
-  // The Worker was idle, so chatbot_steer delivered directly and marked the
-  // inbox entry delivered; checkpoint has nothing left to read.
-  assert.deepEqual(afterSteer.messages, [])
-  const repeated = await fixture.callAs(worker, 'worker_checkpoint', { ticketId: created.ticketId })
-  assert.deepEqual(repeated.messages, [])
+  // Idle delivery already consumed the inbox. Neither another boundary nor
+  // the turn-end retry can replay the same instruction.
+  assert.deepEqual(fixture.service.v2.v2.pendingInbox(created.ticketId, worker), [])
+  const beforeRepeat = fixture.prompts.length
+  const repeatedStep = await fixture.emit('agent/pre-step', { agent: fixture.agentFor(worker), turn: 1, step: 2 },
+    async () => ({ kind: 'enter', messages: [] }))
+  assert.deepEqual(repeatedStep.messages, [])
+  await fixture.service.v2.retryManagerInboxAtTurnEnd(created.ticketId, worker)
+  assert.equal(fixture.prompts.length, beforeRepeat)
 
   const progress = await fixture.callAs(worker, 'worker_report', {
     ticketId: created.ticketId,
@@ -348,10 +354,9 @@ try {
   assert.equal(resumed.ok, true)
   assert.equal(resumed.status, 'working')
   assert.equal(resumed.workerSessionId, worker)
-  const afterResume = await fixture.callAs(worker, 'worker_checkpoint', { ticketId: created.ticketId })
-  // Idle resume already delivered the reply in the new Worker turn; do not
-  // leave a duplicate for checkpoint/pre-step/done to replay.
-  assert.deepEqual(afterResume.messages, [])
+  // Idle resume already delivered the reply in the new turn; no unread copy
+  // remains for a later pre-step or done retry.
+  assert.deepEqual(fixture.service.v2.v2.pendingInbox(created.ticketId, worker), [])
   assert.equal(resumed.deliveryMode, 'immediate')
   assert.ok(fixture.prompts.some(prompt => prompt.sessionId === worker
     && prompt.content[0].text.includes('[Manager resume]') && prompt.content[0].text.includes('use Markdown')))
@@ -443,9 +448,12 @@ try {
     })
     const projectDispatch = await fixture.callAs(advisor, 'ticket_dispatch', { ticketId: project.ticketId })
     assert.equal(projectDispatch.ok, true)
-    const projectCheckpoint = await fixture.callAs(projectDispatch.workerSessionId, 'worker_checkpoint', { ticketId: project.ticketId })
-    assert.equal(projectCheckpoint.cwd, workspace)
-    assert.equal(projectCheckpoint.artifactDir, join(workspace, 'ria-runs', projectDispatch.workerSessionId))
+    const projectWorker = fixture.service.v2.v2.worker(projectDispatch.workerSessionId)
+    assert.equal(projectWorker.cwd, workspace)
+    assert.equal(projectWorker.artifactDir, join(workspace, 'ria-runs', projectDispatch.workerSessionId))
+    const projectPrompt = fixture.prompts.find(item => item.sessionId === projectDispatch.workerSessionId)
+    assert.ok(projectPrompt.content[0].text.includes('工作目录: ' + workspace))
+    assert.ok(projectPrompt.content[0].text.includes('产物目录: ' + projectWorker.artifactDir))
   } finally {
     rmSync(workspace, { recursive: true, force: true })
   }

@@ -80,7 +80,7 @@ try {
   // write/execute tools.
   const reflectionTools = fixture.visibleTools(reflectionWorkerId).sort()
   assert.deepEqual(reflectionTools, [
-    'glob', 'grep', 'read', 'session_events', 'session_list', 'worker_checkpoint', 'worker_report',
+    'glob', 'grep', 'read', 'session_events', 'session_list', 'worker_report',
   ])
   assert.equal(reflectionTools.includes('write'), false)
   assert.equal(reflectionTools.includes('edit'), false)
@@ -106,7 +106,7 @@ try {
   assert.notEqual(workWorkerId, reflectionWorkerId)
   const workTools = fixture.visibleTools(workWorkerId).sort()
   assert.deepEqual(workTools, [
-    'bash', 'edit', 'glob', 'grep', 'read', 'run_code', 'worker_checkpoint', 'worker_report', 'write',
+    'bash', 'edit', 'glob', 'grep', 'read', 'run_code', 'worker_report', 'write',
   ])
   assert.equal(workTools.includes('session_list'), false)
   assert.equal(workTools.includes('session_events'), false)

@@ -25,7 +25,7 @@ try {
   assert.ok(events().some(item => item.event === 'steer.queued' && item.payload.summary === 'check this'))
   assert.ok(events().some(item => item.event === 'steer.delivered' && item.payload.deliveryMode === 'immediate' && item.payload.source === 'steer'))
 
-  // A steer after the last checkpoint is consumed by an extra prompt at done.
+  // A steer after the last step boundary is consumed by an extra prompt at done.
   await fixture.callAs(chatbot, 'chatbot_steer', { ticketId: ticket.ticketId, message: 'late instruction' })
   const done = await fixture.callAs(worker, 'worker_report', { ticketId: ticket.ticketId, status: 'done', summary: 'finished', evidence: ['test'] })
   assert.equal(done.ok, true, JSON.stringify(done))

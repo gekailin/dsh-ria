@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { createFixture } from './support/ria-fixture.mjs'
 
 // Steer is injected at the turn's step boundary: after the current tool call
-// returns and before the next model step starts. No worker_checkpoint or done
+// returns and before the next model step starts. No polling tool or done
 // report is needed, and nothing reaches into a running tool.
 const fixture = await createFixture({ v2Default: true })
 try {
@@ -88,17 +88,26 @@ try {
   const afterTool = await preStep()
   assert.ok(afterTool.messages[0].content[0].text.includes('after the tool'))
 
-  // 4. The checkpoint path reports deliveryMode=checkpoint.
-  const fourth = newTicket('checkpoint delivery')
+  // 4. A removed tool cannot consume the inbox ahead of its next boundary.
+  // Once injected, the same entry is not replayed by another boundary or done.
+  const fourth = newTicket('single delivery owner')
   fixture.setRunning(worker, true)
-  await fixture.callAs(chatbot, 'chatbot_steer', { ticketId: fourth.ticketId, message: 'read at checkpoint' })
-  const checkpoint = await fixture.callAs(worker, 'worker_checkpoint', { ticketId: fourth.ticketId })
-  assert.equal(checkpoint.ok, true)
-  assert.equal(checkpoint.messages.length, 1)
+  const queued = await fixture.callAs(chatbot, 'chatbot_steer', { ticketId: fourth.ticketId, message: 'deliver at next boundary' })
+  const retiredTool = ['worker', 'checkpoint'].join('_')
+  assert.equal(fixture.visibleTools(worker).includes(retiredTool), false)
+  await assert.rejects(fixture.callAs(worker, retiredTool, { ticketId: fourth.ticketId }), /tool not installed/)
+  assert.equal(controller.v2.pendingInbox(fourth.ticketId, worker).length, 1)
+  assert.equal(events().filter(item => item.event === 'steer.delivered' && item.ticketId === fourth.ticketId).length, 0)
+  const owned = await preStep()
+  assert.deepEqual(owned.messages[0].source.inboxIds, [queued.inboxId])
   assert.equal(controller.v2.pendingInbox(fourth.ticketId, worker).length, 0)
-  assert.ok(events().some(item => item.event === 'steer.delivered'
-    && item.ticketId === fourth.ticketId
-    && item.payload.deliveryMode === 'checkpoint'))
+  assert.deepEqual((await preStep()).messages, [])
+  const beforeDone = fixture.prompts.filter(item => item.sessionId === worker).length
+  assert.equal((await fixture.callAs(worker, 'worker_report', { ticketId: fourth.ticketId, status: 'done', summary: 'consumed once', evidence: ['step input'] })).ok, true)
+  assert.equal(fixture.prompts.filter(item => item.sessionId === worker).length, beforeDone, 'done may notify the Chatbot but must not send the consumed inbox to the Worker again')
+  const consumed = events().filter(item => item.event === 'steer.delivered' && item.ticketId === fourth.ticketId)
+  assert.equal(consumed.length, 1)
+  assert.equal(consumed[0].payload.deliveryMode, 'pre-step')
 
   // 5. A whole turn that never reaches a boundary still retries before done.
   const fifth = newTicket('done retry')
@@ -112,6 +121,14 @@ try {
     && item.ticketId === fifth.ticketId
     && item.payload.deliveryMode === 'done-retry'))
 
+  // Both shared entry points reject unknown modes before consuming anything.
+  assert.throws(() => controller.recordInboxDelivered([], worker, 'unsupported'), /Unsupported manager inbox delivery mode/)
+  await assert.rejects(controller.deliverSteerInbox(fifth.ticketId, worker, 'test', 'unsupported'), /Unsupported manager inbox delivery mode/)
+  const deliveredIds = events().filter(item => item.event === 'steer.delivered').flatMap(item => {
+    assert.ok(['immediate', 'pre-step', 'done-retry'].includes(item.payload.deliveryMode))
+    return item.payload.inboxIds
+  })
+  assert.equal(deliveredIds.length, new Set(deliveredIds).size, 'every inbox id is consumed at most once')
   console.log('v2 steer pre-step ok')
 } finally {
   fixture.cleanup()

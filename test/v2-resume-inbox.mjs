@@ -5,6 +5,8 @@ import { createFixture } from './support/ria-fixture.mjs'
 // are next-turn items, NOT inputs to its current step. Production resume must
 // avoid that path and remain in the same durable inbox used by steer.
 let scenarios = 0
+const deliveryModes = ['immediate', 'pre-step', 'done-retry']
+const observedModes = new Set()
 const run = async (name, body) => {
   const fixture = await createFixture({ v2: true })
   const controller = fixture.service.v2
@@ -46,6 +48,13 @@ const run = async (name, body) => {
   const context = { fixture, controller, chatbot, worker, ticketId, host, running, park, resume, steer, step, events, inbox }
   try {
     await body(context)
+    const delivered = events().filter(event => event.event === 'steer.delivered')
+    const deliveredIds = delivered.flatMap(event => {
+      assert.ok(deliveryModes.includes(event.payload.deliveryMode), 'only the three automatic delivery modes may consume inbox messages')
+      observedModes.add(event.payload.deliveryMode)
+      return event.payload.inboxIds
+    })
+    assert.equal(deliveredIds.length, new Set(deliveredIds).size, 'no inbox message may be delivered twice')
     scenarios++
     console.log('PASS resume/steer inbox: ' + name)
   } finally { fixture.cleanup() }
@@ -64,10 +73,8 @@ await run('idle resume is consumed immediately once, with no host next-turn item
   assert.deepEqual(h.host.nextTurn, [])
   assert.deepEqual(h.inbox(), [])
   assert.ok(h.events().some(event => event.event === 'steer.delivered' && event.payload.deliveryMode === 'immediate' && event.payload.source === 'resume'))
-  // A following boundary/checkpoint/done cannot replay the already consumed reply.
+  // A following boundary or done cannot replay the already consumed reply.
   assert.deepEqual((await h.step()).messages, [])
-  const checkpoint = await h.fixture.callAs(h.worker, 'worker_checkpoint', { ticketId: h.ticketId })
-  assert.deepEqual(checkpoint.messages, [])
   const done = await h.fixture.callAs(h.worker, 'worker_report', { ticketId: h.ticketId, status: 'done', summary: 'consumed', evidence: ['mock input'] })
   assert.equal(done.ok, true)
   assert.equal(h.host.inputs.length, 1)
@@ -178,7 +185,7 @@ await run('idle resume exhaustion uses the same blocked/undelivered mechanism', 
   assert.ok(h.fixture.prompts.some(prompt => prompt.sessionId === h.chatbot && prompt.content[0].text.includes('指令没送到')))
 })
 
-await run('in-flight immediate admission is not injected again at pre-step/checkpoint', async h => {
+await run('in-flight immediate admission is not injected again at pre-step', async h => {
   const original = h.fixture.ctx.sessionController.prompt.bind(h.fixture.ctx.sessionController)
   let release
   let entered
@@ -195,8 +202,6 @@ await run('in-flight immediate admission is not injected again at pre-step/check
   await admitting
   assert.equal(h.inbox().length, 1)
   assert.deepEqual((await h.step()).messages, [])
-  const checkpoint = await h.fixture.callAs(h.worker, 'worker_checkpoint', { ticketId: h.ticketId })
-  assert.deepEqual(checkpoint.messages, [])
   release()
   assert.equal((await sending).ok, true)
   assert.deepEqual(h.inbox(), [])
@@ -243,7 +248,7 @@ await run('cancellation while a delivery fails stops retry and keeps it discarde
   assert.equal(h.events().filter(event => event.event === 'steer.delivered').length, 0)
 })
 
-for (const mode of ['immediate', 'pre-step', 'done-retry']) {
+for (const mode of deliveryModes) {
   await run('steer regression: ' + mode, async h => {
     h.running(mode !== 'immediate')
     const steered = await h.steer('steer-' + mode + '-token')
@@ -260,4 +265,5 @@ for (const mode of ['immediate', 'pre-step', 'done-retry']) {
   })
 }
 
-console.log(JSON.stringify({ resumeSteerScenarios: scenarios, deliveryModes: ['immediate', 'pre-step', 'done-retry'], realWorkers: 0, realRequests: 0, mockOnly: true }))
+assert.deepEqual([...observedModes].sort(), deliveryModes.slice().sort(), 'all three automatic paths are exercised')
+console.log(JSON.stringify({ resumeSteerScenarios: scenarios, deliveryModes, realWorkers: 0, realRequests: 0, mockOnly: true }))

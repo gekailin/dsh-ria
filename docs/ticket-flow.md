@@ -176,7 +176,7 @@ worker 在 60 秒内没有确认开始：`working -> blocked + waitingOn=environ
 
 ### 4.5 执行
 
-- 直管 worker：按固定契约开工复述、里程碑报告、checkpoint 读 steer；`report` 续 lease；问题走 `block` 或审批。直管 worker 默认 PTC，但一个 `run_code` 结束才是一个 checkpoint；长任务必须拆段，不能用一个长程序跨多个里程碑。
+- 直管 worker：按固定契约开工复述、里程碑报告；新指令会在步骤边界自动注入，无需轮询，问题走 `block` 或审批。直管 worker 默认 PTC，一个 `run_code` 是一个执行段；长任务必须拆段并报告，不能用一个长程序跨多个里程碑。
 - 独立 worker：Router 只投普通消息，不注入契约；worker 不调用协作工具；Router 观察 session 活动和 idle 事件，**不因为 idle 自动 close**。
 - 审批：`working + waitingOn=approval`，lease 保留；用户/Ria 决定后恢复 `waitingOn=worker`。审批超时按拒绝处理。
 
@@ -213,9 +213,9 @@ acquiredAt, heartbeatAt, expiresAt
 ```
 
 - 一票同时最多一个活跃 lease；一个 worker 同时最多一张 `working` 票。
-- TTL 默认 15 分钟，可配置；worker 每次 checkpoint/report 续租。
+- TTL 默认 15 分钟，可配置；worker 通过结构化 report 提供里程碑心跳，不靠轮询消费指令。
 - lease 过期：`working -> blocked + waitingOn=environment`，释放 lease，通知 Ria；**不自动重派**，避免同一工作被执行两次。
-- 长命令前后必须 checkpoint；没有心跳的长任务不能靠 lease 猜活。
+- 长命令按里程碑拆段并 report；新指令在步骤边界自动注入，没有心跳的长任务不能靠 lease 猜活。
 
 ### 5.3 选择 executor
 
@@ -281,7 +281,7 @@ acquiredAt, heartbeatAt, expiresAt
 |---|---|---|
 | 派发消息 | 固定 ticketBrief + 契约 | 普通用户消息，不注入契约 |
 | 执行反馈 | `confirm/report/block/complete/fail` 结构化事件 | 无结构化工具；Router 观察 session 活动和 idle |
-| 中途纠偏 | Ria 可 steer，worker 在 checkpoint 处理 | Ria 只读观察，建议给用户；用户直接指挥 |
+| 中途纠偏 | Ria 可 steer，worker 在下一步骤边界自动收到 | Ria 只读观察，建议给用户；用户直接指挥 |
 | 完成判定 | worker 报 done + 证据，Router 校验 | Ria/用户确认后才 close；idle 不等于 done |
 | 失败判定 | worker 报 fail 或 lease 过期 | Ria/用户判断；Router 不自动 fail |
 | 默认 | 是 | 否，仅显式要求 |

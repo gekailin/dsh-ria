@@ -94,13 +94,13 @@ Advisor 的产物只有两种：
 
 - **默认类型**：新建 worker 默认直管 worker，由 Ria 创建和配置；独立 worker 只在用户明确要求时使用，已有独立会话不因空闲被默认复用。直管不可用时向用户说明，不静默改派独立 worker。
 - **独立 worker**：普通顶层会话，保留自己的 preset、tools、MCP；Ria 不改配置，不注入契约。观察需用户授权，只读；建议默认给用户，不直接指挥。
-- **直管 worker**：只对 Ria 负责；不创建 worker，也不派子代理（`subagent`/`subagent_fork`）或列/发消息/打断子代理（`list_agents`/`send_message`/`interrupt_agent`，全部 deny），不调用 `ria_*` 管理工具，不写 Ria 记忆；Ria 的 steer 在下一个 checkpoint 必须处理；完成必须带证据。
+- **直管 worker**：只对 Ria 负责；不创建 worker，也不派子代理（`subagent`/`subagent_fork`）或列/发消息/打断子代理（`list_agents`/`send_message`/`interrupt_agent`，全部 deny），不调用 `ria_*` 管理工具，不写 Ria 记忆；Ria 的新指令会在步骤边界自动注入，无需轮询；完成必须带证据。
 - **Topic 弱关联与生命周期**：直管 worker 不绑定 Topic；Topic 只做路由亲和和上下文提示。一个 Topic 可以按需使用多个 worker，一个 worker 也可以跨 Topic 复用；同一 Workspace（Global 为 Ria 的 worker 根目录）内优先复用最近处理过该 Topic 的 idle worker。同一时间只接一张票；完成后继续接同 Workspace（或 Ria 的 worker 根目录）的其他票，空闲或显式退休；Topic 归档或合并不强制退休，只清掉亲和提示。跨 Topic 切换前写回 run record，切换时用 ticketBrief 重新定位，不假设上一 Topic 的上下文。
 - **是否允许自动派活**：Worker meta 新增 `allowAutoDispatch: boolean`，默认 `true`；旧绑定缺字段按 `true` 读取，下次写入补齐。`false` 是可复用但仅接受显式派单的 Worker，不等于退休/归档，不停止它正在执行的工单；`true` 保持原自动复用行为。preset 重建保留该标记，除非同次配置显式修改。
 - **cwd 与产物目录**：直管 worker 的 cwd 创建时固定，不为单张票换 cwd。Project 票用项目 cwd（该票选定 Workspace 的根目录），生成物和中间产物放 `{$cwd}/ria-runs/<workerId>/`；Global 票默认用 Ria 的 worker 根目录（默认 DSH_HOME/state/ria/workers），生成物和中间产物放 `{$cwd}/runs/<workerId>/`；Global 票显式指定 Workspace 时按项目 cwd 走。产物不散落在项目根或 Ria 状态根；Topic 跨 Workspace 时按 Workspace 拆 worker。
 - **直管契约**：一轮一件事；开工复述目标、验收、计划；里程碑结构化报告；歧义、不可逆、需要用户偏好时停下来问；只对 Ria 下结论。
-- **PTC 与 checkpoint**：直管 worker 默认 PTC，但一个 `run_code` 只是一个执行段，不是 checkpoint。长任务按里程碑拆成多次 `run_code`；每次结束必须 `report` 并读 steer，不能把整张票塞进一个长程序，否则 Ria 无法在中途纠偏。
-- **协作通道**：L1 结构化报告 + L2 checkpoint steer 为 MVP；同步问答可选；不共享上下文，不实时共思。
+- **PTC 与步骤边界**：直管 worker 默认 PTC，一个 `run_code` 是一个执行段。长任务按里程碑拆成多次 `run_code`；每完成一个里程碑必须 `worker_report`，新指令会在步骤边界自动注入，无需轮询。不能把整张票塞进一个长程序，否则 Ria 无法在中途纠偏。
+- **协作通道**：L1 结构化报告 + L2 步骤边界自动注入 steer 为 MVP；同步问答可选；不共享上下文，不实时共思。
 - **0 入侵与硬隔离**：普通 worker 路径一行不改；直管走 scoped prompt/tools，工具硬隔离，绑定落盘、重启可恢复。契约是行为约束，硬边界靠工具隔离、审批和用户叫停。
 
 ### Worker 类型：work / reflection
@@ -110,7 +110,7 @@ Advisor 的产物只有两种：
 | | work（默认） | reflection（复盘） |
 |---|---|---|
 | 用途 | 执行常规工单：改代码、跑测试、产出文件 | 复盘/反思：只读取证，产出复盘报告 |
-| 工具面 | bash/read/write/edit/run_code + worker_report/worker_checkpoint | read/grep/glob + session_list/session_events + worker_report/worker_checkpoint；没有 bash/write/edit |
+| 工具面 | bash/read/write/edit/run_code + worker_report | read/grep/glob + session_list/session_events + worker_report；没有 bash/write/edit |
 | cwd / 沙箱 | 项目 cwd 或 stateDir/workers，可写工作区 | stateDir/reflection-workers，不在仓库里，写不了仓库代码 |
 | 派发 | mode=work 的工单 | mode=reflection 的工单 |
 | 子代理 | 全部 deny | 全部 deny |
@@ -118,7 +118,7 @@ Advisor 的产物只有两种：
 - 两种类型不可混用：给 work 工单指定 reflection Worker（或反过来）会按指定 Worker 不可用处理，返回 `specified_worker_unavailable`（`cause='worker_kind_mismatch'`），工单转 `blocked(waitingOn=user)`，不自动换成另一种 Worker。显式选择只绕过 `allowAutoDispatch`，不绕过类型校验。
 - reflection Worker 只读：通过 read/grep/glob 读仓库、通过 session_list/session_events 读历史会话；不写代码、不改配置、不做最终收尾。会话只读工具只属于它，Advisor 和 work Worker 都没有。
 - **复盘票流转**：Chatbot 或用户提出复盘需求 → `chatbot_request(mode=reflection)` 建票 → Advisor 写 WorkOrder（读哪些会话、产出什么报告）→ `ticket_dispatch` 路由到 reflection Worker（当前没有就现场创建一个）→ Worker 用 session_* 与 read 取证，`worker_report(done)` 回传结论与证据 → Router 收口，Chatbot 转述。
-- **为什么不给 Worker 子代理能力**：委派工具族对直管 Worker 全部关闭（`subagent`、`subagent_fork`、`list_agents`、`send_message`、`interrupt_agent`，以及 agent-team 的 `spawn_teammate`/`wait_agent` 若挂载）。① **执行末端**：Worker 是责任链的末端，工单已由 Advisor 拆到可执行粒度，再向下派会让“谁在做这张票”失去单一答案。② **责任链**：Worker 只对 Ria 下结论、只领一张票；子代理没有工单、没有 checkpoint、没有报告，失败无法归因，Ria 也无法纠偏。③ **绕过 checkpoint/report**：现有协作靠 `worker_report`/`worker_checkpoint` 的里程碑与 steer；子代理在本轮内部黑盒跑完，等于绕开这两个唯一可观测点。④ **并发不可控**：一张票同一时间只允许一个执行者（lease/attempt 语义）；子代理会制造绕过 lease 的并发写与重复产物，Ria 也无法暂停/恢复它们。实现口径：`restrictWorker` 按可用名求交集后以 deny-list 下发整个委派工具族，未知名自动跳过；Advisor/Chatbot 的工具面不受影响。
+- **为什么不给 Worker 子代理能力**：委派工具族对直管 Worker 全部关闭（`subagent`、`subagent_fork`、`list_agents`、`send_message`、`interrupt_agent`，以及 agent-team 的 `spawn_teammate`/`wait_agent` 若挂载）。① **执行末端**：Worker 是责任链的末端，工单已由 Advisor 拆到可执行粒度，再向下派会让“谁在做这张票”失去单一答案。② **责任链**：Worker 只对 Ria 下结论、只领一张票；子代理没有工单、没有步骤边界指令通道、没有报告，失败无法归因，Ria 也无法纠偏。③ **绕过报告与自动注入**：现有协作靠 `worker_report` 的里程碑与步骤边界注入的 steer；子代理在本轮内部黑盒跑完，等于绕开这两个可观测点。④ **并发不可控**：一张票同一时间只允许一个执行者（lease/attempt 语义）；子代理会制造绕过 lease 的并发写与重复产物，Ria 也无法暂停/恢复它们。实现口径：`restrictWorker` 按可用名求交集后以 deny-list 下发整个委派工具族，未知名自动跳过；Advisor/Chatbot 的工具面不受影响。
 
 ### Worker preset 与模型配置
 
@@ -225,18 +225,18 @@ ticket history 是状态快照，`audit.jsonl` 是审批/授权决策审计；�
 | `approval.decided` | v2 `onApprovalDecided` | `approvalId`、`outcome`、`decision`、`riskLevel`、`toolName` |
 | `lesson.injected` | `dispatchTicket` 把经验写进 Worker brief 后 | `lessonIds`、`source`（workOrder/match） |
 | `steer.queued` | `chatbotSteer` / resume 共用 `addManagerInbox` 写持久 inbox 后 | `inboxId`、`source`（resume/steer）、`workerId`、`ticketId`、`summary`（≤120 字符）、`at`（ISO） |
-| `steer.delivered` | resume / steer 的空闲直投、pre-step 注入、done/turn-end 补投及 checkpoint 读取 | `count`、`attempts`、`deliveryMode`（immediate/pre-step/done-retry；显式 checkpoint 另记 checkpoint）、`inboxIds`、`ticketIds`、`source/sources`、`messages[{inboxId,ticketId,workerId,source}]` |
+| `steer.delivered` | resume / steer 的空闲直投、pre-step 注入、done/turn-end 补投 | `count`、`attempts`、`deliveryMode`（仅 immediate/pre-step/done-retry）、`inboxIds`、`ticketIds`、`source/sources`、`messages[{inboxId,ticketId,workerId,source}]` |
 | `steer.undelivered` | 共用投递重试超限，或 failed 仍有未读 inbox | `inboxId`、`source`、`workerId`、`ticketId`、`summary`、`at`、`trigger`（idle-direct/resume-dispatch/resume-rearm/done/turn-end/failed）、`attempts` |
 | `ticket.cancelled` | `chatbot_stop_ticket` 成功取消工单后 | `reason`、`previousStatus`、`workerId`、`inboxCleared`、`hardAbort`、`abortAvailable`、`abortError?`、`by` |
 | `worker.stop.enforced` | pre-step 发现工单已 cancelled 但无法硬中断 | `ticketId`、`phase`（pre-step/reject-step）、`mode=soft`、`turn`、`step`；`reason=cancelled-by-stop` |
 
 **resume 与 steer 共用投递机制**：两种消息都先走 `addManagerInbox`，条目同为 `{id,ticketId,workerId,message,from,by,source,at}`；仅 `source=resume|steer` 与 `[Manager resume]` 前缀区分来源，不另建宿主 `inbox.next-turn` 旁路。空闲 resume 在原 Worker 重派 brief 内通过同一 `deliverSteerInbox` 消费，不再发送一次回复后又留一份未读副本；忙 resume/rearm 不调用 `prompt(mode=queue)` 提前标记送达。`recordInboxDelivered` 是共用消费审计，inbox 保留 `deliveryMode/deliveryAttempts/deliveredAt`。
 
-1. **immediate（空闲）**：仅在宿主状态可确认、没有活跃 turn、running=false 且 queue 为空时，恢复回复和 steer 立即作为新回合输入投递；状态未知时保留 inbox，不假定空闲；异步运行状态采样后重读 pending，避免与 pre-step/checkpoint 双重消费。恢复的原派发 reservation 内可把 WorkOrder 与回复合并一次发送。
+1. **immediate（空闲）**：仅在宿主状态可确认、没有活跃 turn、running=false 且 queue 为空时，恢复回复和 steer 立即作为新回合输入投递；状态未知时保留 inbox，不假定空闲；异步运行状态采样后重读 pending，避免与 pre-step 双重消费。恢复的原派发 reservation 内可把 WorkOrder 与回复合并一次发送。
 2. **pre-step（忙时）**：边界是「当前工具调用返回之后、下一步模型调用开始之前」的 `agent/pre-step`，不调用 `agent.steer()`，不打断工具。读取该 Worker 名下 working 工单的共同 `pendingInbox`，每步最多 `STEER_PRE_STEP_BATCH_SIZE=3` 条，按票和入队顺序合并一条 host 消息：`source.kind=ria-task-host`、`source.form=steer`、`source.source=resume|steer|mixed`、`sources`、`ticketId/ticketIds` 和 `inboxId/inboxIds`。注入成功才标记这批 delivered；剩余积压留下一边界，不丢弃。
 3. **done-retry（回合兜底）**：`worker_report(done)` 迁移前或正常 `turn/end` 后仍有未读 inbox，则复用同一 helper 补一轮 prompt；每批最多 `STEER_MAX_DELIVERY_ATTEMPTS=2` 次，重试沿用同一 requestId/content。仍失败统一转 `blocked(waitingOn=user)`，保留未读条目，写 `steer.undelivered` 并通知 Chatbot；不能因 prompt 失败又归类成指定 Worker 选择失败。
 
-**并发与回归**：immediate/done-retry 在同一 Worker 的投递锁内执行，持有的 inbox ids 不会同时被 pre-step/checkpoint 注入；取消/终态不再注入新方向。`worker_checkpoint` 是显式读取的兼容消费点（`deliveryMode=checkpoint`），failed 路径仍记录未读与通知；三种自动投递时机及成功/失败事件由 resume 与 steer 共用。原空闲 steer 事件曾误标 pre-step，本轮修正为 immediate；投递行为仍为空闲新回合、忙时下一步、收尾补投。
+**并发与回归**：`worker_checkpoint` 已移除，投递仅剩 immediate / pre-step / done-retry 三条路径，不保留轮询或兼容消费层。immediate/done-retry 在同一 Worker 的投递锁内执行，持有的 inbox ids 不会同时被 pre-step 注入；取消/终态不再注入新方向，failed 路径仍记录未读与通知。三种时机及成功/失败事件由 resume 与 steer 共用，`recordInboxDelivered` 只接受这三个 deliveryMode；其公共标送达逻辑仍供三条自动路径使用。旧工具名不再注册，调用由宿主自然返回工具不存在。
 
 **验证边界**：`test/v2-resume-inbox.mjs` 明确模拟忙时 queue→host next-turn（不是本轮输入），检查 resume 不走旁路及三时机、失败2次、通知与 steer 三模式；由既有 `test/v2-resume.mjs` 加入 `npm test`。mock 不是新 Worker 真机证据；真机验收由 Ria/Chatbot 新建小票并调用 resume/steer，确认模型输入与 deliveryMode，无需执行 Worker 越权管理会话。
 

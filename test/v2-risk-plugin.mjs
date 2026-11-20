@@ -16,23 +16,22 @@ try {
   const chatbot = fixture.service.v2.v2.chatbotSessionId
   const created = await fixture.callAs(chatbot, 'chatbot_request', {
     goal: 'deploy the plugin',
-    mode: 'work',
     escalationPolicy: 'auto-low-medium',
   })
   assert.equal(created.ok, true, JSON.stringify(created))
   assert.equal(fixture.service.v2.v2.ticketMeta(created.ticketId).escalationPolicy, 'auto-low-medium')
 
-  const answer = await fixture.callAs(chatbot, 'chatbot_request', {
-    goal: 'short answer',
-    mode: 'answer',
+  // Only work tickets carry an escalation policy; reflection ignores it when
+  // it is passed (there is no answer mode any more).
+  const reflection = await fixture.service.v2.requestTicket({
+    goal: 'retrospective',
     escalationPolicy: 'auto-low-medium',
-  })
-  assert.equal(answer.ok, true, JSON.stringify(answer))
-  assert.equal(fixture.service.v2.v2.ticketMeta(answer.ticketId).escalationPolicy, undefined)
+  }, { agent: { id: chatbot } }, { mode: 'reflection' })
+  assert.equal(reflection.ok, true, JSON.stringify(reflection))
+  assert.equal(fixture.service.v2.v2.ticketMeta(reflection.ticketId).escalationPolicy, undefined)
 
   const invalid = await fixture.callAs(chatbot, 'chatbot_request', {
     goal: 'bad policy',
-    mode: 'work',
     escalationPolicy: 'nope',
   })
   assert.equal(invalid.ok, false)

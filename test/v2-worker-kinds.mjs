@@ -51,11 +51,11 @@ try {
 
   // ② A reflection ticket: no Worker exists yet, so dispatch creates one.
   assert.equal(fixture.service.v2.v2.workers().filter(item => item.workerType === 'reflection').length, 0)
-  const reflectionRequest = await fixture.callAs(chatbot, 'chatbot_request', {
+  // Reflection tickets are created internally now; chatbot_request is work-only.
+  const reflectionRequest = await fixture.service.v2.requestTicket({
     goal: '复盘最近两次会话',
     acceptance: '给出根因与建议',
-    mode: 'reflection',
-  })
+  }, { agent: { id: chatbot } }, { mode: 'reflection' })
   assert.equal(reflectionRequest.ok, true, JSON.stringify(reflectionRequest))
   assert.equal(reflectionRequest.mode, 'reflection')
   const advisor = advisorOf()
@@ -135,11 +135,10 @@ try {
   assert.equal(fixture.service.store.ticket(mismatchRequest.ticketId).waitingOn, 'user')
 
   // Reflection tickets refuse a workspace: they must not touch a repository.
-  const withWorkspace = await fixture.callAs(chatbot, 'chatbot_request', {
+  const withWorkspace = await fixture.service.v2.requestTicket({
     goal: '复盘项目',
-    mode: 'reflection',
     workspace: fixture.stateDir,
-  })
+  }, { agent: { id: chatbot } }, { mode: 'reflection' })
   assert.equal(withWorkspace.ok, false)
   assert.equal(withWorkspace.code, 'reflection_with_workspace')
 

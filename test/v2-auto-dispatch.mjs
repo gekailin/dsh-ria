@@ -215,7 +215,6 @@ await withFixture(async fixture => {
   for (const args of [
     { workerId: target.sessionId, workerSeq: target.meta.seq }, { workerId: '' },
     { workerSeq: 0 }, { workerSeq: 1.5 }, { workerSeq: '1' },
-    { workerId: target.sessionId, mode: 'answer' }, { workerSeq: 1, mode: 'reflection' },
     { workerSeq: 999999 },
   ]) {
     const result = await fixture.callAs(chatbot, 'chatbot_request', { goal: 'invalid selector', ...args })
@@ -249,7 +248,10 @@ await withFixture(async fixture => {
   const reflection = await controller.ensureReflectionWorker('global')
   controller.v2.addWorker(reflection.sessionId, { allowAutoDispatch: false })
   assert.notEqual((await controller.ensureReflectionWorker('global')).sessionId, reflection.sessionId)
-  const { request, advisor } = await plannedTicket(fixture, { mode: 'reflection' })
+  const request = await controller.requestTicket({ goal: 'reflection auto-dispatch' }, { agent: { id: controller.v2.chatbotSessionId } }, { mode: 'reflection' })
+  assert.equal(request.ok, true, JSON.stringify(request))
+  const advisor = controller.v2.advisor('global').sessionId
+  assert.equal((await fixture.callAs(advisor, 'ticket_plan', { ticketId: request.ticketId, summary: 'read the logs', steps: ['session_list'] })).ok, true)
   const sent = await fixture.callAs(advisor, 'ticket_dispatch', {
     ticketId: request.ticketId, workerSessionId: reflection.sessionId,
   })

@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createFixture } from './support/ria-fixture.mjs'
+import { ticketBrief } from '../lib/v2/prompts.mjs'
 
 const independentCwd = mkdtempSync(join(tmpdir(), 'ria-independent-'))
 const fixture = await createFixture({
@@ -54,6 +55,24 @@ try {
   assert.equal(ensured.sessionId, chatbot)
   // Dispatch is ticket-only: the direct session talk channel is gone.
   assert.equal(fixture.visibleTools(chatbot).includes('chatbot_talk'), false)
+  // chatbot_request is work-only. A legacy `mode` argument is ignored rather
+  // than rejected, so older prompts keep working.
+  const modeIgnored = await fixture.callAs(chatbot, 'chatbot_request', { goal: 'legacy mode ignored', mode: 'answer' })
+  assert.equal(modeIgnored.ok, true, JSON.stringify(modeIgnored))
+  assert.equal(modeIgnored.mode, 'work')
+  assert.equal(fixture.service.v2.v2.ticketMeta(modeIgnored.ticketId).mode, 'work')
+  // Historical meta.mode='answer' tickets stay readable and read as work: the
+  // view exposes no mode, status is unchanged, and the advisor brief says work.
+  fixture.service.v2.v2.setTicketMeta(modeIgnored.ticketId, { mode: 'answer' })
+  const historical = fixture.service.store.ticket(modeIgnored.ticketId)
+  const historicalView = fixture.service.v2.ticketView(historical)
+  assert.equal(historicalView.ticketId, modeIgnored.ticketId)
+  assert.equal('mode' in historicalView, false)
+  const historicalStatus = await fixture.callAs(chatbot, 'chatbot_status', { ticketId: modeIgnored.ticketId })
+  assert.equal(historicalStatus.found, true)
+  assert.equal(historicalStatus.ticket.status, historical.status)
+  const historicalBrief = ticketBrief(historical, { goal: historical.goal }, fixture.service.v2.v2.ticketMeta(modeIgnored.ticketId))
+  assert.match(historicalBrief, /模式: work/)
   assert.deepEqual(fixture.visibleTools(chatbot).sort(), ['chatbot_co_manage', 'chatbot_direct', 'chatbot_grant', 'chatbot_models', 'chatbot_new_session', 'chatbot_propose', 'chatbot_read', 'chatbot_request', 'chatbot_resume', 'chatbot_send_image', 'chatbot_sessions', 'chatbot_status', 'chatbot_steer', 'chatbot_stop_ticket', 'chatbot_watch', 'chatbot_worker_config'])
   // WeChat Claw resolves its peer session through these two callbacks. In v2
   // they must point at the Chatbot, not at the retired legacy manager.
@@ -207,7 +226,7 @@ try {
 
   const advisor = fixture.service.v2.v2.advisor('global').sessionId
   // Retrospective tools belong to reflection Workers, not the Advisor.
-  assert.deepEqual(fixture.visibleTools(advisor).sort(), ['lesson_review', 'lesson_search', 'read', 'ticket_answer', 'ticket_block', 'ticket_dispatch', 'ticket_plan', 'ticket_read'])
+  assert.deepEqual(fixture.visibleTools(advisor).sort(), ['lesson_review', 'lesson_search', 'read', 'ticket_block', 'ticket_dispatch', 'ticket_plan', 'ticket_read'])
   assert.equal(fixture.prompts.at(-1).sessionId, advisor)
   assert.match(fixture.prompts.at(-1).content[0].text, /Ticket brief/)
 

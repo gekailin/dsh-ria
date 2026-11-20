@@ -35,7 +35,7 @@ const MOUNTED_GLOBALS = [
 ]
 const ADVISOR_TOOLS = [
   'glob', 'grep', 'lesson_review', 'lesson_search', 'read',
-  'ticket_answer', 'ticket_block', 'ticket_dispatch', 'ticket_plan', 'ticket_read',
+  'ticket_block', 'ticket_dispatch', 'ticket_plan', 'ticket_read',
 ]
 const WORKER_DENY = ['subagent', 'subagent_fork', 'list_agents', 'send_message', 'interrupt_agent']
 

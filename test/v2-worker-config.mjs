@@ -54,10 +54,14 @@ try {
   assert.equal(invalid.ok, false)
   assert.equal(invalid.code, 'invalid_worker_preset')
   assert.match(invalid.message, /ptc, standard, minimal/)
-  // Preset is a work-ticket option only.
-  const answerPreset = await fixture.callAs(chatbot, 'chatbot_request', { goal: 'bad mode', mode: 'answer', workerPreset: 'standard' })
-  assert.equal(answerPreset.ok, false)
-  assert.equal(answerPreset.code, 'worker_preset_not_supported')
+  // Preset is a work-ticket option only: a reflection ticket refuses it.
+  const reflectionPreset = await controller.requestTicket(
+    { goal: 'reflection preset', workerPreset: 'standard' },
+    { agent: { id: chatbot } },
+    { mode: 'reflection' },
+  )
+  assert.equal(reflectionPreset.ok, false)
+  assert.equal(reflectionPreset.code, 'worker_preset_not_supported')
 
   // ④ Reuse keeps the Worker's own preset; a different request does not
   // silently re-configure it.

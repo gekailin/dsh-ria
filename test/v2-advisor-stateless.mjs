@@ -62,11 +62,8 @@ try {
   assert.equal(degradedEvent.payload.degraded, true)
   assert.deepEqual(degradedEvent.payload.cognitionIds, [])
 
-  // Answer and block actions.
-  const answered = await fixture.callAs(chatbot, 'chatbot_request', { goal: 'ANSWER-ME', mode: 'answer' })
-  assert.equal(fixture.service.store.ticket(answered.ticketId).status, 'done')
-  assert.equal(fixture.service.store.ticket(answered.ticketId).resolution.kind, 'answered')
-  const blocked = await fixture.callAs(chatbot, 'chatbot_request', { goal: 'BLOCK-ME', mode: 'work' })
+  // Block action. There is no answer action any more: every request is a work ticket.
+  const blocked = await fixture.callAs(chatbot, 'chatbot_request', { goal: 'BLOCK-ME' })
   assert.equal(fixture.service.store.ticket(blocked.ticketId).status, 'blocked')
   assert.equal(fixture.service.store.ticket(blocked.ticketId).waitingOn, 'user')
   assert.equal(fixture.service.store.ticket(blocked.ticketId).attention.kind, 'question')

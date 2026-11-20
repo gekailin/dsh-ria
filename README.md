@@ -1,11 +1,11 @@
 # 有事，找阿汐
 **Just ask for Ria.**
 
-![阿汐站在玻璃中庭里，手里提着一盏灯](docs/assets/hero/hero.jpg)
+![阿汐站在玻璃中庭里，手里提着一盏灯](docs/hero.jpg)
 
 阿汐（Ria）是 DSH Web 插件 dsh-ria 里的常驻管家：您把事说清楚，她拆成一张张带验收标准的活儿，派给合适的 worker，盯到收尾，再把结果和卡点带回来。她不替 worker 写代码，也不要求您记命令——您只管对她说人话。
 
-> 当前默认是 v2 架构：Chat 面对您，Advisor 拆解，Router 记录状态，Worker 执行。旧版单会话 Ria 仍可通过 `{ v2: false }` 启动；v2 设计见 [docs/design-v2.md](docs/design-v2.md)。
+> 当前默认是 v2 架构：Chat 面对您，Advisor 拆解，Router 记录状态，Worker 执行。旧版单会话 Ria 仍可通过 `{ v2: false }` 启动。
 >
 > v2 MVP 暂不接管 worker 审批：需要审批的操作走 DSH 原生审批界面；Chat 仅在用户明确要求时可用 `chatbot_grant` 调整任意顶层会话的 sandbox/approval：纯降权永久生效；同一 grant 同时含降权和提权时，TTL 到期、ticket 结束或重启只自动恢复提权字段，降权保留。下文“审批不用你一直盯着”描述的是旧版 `{ v2: false }` 的行为。
 
@@ -58,7 +58,7 @@ dsh plugin --profile web add github:gekailin/dsh-ria
 
 感谢 dsh（DeepSeek Harness）框架：阿汐运行在它之上，插件形态、会话和审批能力都来自它。
 
-也感谢 dsh superagent 原型的启发——出站通知的 outbox（先落盘、失败重试、幂等投递）、结构化 attention，以及「状态先落定，再想办法送达」的思路。借鉴记录见 [superagent-borrow.md](docs/archive/superagent-borrow.md)；本项目与 superagent 没有官方关联或背书。
+也感谢 dsh superagent 原型的启发——出站通知的 outbox（先落盘、失败重试、幂等投递）、结构化 attention，以及「状态先落定，再想办法送达」的思路。本项目与 superagent 没有官方关联或背书。
 
 ## License
 

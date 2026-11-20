@@ -337,8 +337,6 @@ try {
   assert.match(advisorPrompt(), /escalationPolicy/)
   assert.match(advisorPrompt(), /chatbot_grant 仅调试\/应急/)
   assert.match(workerPrompt({}), /提权按风险逐条审批/)
-  assert.match(readFileSync('docs/design-v2.md', 'utf8'), /提权风险分级与逐条审批/)
-  assert.match(readFileSync('docs/tools.md', 'utf8'), /仅调试\/应急/)
   assert.equal(existsSync('/home/gkl/Desktop/ria-risk-probe.txt'), false)
 
   console.log('v2 risk approval ok')

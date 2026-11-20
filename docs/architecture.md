@@ -1,8 +1,8 @@
 # Ria 软件架构设计
 
-> 一页读懂当前系统：边界、对象、流程与可靠性。用户用法见 [README.md](../README.md)，历史设计与细节见 [docs/archive/design-history.md](archive/design-history.md)。
+> 一页读懂当前系统：边界、对象、流程与可靠性。用户用法见 [README.md](../README.md)。
 >
-> **v2 提示：** 插件默认运行 v2（Chat / Advisor / Router / Worker）。本文描述的是 legacy manager（`{ v2: false }`）；v2 见 [design-v2.md](design-v2.md) 与 [ticket-flow.md](ticket-flow.md)。
+> **v2 提示：** 插件默认运行 v2（Chat / Advisor / Router / Worker）。本文描述的是 legacy manager（`{ v2: false }`）；v2 以代码与测试为准。
 
 ## 目录
 
@@ -170,10 +170,10 @@ outbox 与 `ria.json` 不是同一个事务：派发已被接受、但 outbox �
 
 - **新增工具**：在 `lib/index.js` 的工具注册处加定义与实现，补 manager prompt 与测试；输出必须是 lossless JSON。
 - **新增通道**：在进程内实现登录、入站、出站与暂停，凭据放 `stateDir`，入站消息转成 Ria 的普通用户消息；不新增端口。
-- **改状态机**：改 `lib/tickets.mjs` 的状态、转移表与不变量，保持 `RiaStore.transitionTicket` 是唯一写入口，并同步 [docs/archive/task-model.md](archive/task-model.md) 与测试。
+- **改状态机**：改 `lib/tickets.mjs` 的状态、转移表与不变量，保持 `RiaStore.transitionTicket` 是唯一写入口，并同步相应测试。
 - **新增副作用**：在 outbox 增加 kind 与幂等键，明确重试与失败保留语义。
 - **新增持久化字段**：升 `ria.json` schema 版本，写迁移与备份，读取端兼容旧版本。
 
 ## 9. 文档分工
 
-README 讲用户怎么用；本文是当前系统的顶层地图；`docs/` 下的专题文件展开单个主题；历史设计与取舍在 [docs/archive/](archive/)，索引见 [docs/README.md](README.md)。代码与测试是最终事实；行为变化时，先更新这张地图，再把原因补进对应专题或归档。
+README 讲用户怎么用；本文是当前系统的顶层地图。代码与测试是最终事实；行为变化时，先更新这张地图，再把原因补进对应文档或 commit。

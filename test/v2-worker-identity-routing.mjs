@@ -71,7 +71,29 @@ const planReply = routing => () => JSON.stringify({
     const updated = await fixture.callAs(chatbot, 'chatbot_co_manage', { action: 'add', sessionId: 'session-doc', tags: [], dedicated: false })
     assert.deepEqual(updated.worker.tags, [])
     assert.equal(updated.worker.dedicated, false)
+
+    // set only updates an existing co-managed session.
+    const set = await fixture.callAs(chatbot, 'chatbot_co_manage', {
+      action: 'set', sessionId: 'session-doc', tags: ['API'], roleNote: '接口联调', dedicated: true,
+    })
+    assert.equal(set.ok, true, JSON.stringify(set))
+    assert.deepEqual(set.worker.tags, ['api'])
+    assert.equal(set.worker.roleNote, '接口联调')
+    assert.equal(set.worker.dedicated, true)
+    const missingSet = await fixture.callAs(chatbot, 'chatbot_co_manage', { action: 'set', sessionId: 'session-missing', tags: ['x'] })
+    assert.equal(missingSet.ok, false)
+    assert.equal(missingSet.code, 'not_co_managed')
+    assert.equal(fixture.service.v2.v2.worker('session-missing'), null, 'set never creates a worker')
+    const emptySet = await fixture.callAs(chatbot, 'chatbot_co_manage', { action: 'set', sessionId: 'session-doc' })
+    assert.equal(emptySet.code, 'config_required')
+    const managed = await fixture.service.v2.ensureWorker('global')
+    assert.equal((await fixture.callAs(chatbot, 'chatbot_co_manage', { action: 'set', sessionId: managed.sessionId, tags: ['x'] })).code, 'not_co_managed')
+
     assert.equal((await fixture.callAs(chatbot, 'chatbot_co_manage', { action: 'add', sessionId: 'session-doc', tags: {} })).code, 'invalid_tags')
+    const removed = await fixture.callAs(chatbot, 'chatbot_co_manage', { action: 'remove', sessionId: 'session-doc' })
+    assert.equal(removed.removed, true)
+    const afterRemove = await fixture.callAs(chatbot, 'chatbot_co_manage', { action: 'list' })
+    assert.equal(afterRemove.workers.some(item => item.sessionId === 'session-doc'), false)
     console.log('co-managed identity ok')
   } finally {
     fixture.cleanup()

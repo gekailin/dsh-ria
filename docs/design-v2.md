@@ -134,7 +134,7 @@ Advisor 的产物只有两种：
 - **复用不重配**：已有 idle Worker 被复用时沿用其创建时的 preset（`worker.preset`），请求里的 `workerPreset` 不会改写它；要改配置走 `chatbot_worker_config`。
 - **运行中切换**：模型支持（`sessionController.selectModel`，下一轮生效）；**preset 不支持**（DSH 只在 create/reuse 时解析 preset）。因此 `set preset` 返回 `worker_preset_requires_recreate`，传 `recreate:true` 才执行：停用旧绑定、同 cwd/同类型新建 Worker、旧会话归档保留。
 - **自动派活开关**：`chatbot_worker_config get` 返回 `allowAutoDispatch`；`set` 可仅传该布尔值，或与模型/preset 同传。切换立即影响下一次自动候选筛选，不需重建会话；`get.selectable` 为自动可选择性，`false` 的 Worker 仍可显式派发。写 `worker.config.changed`（`field='allowAutoDispatch'`，布尔 `before/after`，actor=chatbot）；相同值幂等、不重复写变更事件。
-- **标签与专职保护**：`chatbot_worker_config get/set` 与 `chatbot_co_manage add/list` 都支持 `tags`（归一化、最多 12 个，`[]` 清空）、`roleNote`（≤120 字）与 `dedicated`（布尔）。`dedicated=true` 时自动派单只接受 `ticketTags ∩ worker.tags` 非空的工单；显式选择不受影响。preset 重建会继承 tags/roleNote/dedicated，清空 autoTags/recentTopics。字段变更逐项写 `worker.config.changed`。
+- **标签与专职保护**：`chatbot_worker_config get/set` 与 `chatbot_co_manage add/set/list` 都支持 `tags`（归一化、最多 12 个，`[]` 清空）、`roleNote`（≤120 字）与 `dedicated`（布尔）。`dedicated=true` 时自动派单只接受 `ticketTags ∩ worker.tags` 非空的工单；显式选择不受影响。preset 重建会继承 tags/roleNote/dedicated，清空 autoTags/recentTopics。字段变更逐项写 `worker.config.changed`。
 - **审计**：每次变更写 `worker.config.changed`（workerId、field、before、after；recreate 另带 newWorkerId/archivedOld）。
 
 ### 派发选人与失效绑定
@@ -263,7 +263,7 @@ ticket history 是状态快照，`audit.jsonl` 是审批/授权决策审计；�
 | `chatbot_worker_config` | 查看/修改 Worker 模型、preset 与 allowAutoDispatch（preset 需重建会话，自动派活开关即时生效）；`get` 对有绑定工单的 Worker 返回同一套 stuck 字段 |
 | `chatbot_models` | 只读列出可用模型 |
 | `chatbot_sessions` / `chatbot_read` | 查找普通顶层会话、读回复（只读；派活一律走 ticket） |
-| `chatbot_co_manage` | 把已存在的普通会话登记为 co-managed ticket 执行者（add/list/remove，含 cwd/title/allowAutoDispatch）；派单时投递 Advisor WorkOrder 并自动协管 |
+| `chatbot_co_manage` | 把已存在的普通会话登记为 co-managed ticket 执行者（add/set/list/remove，含 cwd/title/allowAutoDispatch/tags/roleNote/dedicated；set 只改已登记会话，不存在时返回 not_co_managed）；派单时投递 Advisor WorkOrder 并自动协管 |
 | `chatbot_direct` | 微信直通普通会话；入站保留多模态 content（内存态，不跨重启） |
 | `chatbot_send_image` | Chat-only：向当前微信 Claw 回复目标发送 1–5 张本地图片，返回逐张结果 |
 | `chatbot_grant` | 调试/应急权限调整；不是正常提权通道 |

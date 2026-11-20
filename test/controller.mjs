@@ -55,9 +55,9 @@ try {
   assert.equal(ensured.sessionId, chat)
   // Dispatch is ticket-only: the direct session talk channel is gone.
   assert.equal(fixture.visibleTools(chat).includes('chat_talk'), false)
-  // chat_request is work-only. A legacy `mode` argument is ignored rather
+  // ria_chat_request is work-only. A legacy `mode` argument is ignored rather
   // than rejected, so older prompts keep working.
-  const modeIgnored = await fixture.callAs(chat, 'chat_request', { goal: 'legacy mode ignored', mode: 'answer' })
+  const modeIgnored = await fixture.callAs(chat, 'ria_chat_request', { goal: 'legacy mode ignored', mode: 'answer' })
   assert.equal(modeIgnored.ok, true, JSON.stringify(modeIgnored))
   assert.equal(modeIgnored.mode, 'work')
   assert.equal(fixture.service.controller.state.ticketMeta(modeIgnored.ticketId).mode, 'work')
@@ -68,12 +68,12 @@ try {
   const historicalView = fixture.service.controller.ticketView(historical)
   assert.equal(historicalView.ticketId, modeIgnored.ticketId)
   assert.equal('mode' in historicalView, false)
-  const historicalStatus = await fixture.callAs(chat, 'chat_status', { ticketId: modeIgnored.ticketId })
+  const historicalStatus = await fixture.callAs(chat, 'ria_chat_status', { ticketId: modeIgnored.ticketId })
   assert.equal(historicalStatus.found, true)
   assert.equal(historicalStatus.ticket.status, historical.status)
   const historicalBrief = ticketBrief(historical, { goal: historical.goal }, fixture.service.controller.state.ticketMeta(modeIgnored.ticketId))
   assert.match(historicalBrief, /模式: work/)
-  assert.deepEqual(fixture.visibleTools(chat).sort(), ['chat_co_manage', 'chat_direct', 'chat_grant', 'chat_models', 'chat_new_session', 'chat_propose', 'chat_read', 'chat_request', 'chat_resume', 'chat_send_image', 'chat_sessions', 'chat_status', 'chat_steer', 'chat_stop_ticket', 'chat_watch', 'chat_worker_config'])
+  assert.deepEqual(fixture.visibleTools(chat).sort(), ['ria_chat_co_manage', 'ria_chat_direct', 'ria_chat_grant', 'ria_chat_models', 'ria_chat_new_session', 'ria_chat_propose', 'ria_chat_read', 'ria_chat_request', 'ria_chat_resume', 'ria_chat_send_image', 'ria_chat_sessions', 'ria_chat_status', 'ria_chat_steer', 'ria_chat_stop_ticket', 'ria_chat_watch', 'ria_chat_worker_config'])
   // WeChat Claw resolves its peer session through these two callbacks. In state
   // they must point at the Chat, not at the retired legacy manager.
   assert.equal(fixture.service.wechatClaw.getRiaId(), chat)
@@ -82,7 +82,7 @@ try {
 
   // Ordinary independent sessions can be listed and addressed by the Chat.
   // Managed Workers and the Chat itself stay out of this channel.
-  const listed = await fixture.callAs(chat, 'chat_sessions', { query: 'Alpha' })
+  const listed = await fixture.callAs(chat, 'ria_chat_sessions', { query: 'Alpha' })
   if (!listed.ok) console.error('LISTED', listed)
   assert.equal(listed.ok, true)
   assert.equal(listed.sessions.length, 2)
@@ -90,7 +90,7 @@ try {
   assert.equal(listed.sessions[0].title, 'Alpha Session')
   assert.equal(listed.sessions[1].sessionId, 'session-dormant')
   assert.equal(listed.sessions[1].title, 'Alpha Dormant')
-  const read = await fixture.callAs(chat, 'chat_read', { sessionId: 'session-independent', afterSeq: 6 })
+  const read = await fixture.callAs(chat, 'ria_chat_read', { sessionId: 'session-independent', afterSeq: 6 })
   assert.equal(read.ok, true)
   assert.deepEqual(read.messages.map(item => item.text), ['Alpha here, all good.'])
   assert.equal(read.cursor, 7)
@@ -98,7 +98,7 @@ try {
   // A session that stopped for a human is not "idle": the Chat needs the
   // pending input kind to tell the user what it is waiting for.
   {
-    const pending = await fixture.callAs(chat, 'chat_sessions', { query: 'Pending' })
+    const pending = await fixture.callAs(chat, 'ria_chat_sessions', { query: 'Pending' })
     assert.equal(pending.ok, true)
     const byId = new Map(pending.sessions.map(item => [item.sessionId, item]))
     assert.deepEqual(byId.get('session-pending-approval').pendingInput, ['approval'])
@@ -107,11 +107,11 @@ try {
     assert.equal(byId.get('session-pending-question').running, true)
     assert.deepEqual(byId.get('session-pending-other').pendingInput, ['other'])
     assert.equal(byId.get('session-pending-other').running, true)
-    const idle = await fixture.callAs(chat, 'chat_sessions', { query: 'Idle Session' })
+    const idle = await fixture.callAs(chat, 'ria_chat_sessions', { query: 'Idle Session' })
     assert.equal(idle.sessions.length, 1)
     assert.equal(idle.sessions[0].running, false)
     assert.deepEqual(idle.sessions[0].pendingInput, [])
-    const readPending = await fixture.callAs(chat, 'chat_read', { sessionId: 'session-pending-approval' })
+    const readPending = await fixture.callAs(chat, 'ria_chat_read', { sessionId: 'session-pending-approval' })
     assert.equal(readPending.ok, true)
     assert.equal(readPending.running, true)
     assert.deepEqual(readPending.pendingInput, ['approval'])
@@ -122,7 +122,7 @@ try {
   // Direct mode is a memory-only WeChat bypass: inbound text is steered into the
   // chosen independent session, and that session's assistant text is forwarded
   // back with a prefix. Commands are intercepted before Chat sees them.
-  const directOn = await fixture.callAs(chat, 'chat_direct', { action: 'on', sessionId: 'session-independent' })
+  const directOn = await fixture.callAs(chat, 'ria_chat_direct', { action: 'on', sessionId: 'session-independent' })
   assert.equal(directOn.ok, true)
   assert.equal(directOn.active, true)
   assert.equal(fixture.service.controller.status().direct.sessionId, 'session-independent')
@@ -163,7 +163,7 @@ try {
     assert.match(directForwarded.at(-1), /已进入直通模式：Alpha Session/)
     assert.match(directForwarded.at(-1), /切换目标：\/直通 <会话名>/)
     assert.equal(fixture.prompts.length, beforeCommand)
-    const directOff = await fixture.callAs(chat, 'chat_direct', { action: 'off' })
+    const directOff = await fixture.callAs(chat, 'ria_chat_direct', { action: 'off' })
     assert.equal(directOff.active, false)
   } finally {
     fixture.service.wechatClaw.forwardAssistant = directForward
@@ -214,7 +214,7 @@ try {
   }
   assert.deepEqual(forwarded, ['收到'])
 
-  const created = await fixture.callAs(chat, 'chat_request', {
+  const created = await fixture.callAs(chat, 'ria_chat_request', {
     goal: 'summarize the release notes',
     acceptance: 'one paragraph with links',
   })
@@ -226,16 +226,16 @@ try {
 
   const advisor = fixture.service.controller.state.advisor('global').sessionId
   // Retrospective tools belong to reflection Workers, not the Advisor.
-  assert.deepEqual(fixture.visibleTools(advisor).sort(), ['lesson_review', 'lesson_search', 'read', 'ticket_block', 'ticket_dispatch', 'ticket_plan', 'ticket_read'])
+  assert.deepEqual(fixture.visibleTools(advisor).sort(), ['read', 'ria_lesson_review', 'ria_lesson_search', 'ria_ticket_block', 'ria_ticket_dispatch', 'ria_ticket_plan', 'ria_ticket_read'])
   assert.equal(fixture.prompts.at(-1).sessionId, advisor)
   assert.match(fixture.prompts.at(-1).content[0].text, /Ticket brief/)
 
   await assert.rejects(
-    fixture.callAs(chat, 'ticket_plan', { ticketId: created.ticketId, summary: 'nope' }),
-    /tool not installed for .*: ticket_plan/,
+    fixture.callAs(chat, 'ria_ticket_plan', { ticketId: created.ticketId, summary: 'nope' }),
+    /tool not installed for .*: ria_ticket_plan/,
   )
 
-  const plan = await fixture.callAs(advisor, 'ticket_plan', {
+  const plan = await fixture.callAs(advisor, 'ria_ticket_plan', {
     ticketId: created.ticketId,
     summary: 'read the notes and write a paragraph',
     steps: ['read notes', 'write paragraph'],
@@ -243,7 +243,7 @@ try {
   })
   assert.equal(plan.ok, true)
 
-  const dispatch = await fixture.callAs(advisor, 'ticket_dispatch', { ticketId: created.ticketId })
+  const dispatch = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: created.ticketId })
   assert.equal(dispatch.ok, true)
   assert.ok(dispatch.workerSessionId)
   const working = fixture.service.store.ticket(created.ticketId)
@@ -252,7 +252,7 @@ try {
   assert.equal(working.attempt.legacy, false)
 
   const worker = dispatch.workerSessionId
-  assert.deepEqual(fixture.visibleTools(worker).sort(), ['bash', 'edit', 'read', 'run_code', 'worker_report', 'write'])
+  assert.deepEqual(fixture.visibleTools(worker).sort(), ['bash', 'edit', 'read', 'ria_worker_report', 'run_code', 'write'])
   // The retired polling tool is absent; use the host's ordinary missing-tool
   // error, never a compatibility handler that could consume pending messages.
   const retiredTool = ['worker', 'checkpoint'].join('_')
@@ -266,10 +266,10 @@ try {
   // The Chat can change any top-level session's permissions on an explicit
   // user request, not just managed Workers. A pure downgrade is permanent: no
   // TTL, and neither ticket close nor a restart undoes it.
-  const initialGrants = await fixture.callAs(chat, 'chat_grant', { action: 'list' })
+  const initialGrants = await fixture.callAs(chat, 'ria_chat_grant', { action: 'list' })
   assert.equal(initialGrants.ok, true)
   assert.deepEqual(initialGrants.grants, [])
-  const independentGrant = await fixture.callAs(chat, 'chat_grant', {
+  const independentGrant = await fixture.callAs(chat, 'ria_chat_grant', {
     action: 'set',
     sessionId: 'session-independent',
     sandboxMode: 'read-only',
@@ -280,10 +280,10 @@ try {
   assert.equal(independentGrant.grant.kind, 'permanent')
   assert.equal(independentGrant.grant.permanent, true)
   assert.equal(independentGrant.grant.expiresAt, null)
-  const resetIndependent = await fixture.callAs(chat, 'chat_grant', { action: 'reset', grantId: independentGrant.grant.grantId })
+  const resetIndependent = await fixture.callAs(chat, 'ria_chat_grant', { action: 'reset', grantId: independentGrant.grant.grantId })
   assert.equal(resetIndependent.ok, true)
 
-  const granted = await fixture.callAs(chat, 'chat_grant', {
+  const granted = await fixture.callAs(chat, 'ria_chat_grant', {
     action: 'set',
     sessionId: worker,
     ticketId: created.ticketId,
@@ -296,15 +296,15 @@ try {
   assert.equal(granted.grant.ticketId, created.ticketId)
   assert.equal(granted.grant.kind, 'permanent')
   assert.equal(granted.grant.expiresAt, null)
-  const listedGrants = await fixture.callAs(chat, 'chat_grant', { action: 'list' })
+  const listedGrants = await fixture.callAs(chat, 'ria_chat_grant', { action: 'list' })
   assert.equal(listedGrants.count, 1)
-  const resetGrant = await fixture.callAs(chat, 'chat_grant', { action: 'reset', grantId: granted.grant.grantId })
+  const resetGrant = await fixture.callAs(chat, 'ria_chat_grant', { action: 'reset', grantId: granted.grant.grantId })
   assert.equal(resetGrant.ok, true)
   assert.equal(resetGrant.restored, true)
-  const afterReset = await fixture.callAs(chat, 'chat_grant', { action: 'list' })
+  const afterReset = await fixture.callAs(chat, 'ria_chat_grant', { action: 'list' })
   assert.deepEqual(afterReset.grants, [])
 
-  const steer = await fixture.callAs(chat, 'chat_steer', {
+  const steer = await fixture.callAs(chat, 'ria_chat_steer', {
     ticketId: created.ticketId,
     message: 'keep it under 120 words',
   })
@@ -319,7 +319,7 @@ try {
   await fixture.service.controller.retryManagerInboxAtTurnEnd(created.ticketId, worker)
   assert.equal(fixture.prompts.length, beforeRepeat)
 
-  const progress = await fixture.callAs(worker, 'worker_report', {
+  const progress = await fixture.callAs(worker, 'ria_worker_report', {
     ticketId: created.ticketId,
     status: 'progress',
     summary: 'notes read',
@@ -328,7 +328,7 @@ try {
   assert.equal(progress.ok, true)
   assert.equal(fixture.service.store.ticket(created.ticketId).progress.lastPhase, 'notes read')
 
-  const blockedReport = await fixture.callAs(worker, 'worker_report', {
+  const blockedReport = await fixture.callAs(worker, 'ria_worker_report', {
     ticketId: created.ticketId,
     status: 'blocked',
     summary: 'need a format decision',
@@ -337,7 +337,7 @@ try {
   assert.equal(blockedReport.ok, true)
   assert.equal(fixture.service.store.ticket(created.ticketId).status, 'blocked')
 
-  const resumed = await fixture.callAs(chat, 'chat_resume', {
+  const resumed = await fixture.callAs(chat, 'ria_chat_resume', {
     ticketId: created.ticketId,
     message: 'use Markdown',
   })
@@ -353,7 +353,7 @@ try {
 
   // A grant bound to a ticket must not outlive it. The next grant is still
   // active when the Worker reports done, so completion itself must restore it.
-  const doneGrant = await fixture.callAs(chat, 'chat_grant', {
+  const doneGrant = await fixture.callAs(chat, 'ria_chat_grant', {
     action: 'set',
     sessionId: worker,
     ticketId: created.ticketId,
@@ -363,7 +363,7 @@ try {
   })
   assert.equal(doneGrant.ok, true)
 
-  const done = await fixture.callAs(worker, 'worker_report', {
+  const done = await fixture.callAs(worker, 'ria_worker_report', {
     ticketId: created.ticketId,
     status: 'done',
     summary: 'summary written',
@@ -374,10 +374,10 @@ try {
   assert.equal(closed.status, 'done')
   assert.equal(closed.resolution.summary, 'summary written')
   assert.ok(fixture.prompts.some(item => item.sessionId === chat && /已完成/.test(item.content[0].text)))
-  const afterDoneGrants = await fixture.callAs(chat, 'chat_grant', { action: 'list' })
+  const afterDoneGrants = await fixture.callAs(chat, 'ria_chat_grant', { action: 'list' })
   assert.deepEqual(afterDoneGrants.grants, [])
 
-  const status = await fixture.callAs(chat, 'chat_status', { ticketId: created.ticketId })
+  const status = await fixture.callAs(chat, 'ria_chat_status', { ticketId: created.ticketId })
   assert.equal(status.ok, true)
   assert.equal(status.ticket.status, 'done')
 
@@ -416,13 +416,13 @@ try {
   // so its sandbox can actually edit the project instead of stateDir/workers.
   const workspace = mkdtempSync(join(tmpdir(), 'ria-state-workspace-'))
   try {
-    const refused = await fixture.callAs(chat, 'chat_request', {
+    const refused = await fixture.callAs(chat, 'ria_chat_request', {
       goal: 'try to escape',
       workspace: fixture.stateDir,
     })
     assert.equal(refused.ok, false)
     assert.equal(refused.code, 'workspace_overlaps_state')
-    const project = await fixture.callAs(chat, 'chat_request', {
+    const project = await fixture.callAs(chat, 'ria_chat_request', {
       goal: 'update the project README',
       acceptance: 'the README mentions the new endpoint',
       workspace,
@@ -431,12 +431,12 @@ try {
     assert.equal(project.workspace, workspace)
     const projectAdvisor = fixture.service.controller.state.ticketMeta(project.ticketId).advisorSessionId
     assert.ok(fixture.prompts.some(item => item.sessionId === projectAdvisor && item.content[0].text.includes('Workspace: ' + workspace)))
-    await fixture.callAs(advisor, 'ticket_plan', {
+    await fixture.callAs(advisor, 'ria_ticket_plan', {
       ticketId: project.ticketId,
       summary: 'edit README',
       steps: ['open README', 'add endpoint'],
     })
-    const projectDispatch = await fixture.callAs(advisor, 'ticket_dispatch', { ticketId: project.ticketId })
+    const projectDispatch = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: project.ticketId })
     assert.equal(projectDispatch.ok, true)
     const projectWorker = fixture.service.controller.state.worker(projectDispatch.workerSessionId)
     assert.equal(projectWorker.cwd, workspace)
@@ -448,8 +448,8 @@ try {
     rmSync(workspace, { recursive: true, force: true })
   }
 
-  const blockedTicket = await fixture.callAs(chat, 'chat_request', { goal: 'needs a decision' })
-  const blocked = await fixture.callAs(advisor, 'ticket_block', {
+  const blockedTicket = await fixture.callAs(chat, 'ria_chat_request', { goal: 'needs a decision' })
+  const blocked = await fixture.callAs(advisor, 'ria_ticket_block', {
     ticketId: blockedTicket.ticketId,
     reason: 'choose a target format',
     question: 'PDF or Markdown?',
@@ -457,7 +457,7 @@ try {
   assert.equal(blocked.ok, true)
   assert.equal(fixture.service.store.ticket(blockedTicket.ticketId).status, 'blocked')
   assert.equal(fixture.service.store.ticket(blockedTicket.ticketId).attention.kind, 'question')
-  const resumedAdvisor = await fixture.callAs(chat, 'chat_resume', {
+  const resumedAdvisor = await fixture.callAs(chat, 'ria_chat_resume', {
     ticketId: blockedTicket.ticketId,
     message: 'use Markdown',
   })
@@ -498,10 +498,10 @@ let workingTicketId
 let workerId
 try {
   const chat = first.service.controller.state.chatSessionId
-  const created = await first.callAs(chat, 'chat_request', { goal: 'long running task' })
+  const created = await first.callAs(chat, 'ria_chat_request', { goal: 'long running task' })
   const advisor = first.service.controller.state.advisor('global').sessionId
-  await first.callAs(advisor, 'ticket_plan', { ticketId: created.ticketId, summary: 'do the work' })
-  const dispatched = await first.callAs(advisor, 'ticket_dispatch', { ticketId: created.ticketId })
+  await first.callAs(advisor, 'ria_ticket_plan', { ticketId: created.ticketId, summary: 'do the work' })
+  const dispatched = await first.callAs(advisor, 'ria_ticket_dispatch', { ticketId: created.ticketId })
   workingTicketId = created.ticketId
   workerId = dispatched.workerSessionId
   assert.equal(first.service.store.ticket(workingTicketId).status, 'working')
@@ -514,7 +514,7 @@ try {
   const chat = second.service.controller.state.chatSessionId
   assert.ok(chat)
   assert.equal(second.service.store.riaSessionId, chat)
-  assert.deepEqual(second.visibleTools(chat).sort(), ['chat_co_manage', 'chat_direct', 'chat_grant', 'chat_models', 'chat_new_session', 'chat_propose', 'chat_read', 'chat_request', 'chat_resume', 'chat_send_image', 'chat_sessions', 'chat_status', 'chat_steer', 'chat_stop_ticket', 'chat_watch', 'chat_worker_config'])
+  assert.deepEqual(second.visibleTools(chat).sort(), ['ria_chat_co_manage', 'ria_chat_direct', 'ria_chat_grant', 'ria_chat_models', 'ria_chat_new_session', 'ria_chat_propose', 'ria_chat_read', 'ria_chat_request', 'ria_chat_resume', 'ria_chat_send_image', 'ria_chat_sessions', 'ria_chat_status', 'ria_chat_steer', 'ria_chat_stop_ticket', 'ria_chat_watch', 'ria_chat_worker_config'])
   await second.service.startup()
   const parked = second.service.store.ticket(workingTicketId)
   assert.equal(parked.status, 'blocked')

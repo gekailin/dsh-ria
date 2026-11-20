@@ -34,7 +34,7 @@ try {
   const first = newTicket('pre-step delivery')
   fixture.setRunning(worker, true)
   const before = fixture.prompts.length
-  await fixture.callAs(chat, 'chat_steer', { ticketId: first.ticketId, message: 'use staging from now on' })
+  await fixture.callAs(chat, 'ria_chat_steer', { ticketId: first.ticketId, message: 'use staging from now on' })
   assert.equal(controller.state.pendingInbox(first.ticketId, worker).length, 1)
   // Mid-tool: no prompt, no steer, no interruption.
   assert.equal(fixture.prompts.length, before)
@@ -59,7 +59,7 @@ try {
   const second = newTicket('batch merge')
   fixture.setRunning(worker, true)
   for (const message of ['one', 'two', 'three', 'four']) {
-    await fixture.callAs(chat, 'chat_steer', { ticketId: second.ticketId, message })
+    await fixture.callAs(chat, 'ria_chat_steer', { ticketId: second.ticketId, message })
   }
   assert.equal(controller.state.pendingInbox(second.ticketId, worker).length, 4)
   const batch = await preStep()
@@ -78,7 +78,7 @@ try {
   //    until a pre-step boundary is reached, and no steer API is used.
   const third = newTicket('tool boundary')
   fixture.setRunning(worker, true)
-  await fixture.callAs(chat, 'chat_steer', { ticketId: third.ticketId, message: 'after the tool' })
+  await fixture.callAs(chat, 'ria_chat_steer', { ticketId: third.ticketId, message: 'after the tool' })
   const promptsDuringTool = fixture.prompts.length
   const steeredDuringTool = fixture.steered.length
   await new Promise(resolve => setTimeout(resolve, 10))
@@ -92,7 +92,7 @@ try {
   // Once injected, the same entry is not replayed by another boundary or done.
   const fourth = newTicket('single delivery owner')
   fixture.setRunning(worker, true)
-  const queued = await fixture.callAs(chat, 'chat_steer', { ticketId: fourth.ticketId, message: 'deliver at next boundary' })
+  const queued = await fixture.callAs(chat, 'ria_chat_steer', { ticketId: fourth.ticketId, message: 'deliver at next boundary' })
   const retiredTool = ['worker', 'checkpoint'].join('_')
   assert.equal(fixture.visibleTools(worker).includes(retiredTool), false)
   await assert.rejects(fixture.callAs(worker, retiredTool, { ticketId: fourth.ticketId }), /tool not installed/)
@@ -103,7 +103,7 @@ try {
   assert.equal(controller.state.pendingInbox(fourth.ticketId, worker).length, 0)
   assert.deepEqual((await preStep()).messages, [])
   const beforeDone = fixture.prompts.filter(item => item.sessionId === worker).length
-  assert.equal((await fixture.callAs(worker, 'worker_report', { ticketId: fourth.ticketId, status: 'done', summary: 'consumed once', evidence: ['step input'] })).ok, true)
+  assert.equal((await fixture.callAs(worker, 'ria_worker_report', { ticketId: fourth.ticketId, status: 'done', summary: 'consumed once', evidence: ['step input'] })).ok, true)
   assert.equal(fixture.prompts.filter(item => item.sessionId === worker).length, beforeDone, 'done may notify the Chat but must not send the consumed inbox to the Worker again')
   const consumed = events().filter(item => item.event === 'steer.delivered' && item.ticketId === fourth.ticketId)
   assert.equal(consumed.length, 1)
@@ -112,8 +112,8 @@ try {
   // 5. A whole turn that never reaches a boundary still retries before done.
   const fifth = newTicket('done retry')
   fixture.setRunning(worker, true)
-  await fixture.callAs(chat, 'chat_steer', { ticketId: fifth.ticketId, message: 'never consumed' })
-  const done = await fixture.callAs(worker, 'worker_report', { ticketId: fifth.ticketId, status: 'done', summary: 'finished', evidence: ['test'] })
+  await fixture.callAs(chat, 'ria_chat_steer', { ticketId: fifth.ticketId, message: 'never consumed' })
+  const done = await fixture.callAs(worker, 'ria_worker_report', { ticketId: fifth.ticketId, status: 'done', summary: 'finished', evidence: ['test'] })
   assert.equal(done.ok, true, JSON.stringify(done))
   assert.equal(store.ticket(fifth.ticketId).status, 'done')
   assert.equal(controller.state.pendingInbox(fifth.ticketId, worker).length, 0)

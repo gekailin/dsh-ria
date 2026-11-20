@@ -109,10 +109,10 @@ const transportAudits = () => auditLines().filter(item => item.event === 'approv
 
 try {
   await fixture.service.ensure()
-  const made = await fixture.callAs(chat, 'chat_request', { goal: 'run_code risk transport', acceptance: 'decisions' })
+  const made = await fixture.callAs(chat, 'ria_chat_request', { goal: 'run_code risk transport', acceptance: 'decisions' })
   const advisor = fixture.service.controller.state.advisor('global').sessionId
-  await fixture.callAs(advisor, 'ticket_plan', { ticketId: made.ticketId, summary: 'transport probes', steps: ['probe'] })
-  const dispatched = await fixture.callAs(advisor, 'ticket_dispatch', { ticketId: made.ticketId })
+  await fixture.callAs(advisor, 'ria_ticket_plan', { ticketId: made.ticketId, summary: 'transport probes', steps: ['probe'] })
+  const dispatched = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: made.ticketId })
   const ticketId = made.ticketId
   const worker = dispatched.workerSessionId
   const workerCwd = fixture.service.controller.state.worker(worker).cwd

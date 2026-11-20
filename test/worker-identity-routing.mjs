@@ -6,7 +6,7 @@ const planReply = routing => () => JSON.stringify({
   workOrder: { summary: 'plan the work', steps: ['do it'], ...(routing ? { routing } : {}) },
 })
 
-// 1) chat_worker_config carries explicit tags, roleNote and dedicated.
+// 1) ria_chat_worker_config carries explicit tags, roleNote and dedicated.
 {
   const fixture = await createFixture({ stateDefault: true, advisorPlan: 'stateless', llmReply: planReply() })
   try {
@@ -15,7 +15,7 @@ const planReply = routing => () => JSON.stringify({
     const worker = await controller.ensureWorker('global')
     const events = []
     fixture.service.routerEvent = event => { events.push(event) }
-    const set = await fixture.callAs(chat, 'chat_worker_config', {
+    const set = await fixture.callAs(chat, 'ria_chat_worker_config', {
       action: 'set', workerId: worker.sessionId,
       tags: ['SQLite', '前端 UI'], roleNote: '数据库事务专用', dedicated: true,
     })
@@ -28,27 +28,27 @@ const planReply = routing => () => JSON.stringify({
     const configEvents = events.filter(event => event.event === 'worker.config.changed')
     assert.deepEqual(configEvents.map(event => event.payload.field).sort(), ['dedicated', 'roleNote', 'tags'])
 
-    const get = await fixture.callAs(chat, 'chat_worker_config', { action: 'get' })
+    const get = await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'get' })
     const row = get.workers.find(item => item.sessionId === worker.sessionId)
     assert.deepEqual(row.tags, ['sqlite', '前端-ui'])
     assert.equal(row.dedicated, true)
 
     // Clearing explicit tags is explicit: pass [].
-    const cleared = await fixture.callAs(chat, 'chat_worker_config', { action: 'set', workerId: worker.sessionId, tags: [], dedicated: false })
+    const cleared = await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'set', workerId: worker.sessionId, tags: [], dedicated: false })
     assert.equal(cleared.ok, true)
     assert.deepEqual(cleared.worker.tags, [])
     assert.equal(cleared.worker.dedicated, false)
 
-    assert.equal((await fixture.callAs(chat, 'chat_worker_config', { action: 'set', workerId: worker.sessionId, tags: 'docs' })).code, 'invalid_tags')
-    assert.equal((await fixture.callAs(chat, 'chat_worker_config', { action: 'set', workerId: worker.sessionId, roleNote: 'x'.repeat(121) })).code, 'invalid_role_note')
-    assert.equal((await fixture.callAs(chat, 'chat_worker_config', { action: 'set', workerId: worker.sessionId, dedicated: 'yes' })).code, 'invalid_dedicated')
+    assert.equal((await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'set', workerId: worker.sessionId, tags: 'docs' })).code, 'invalid_tags')
+    assert.equal((await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'set', workerId: worker.sessionId, roleNote: 'x'.repeat(121) })).code, 'invalid_role_note')
+    assert.equal((await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'set', workerId: worker.sessionId, dedicated: 'yes' })).code, 'invalid_dedicated')
     console.log('worker config identity ok')
   } finally {
     fixture.cleanup()
   }
 }
 
-// 2) chat_co_manage takes the same identity fields.
+// 2) ria_chat_co_manage takes the same identity fields.
 {
   const fixture = await createFixture({
     stateDefault: true,
@@ -57,42 +57,42 @@ const planReply = routing => () => JSON.stringify({
   })
   try {
     const chat = fixture.service.controller.state.chatSessionId
-    const added = await fixture.callAs(chat, 'chat_co_manage', {
+    const added = await fixture.callAs(chat, 'ria_chat_co_manage', {
       action: 'add', sessionId: 'session-doc', cwd: '/work/docs', tags: ['Docs', '写作'], roleNote: '文档专用', dedicated: true,
     })
     assert.equal(added.ok, true, JSON.stringify(added))
     assert.deepEqual(added.worker.tags, ['docs', '写作'])
     assert.equal(added.worker.roleNote, '文档专用')
     assert.equal(added.worker.dedicated, true)
-    const list = await fixture.callAs(chat, 'chat_co_manage', { action: 'list' })
+    const list = await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'list' })
     const row = list.workers.find(item => item.sessionId === 'session-doc')
     assert.deepEqual(row.tags, ['docs', '写作'])
     assert.equal(row.dedicated, true)
-    const updated = await fixture.callAs(chat, 'chat_co_manage', { action: 'add', sessionId: 'session-doc', tags: [], dedicated: false })
+    const updated = await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'add', sessionId: 'session-doc', tags: [], dedicated: false })
     assert.deepEqual(updated.worker.tags, [])
     assert.equal(updated.worker.dedicated, false)
 
     // set only updates an existing co-managed session.
-    const set = await fixture.callAs(chat, 'chat_co_manage', {
+    const set = await fixture.callAs(chat, 'ria_chat_co_manage', {
       action: 'set', sessionId: 'session-doc', tags: ['API'], roleNote: '接口联调', dedicated: true,
     })
     assert.equal(set.ok, true, JSON.stringify(set))
     assert.deepEqual(set.worker.tags, ['api'])
     assert.equal(set.worker.roleNote, '接口联调')
     assert.equal(set.worker.dedicated, true)
-    const missingSet = await fixture.callAs(chat, 'chat_co_manage', { action: 'set', sessionId: 'session-missing', tags: ['x'] })
+    const missingSet = await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'set', sessionId: 'session-missing', tags: ['x'] })
     assert.equal(missingSet.ok, false)
     assert.equal(missingSet.code, 'not_co_managed')
     assert.equal(fixture.service.controller.state.worker('session-missing'), null, 'set never creates a worker')
-    const emptySet = await fixture.callAs(chat, 'chat_co_manage', { action: 'set', sessionId: 'session-doc' })
+    const emptySet = await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'set', sessionId: 'session-doc' })
     assert.equal(emptySet.code, 'config_required')
     const managed = await fixture.service.controller.ensureWorker('global')
-    assert.equal((await fixture.callAs(chat, 'chat_co_manage', { action: 'set', sessionId: managed.sessionId, tags: ['x'] })).code, 'not_co_managed')
+    assert.equal((await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'set', sessionId: managed.sessionId, tags: ['x'] })).code, 'not_co_managed')
 
-    assert.equal((await fixture.callAs(chat, 'chat_co_manage', { action: 'add', sessionId: 'session-doc', tags: {} })).code, 'invalid_tags')
-    const removed = await fixture.callAs(chat, 'chat_co_manage', { action: 'remove', sessionId: 'session-doc' })
+    assert.equal((await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'add', sessionId: 'session-doc', tags: {} })).code, 'invalid_tags')
+    const removed = await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'remove', sessionId: 'session-doc' })
     assert.equal(removed.removed, true)
-    const afterRemove = await fixture.callAs(chat, 'chat_co_manage', { action: 'list' })
+    const afterRemove = await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'list' })
     assert.equal(afterRemove.workers.some(item => item.sessionId === 'session-doc'), false)
     console.log('co-managed identity ok')
   } finally {
@@ -116,7 +116,7 @@ const planReply = routing => () => JSON.stringify({
     store.addWorker(w2.sessionId, { status: 'idle', currentTicketId: null, tags: ['sqlite'], lastUsedAt: Date.now() })
 
     // Affinity beats lastUsedAt: w2 is newer but w1 matches the requested tags.
-    const request = await fixture.callAs(chat, 'chat_request', { goal: 'frontend polish', preferredTags: ['Frontend', 'docs'] })
+    const request = await fixture.callAs(chat, 'ria_chat_request', { goal: 'frontend polish', preferredTags: ['Frontend', 'docs'] })
     assert.equal(request.ok, true, JSON.stringify(request))
     assert.equal(fixture.service.store.ticket(request.ticketId).executor, w1.sessionId)
     assert.deepEqual(store.ticketMeta(request.ticketId).routingTags, ['frontend', 'docs'])
@@ -133,20 +133,20 @@ const planReply = routing => () => JSON.stringify({
 
     // Dedicated protection: no ticket tags means w1 is never chosen.
     store.addWorker(w1.sessionId, { dedicated: true })
-    const generic = await fixture.callAs(chat, 'chat_request', { goal: 'unrelated chore' })
+    const generic = await fixture.callAs(chat, 'ria_chat_request', { goal: 'unrelated chore' })
     assert.equal(generic.ok, true, JSON.stringify(generic))
     assert.notEqual(fixture.service.store.ticket(generic.ticketId).executor, w1.sessionId)
 
     // An explicit topicId is linked as the primary topic and audited.
     const topic = fixture.service.store.addTopic({ title: '前端主题' })
-    const topicRequest = await fixture.callAs(chat, 'chat_request', { goal: 'topic work', topicId: topic.topicId })
+    const topicRequest = await fixture.callAs(chat, 'ria_chat_request', { goal: 'topic work', topicId: topic.topicId })
     assert.equal(topicRequest.ok, true, JSON.stringify(topicRequest))
     assert.equal(fixture.service.store.primaryTopicFor(topicRequest.ticketId), topic.topicId)
     const topicEvents = fixture.service.routerEvents.query({ ticketId: topicRequest.ticketId }).events
     assert.ok(topicEvents.some(event => event.event === 'topic.assigned' && event.payload.topicId === topic.topicId))
 
     // An unknown topic is a request error, not a half-created ticket.
-    const missing = await fixture.callAs(chat, 'chat_request', { goal: 'bad topic', topicId: 'topic_missing_x' })
+    const missing = await fixture.callAs(chat, 'ria_chat_request', { goal: 'bad topic', topicId: 'topic_missing_x' })
     assert.equal(missing.ok, false)
     assert.equal(missing.code, 'topic_missing')
     console.log('preferredTags/topicId routing ok')
@@ -163,7 +163,7 @@ const planReply = routing => () => JSON.stringify({
     const chat = controller.state.chatSessionId
     const tagged = await controller.ensureWorker('global')
     controller.state.addWorker(tagged.sessionId, { status: 'idle', currentTicketId: null, tags: ['frontend'] })
-    const request = await fixture.callAs(chat, 'chat_request', { goal: 'rust crate' })
+    const request = await fixture.callAs(chat, 'ria_chat_request', { goal: 'rust crate' })
     assert.equal(request.ok, true, JSON.stringify(request))
     const meta = controller.state.ticketMeta(request.ticketId)
     assert.equal(meta.requireTagMatch, true)

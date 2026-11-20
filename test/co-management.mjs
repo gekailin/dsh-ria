@@ -105,14 +105,14 @@ try {
     })
     try {
       const chat = fixture.service.controller.state.chatSessionId
-      const added = await fixture.callAs(chat, 'chat_watch', { action: 'add', sessionId: 'session-watch' })
+      const added = await fixture.callAs(chat, 'ria_chat_watch', { action: 'add', sessionId: 'session-watch' })
       assert.equal(added.ok, true, JSON.stringify(added))
       assert.equal(added.watch.sessionId, 'session-watch')
-      const listed = await fixture.callAs(chat, 'chat_watch', { action: 'list' })
+      const listed = await fixture.callAs(chat, 'ria_chat_watch', { action: 'list' })
       assert.equal(listed.watches.length, 1)
-      const status = await fixture.callAs(chat, 'chat_watch', { action: 'status', sessionId: 'session-watch' })
+      const status = await fixture.callAs(chat, 'ria_chat_watch', { action: 'status', sessionId: 'session-watch' })
       assert.equal(status.watch.titleSnapshot, 'Watched Session')
-      await assert.rejects(() => fixture.callAs('session-other', 'chat_watch', { action: 'list' }), /tool not installed|forbidden/)
+      await assert.rejects(() => fixture.callAs('session-other', 'ria_chat_watch', { action: 'list' }), /tool not installed|forbidden/)
 
       // Commands.
       const command = await fixture.service.controller.handleWatchCommand('/协管列表', chat)

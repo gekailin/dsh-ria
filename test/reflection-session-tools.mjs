@@ -50,7 +50,7 @@ const fixture = await createFixture({
 
 try {
   const chat = fixture.service.controller.state.chatSessionId
-  const made = await fixture.callAs(chat, 'chat_request', { goal: 'review the retrospective tools' })
+  const made = await fixture.callAs(chat, 'ria_chat_request', { goal: 'review the retrospective tools' })
   assert.equal(made.ok, true)
   const advisor = fixture.service.controller.state.advisor('global').sessionId
   // Create both Worker kinds before the read-only baseline: session creation
@@ -67,16 +67,16 @@ try {
   }
   // The retrospective tools moved off the Advisor onto the reflection Worker.
   assert.deepEqual(fixture.visibleTools(advisor).sort(), [
-    'glob', 'grep', 'lesson_review', 'lesson_search', 'read', 'ticket_block', 'ticket_dispatch', 'ticket_plan', 'ticket_read',
+    'glob', 'grep', 'read', 'ria_lesson_review', 'ria_lesson_search', 'ria_ticket_block', 'ria_ticket_dispatch', 'ria_ticket_plan', 'ria_ticket_read',
   ])
   assert.deepEqual(fixture.visibleTools(reflection.sessionId).sort(), [
-    'glob', 'grep', 'read', 'session_events', 'session_list', 'worker_report',
+    'glob', 'grep', 'read', 'ria_session_events', 'ria_session_list', 'ria_worker_report',
   ])
 
-  const listAs = args => fixture.callAs(reflection.sessionId, 'session_list', args)
-  const eventsAs = args => fixture.callAs(reflection.sessionId, 'session_events', args)
+  const listAs = args => fixture.callAs(reflection.sessionId, 'ria_session_list', args)
+  const eventsAs = args => fixture.callAs(reflection.sessionId, 'ria_session_events', args)
 
-  // 1. session_list filters: id prefix, title, cwd, time range, running,
+  // 1. ria_session_list filters: id prefix, title, cwd, time range, running,
   // agentAvailable, subagent/archived switches, limit and total.
   const all = await listAs({ idPrefix: 'session-retro' })
   assert.equal(all.ok, true)
@@ -122,7 +122,7 @@ try {
   assert.equal(limited.truncated, true)
   assert.equal((await listAs({ updatedAfter: 'not-a-date' })).code, 'invalid_time')
 
-  // 2. session_events: default review-critical set, one-line summaries,
+  // 2. ria_session_events: default review-critical set, one-line summaries,
   // type/seq/time filters and legacy non-key events excluded.
   const review = await eventsAs({ sessionId: 'session-retro-alpha' })
   assert.equal(review.ok, true)
@@ -224,20 +224,20 @@ try {
   assert.equal(byPrefix.sessionId, 'session-retro-alpha')
 
   // 7. Role isolation and the reflectionCaller guard.
-  assert.equal(fixture.visibleTools(advisor).includes('session_list'), false)
-  assert.equal(fixture.visibleTools(advisor).includes('session_events'), false)
+  assert.equal(fixture.visibleTools(advisor).includes('ria_session_list'), false)
+  assert.equal(fixture.visibleTools(advisor).includes('ria_session_events'), false)
   await assert.rejects(
-    () => fixture.callAs(chat, 'session_list', {}),
-    /tool not installed for .*: session_list/,
+    () => fixture.callAs(chat, 'ria_session_list', {}),
+    /tool not installed for .*: ria_session_list/,
   )
   await assert.rejects(
-    () => fixture.callAs(chat, 'session_events', { sessionId: 'session-retro-alpha' }),
-    /tool not installed for .*: session_events/,
+    () => fixture.callAs(chat, 'ria_session_events', { sessionId: 'session-retro-alpha' }),
+    /tool not installed for .*: ria_session_events/,
   )
-  assert.equal(fixture.visibleTools(worker.sessionId).includes('session_list'), false)
+  assert.equal(fixture.visibleTools(worker.sessionId).includes('ria_session_list'), false)
   await assert.rejects(
-    () => fixture.callAs(worker.sessionId, 'session_list', {}),
-    /tool not installed for .*: session_list/,
+    () => fixture.callAs(worker.sessionId, 'ria_session_list', {}),
+    /tool not installed for .*: ria_session_list/,
   )
   const forbiddenList = await fixture.service.controller.sessionList({}, { agent: { id: chat } })
   assert.equal(forbiddenList.code, 'forbidden')

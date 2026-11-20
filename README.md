@@ -7,7 +7,9 @@
 
 > 当前只有唯一架构：Chat 面对您，Advisor 拆解，Router 记录状态，Worker 执行。旧版单会话 Ria 已移除，不再支持 `{ v2: false }`。
 >
-> 需要审批的操作走 DSH 原生审批界面；Chat 仅在用户明确要求时可用 `chat_grant` 调整任意顶层会话的 sandbox/approval：纯降权永久生效；同一 grant 同时含降权和提权时，TTL 到期、ticket 结束或重启只自动恢复提权字段，降权保留。旧版单会话 Ria 已移除。
+> 工具命名：所有角色工具统一使用 `ria_` 前缀。旧名（`chat_*`/`chatbot_*`、`ticket_*`、`sage_*`、`lesson_*`、`worker_report`、`session_*`）保留为 deprecated 别名，调用时会 warn；下次重启验证通过后移除。
+>
+> 需要审批的操作走 DSH 原生审批界面；Chat 仅在用户明确要求时可用 `ria_chat_grant` 调整任意顶层会话的 sandbox/approval：纯降权永久生效；同一 grant 同时含降权和提权时，TTL 到期、ticket 结束或重启只自动恢复提权字段，降权保留。旧版单会话 Ria 已移除。
 
 ## 经典用法
 

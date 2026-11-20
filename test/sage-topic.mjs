@@ -8,7 +8,7 @@ try {
   const store = fixture.service.store
   const sage = (await controller.ensureSage()).sessionId
   const chat = controller.state.chatSessionId
-  const call = args => fixture.callAs(sage, 'sage_topic', args)
+  const call = args => fixture.callAs(sage, 'ria_sage_topic', args)
 
   const topicA = store.addTopic({ title: '重复主题 A', brief: 'first' })
   const topicB = store.addTopic({ title: '目标主题 B' })
@@ -54,7 +54,7 @@ try {
   assert.ok((await call({ action: 'list', includeArchived: true })).topics.some(item => item.topicId === topicB.topicId && item.archived))
 
   // 6. Only Sage holds the tool.
-  await assert.rejects(() => fixture.callAs(chat, 'sage_topic', { action: 'list' }), /tool not installed|forbidden/)
+  await assert.rejects(() => fixture.callAs(chat, 'ria_sage_topic', { action: 'list' }), /tool not installed|forbidden/)
 
   // 7. Unknown action and missing topic id are readable errors.
   assert.equal((await call({ action: 'nope' })).code, 'invalid_action')

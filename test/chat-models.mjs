@@ -17,7 +17,7 @@ function byKey(models, provider, model) {
 {
   const { fixture, chat } = await setup()
   try {
-    const first = await fixture.callAs(chat, 'chat_models', {})
+    const first = await fixture.callAs(chat, 'ria_chat_models', {})
     assert.equal(first.ok, true)
     assert.equal(first.source, 'catalog')
     assert.equal(first.count, 5)
@@ -39,12 +39,12 @@ function byKey(models, provider, model) {
     assert.equal(text.displayName, 'Text Only Model')
     assert.equal(text.contextWindow, undefined)
 
-    const second = await fixture.callAs(chat, 'chat_models', {})
+    const second = await fixture.callAs(chat, 'ria_chat_models', {})
     assert.equal(second.cached, true)
     assert.equal(second.count, 5)
     assert.equal(fixture.modelCalls.listModels, 2) // one per provider on the first call only
     fixture.service.controller.modelCatalogCache.at = Date.now() - MODEL_CATALOG_TTL_MS - 1
-    const third = await fixture.callAs(chat, 'chat_models', {})
+    const third = await fixture.callAs(chat, 'ria_chat_models', {})
     assert.equal(third.cached, false)
     assert.equal(fixture.modelCalls.listModels, 4)
   } finally {
@@ -56,12 +56,12 @@ function byKey(models, provider, model) {
 {
   const { fixture, chat } = await setup()
   try {
-    const result = await fixture.callAs(chat, 'chat_models', { provider: 'provider-text' })
+    const result = await fixture.callAs(chat, 'ria_chat_models', { provider: 'provider-text' })
     assert.equal(result.ok, true)
     assert.equal(result.count, 2)
     assert.equal(result.total, 2)
     assert.deepEqual(result.models.map(item => item.provider), ['provider-text', 'provider-text'])
-    const missing = await fixture.callAs(chat, 'chat_models', { provider: 'provider-nope' })
+    const missing = await fixture.callAs(chat, 'ria_chat_models', { provider: 'provider-nope' })
     assert.equal(missing.ok, true)
     assert.equal(missing.count, 0)
     assert.equal(missing.source, 'catalog')
@@ -75,13 +75,13 @@ function byKey(models, provider, model) {
 {
   const { fixture, chat } = await setup()
   try {
-    const byId = await fixture.callAs(chat, 'chat_models', { query: 'VISION' })
+    const byId = await fixture.callAs(chat, 'ria_chat_models', { query: 'VISION' })
     assert.equal(byId.count, 1)
     assert.equal(byId.models[0].model, 'model-vision')
-    const byName = await fixture.callAs(chat, 'chat_models', { query: 'text only' })
+    const byName = await fixture.callAs(chat, 'ria_chat_models', { query: 'text only' })
     assert.equal(byName.count, 1)
     assert.equal(byName.models[0].model, 'model-text-only')
-    const shared = await fixture.callAs(chat, 'chat_models', { query: 'shared' })
+    const shared = await fixture.callAs(chat, 'ria_chat_models', { query: 'shared' })
     assert.equal(shared.count, 2)
     assert.deepEqual(shared.models.map(item => item.provider).sort(), ['provider-ok', 'provider-text'])
   } finally {
@@ -93,15 +93,15 @@ function byKey(models, provider, model) {
 {
   const { fixture, chat } = await setup()
   try {
-    const defaults = await fixture.callAs(chat, 'chat_models', {})
+    const defaults = await fixture.callAs(chat, 'ria_chat_models', {})
     assert.equal(defaults.count, 5)
-    const capped = await fixture.callAs(chat, 'chat_models', { limit: 2 })
+    const capped = await fixture.callAs(chat, 'ria_chat_models', { limit: 2 })
     assert.equal(capped.ok, true)
     assert.equal(capped.count, 2)
     assert.equal(capped.total, 5)
     assert.equal(capped.models.length, 2)
     for (const limit of [0, 201, 1.5, 'many']) {
-      const bad = await fixture.callAs(chat, 'chat_models', { limit })
+      const bad = await fixture.callAs(chat, 'ria_chat_models', { limit })
       assert.equal(bad.ok, false)
       assert.equal(bad.code, 'invalid_limit')
     }
@@ -115,7 +115,7 @@ function byKey(models, provider, model) {
 {
   const { fixture, chat } = await setup({ failListModels: true })
   try {
-    const result = await fixture.callAs(chat, 'chat_models', {})
+    const result = await fixture.callAs(chat, 'ria_chat_models', {})
     assert.equal(result.ok, true)
     assert.equal(result.source, 'bundled-fallback')
     assert.equal(result.count, 2)
@@ -132,7 +132,7 @@ function byKey(models, provider, model) {
 {
   const { fixture, chat } = await setup({ noLlm: true })
   try {
-    const result = await fixture.callAs(chat, 'chat_models', {})
+    const result = await fixture.callAs(chat, 'ria_chat_models', {})
     assert.equal(result.ok, true)
     assert.equal(result.source, 'bundled-fallback')
     assert.equal(result.count, 2)
@@ -147,7 +147,7 @@ function byKey(models, provider, model) {
 {
   const { fixture, chat } = await setup({ emptyModelCatalog: true })
   try {
-    const result = await fixture.callAs(chat, 'chat_models', {})
+    const result = await fixture.callAs(chat, 'ria_chat_models', {})
     assert.equal(result.ok, true)
     assert.equal(result.source, 'catalog')
     assert.equal(result.count, 0)
@@ -164,7 +164,7 @@ function byKey(models, provider, model) {
 {
   const { fixture, chat } = await setup()
   try {
-    await assert.rejects(fixture.callAs('session-worker', 'chat_models', {}), /tool not installed/)
+    await assert.rejects(fixture.callAs('session-worker', 'ria_chat_models', {}), /tool not installed/)
     const direct = await fixture.service.controller.chatModels({}, { agent: { id: 'session-worker' } })
     assert.equal(direct.ok, false)
     assert.equal(direct.code, 'forbidden')

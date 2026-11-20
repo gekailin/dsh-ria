@@ -22,16 +22,16 @@ async function setup() {
 
 // Dispatch through the real path so attempt/worker bindings are production-shaped.
 async function dispatch(fixture, chat, goal) {
-  const made = await fixture.callAs(chat, 'chat_request', { goal })
+  const made = await fixture.callAs(chat, 'ria_chat_request', { goal })
   assert.equal(made.ok, true, JSON.stringify(made))
   const advisor = fixture.service.controller.state.advisor('global').sessionId
-  const plan = await fixture.callAs(advisor, 'ticket_plan', {
+  const plan = await fixture.callAs(advisor, 'ria_ticket_plan', {
     ticketId: made.ticketId,
     summary: 'do the work',
     steps: ['step one'],
   })
   assert.equal(plan.ok, true, JSON.stringify(plan))
-  const sent = await fixture.callAs(advisor, 'ticket_dispatch', { ticketId: made.ticketId })
+  const sent = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: made.ticketId })
   assert.equal(sent.ok, true, JSON.stringify(sent))
   return { ticketId: made.ticketId, workerId: sent.workerSessionId }
 }
@@ -207,7 +207,7 @@ const noticesAbout = (fixture, chat, ticketId) => fixture.prompts
   assert.equal(computeTicketHealth(ticket, { activeTurn: true, now: at(20), thresholdMinutes: 20 }).stuckSuspect, false)
   assert.equal(computeTicketHealth(ticket, { activeTurn: true, now: at(21), thresholdMinutes: 20 }).stuckSuspect, true)
   // Primary rule: a fresh Worker session means the ticket is advancing, however
-  // old the ticket record is. A step-running turn never writes worker_report.
+  // old the ticket record is. A step-running turn never writes ria_worker_report.
   const sessionFresh = computeTicketHealth(ticket, { activeTurn: true, now: at(60), sessionLastEventAt: at(59) })
   assert.equal(sessionFresh.sessionLastEventAgeMinutes, 1)
   assert.equal(sessionFresh.stuckSuspect, false, 'a live session is never stuck')
@@ -247,7 +247,7 @@ const noticesAbout = (fixture, chat, ticketId) => fixture.prompts
   assert.equal(empty.stuckSuspect, true)
 }
 
-// 6. chat_status ticket view and chat_worker_config get agree for the same
+// 6. ria_chat_status ticket view and ria_chat_worker_config get agree for the same
 //    ticket, both criteria included; status/currentTicketId consistency holds.
 {
   const { fixture, chat } = await setup()
@@ -255,8 +255,8 @@ const noticesAbout = (fixture, chat, ticketId) => fixture.prompts
     const { ticketId, workerId } = await dispatch(fixture, chat, 'health views case')
     turnStart(fixture, workerId, 4)
 
-    const viewOf = async () => (await fixture.callAs(chat, 'chat_status', { ticketId })).ticket
-    const workerOf = async () => (await fixture.callAs(chat, 'chat_worker_config', { action: 'get' })).workers
+    const viewOf = async () => (await fixture.callAs(chat, 'ria_chat_status', { ticketId })).ticket
+    const workerOf = async () => (await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'get' })).workers
       .find(item => item.sessionId === workerId)
 
     const viewActive = await viewOf()

@@ -39,8 +39,8 @@ const run = async (name, body) => {
     })
     assert.equal(moved.ok, true)
   }
-  const resume = message => fixture.callAs(chat, 'chat_resume', { ticketId, message })
-  const steer = message => fixture.callAs(chat, 'chat_steer', { ticketId, message })
+  const resume = message => fixture.callAs(chat, 'ria_chat_resume', { ticketId, message })
+  const steer = message => fixture.callAs(chat, 'ria_chat_steer', { ticketId, message })
   const step = async () => fixture.emit('agent/pre-step', { agent: fixture.agentFor(worker), turn: 1, step: 2 },
     async () => ({ kind: 'enter', messages: [] }))
   const events = () => fixture.service.routerEvents.query({ ticketId }).events
@@ -75,7 +75,7 @@ await run('idle resume is consumed immediately once, with no host next-turn item
   assert.ok(h.events().some(event => event.event === 'steer.delivered' && event.payload.deliveryMode === 'immediate' && event.payload.source === 'resume'))
   // A following boundary or done cannot replay the already consumed reply.
   assert.deepEqual((await h.step()).messages, [])
-  const done = await h.fixture.callAs(h.worker, 'worker_report', { ticketId: h.ticketId, status: 'done', summary: 'consumed', evidence: ['mock input'] })
+  const done = await h.fixture.callAs(h.worker, 'ria_worker_report', { ticketId: h.ticketId, status: 'done', summary: 'consumed', evidence: ['mock input'] })
   assert.equal(done.ok, true)
   assert.equal(h.host.inputs.length, 1)
 })
@@ -113,7 +113,7 @@ await run('done with unconsumed resume prompts one additional turn and consumes 
   h.park()
   assert.equal((await h.resume('resume-done-token')).ok, true)
   assert.equal(h.inbox().length, 1)
-  const done = await h.fixture.callAs(h.worker, 'worker_report', { ticketId: h.ticketId, status: 'done', summary: 'first turn finished', evidence: ['test'] })
+  const done = await h.fixture.callAs(h.worker, 'ria_worker_report', { ticketId: h.ticketId, status: 'done', summary: 'first turn finished', evidence: ['test'] })
   assert.equal(done.ok, true, JSON.stringify(done))
   assert.equal(h.host.nextTurn.length, 1)
   assert.match(h.host.nextTurn[0].content[0].text, /resume-done-token/)
@@ -151,7 +151,7 @@ await run('done-retry exhaustion blocks and notifies, without losing resume', as
     if (request.sessionId === h.worker) { attempts.push(request); throw new Error('mock worker unavailable') }
     return original(request, signal)
   }
-  const done = await h.fixture.callAs(h.worker, 'worker_report', { ticketId: h.ticketId, status: 'done', summary: 'finish', evidence: ['test'] })
+  const done = await h.fixture.callAs(h.worker, 'ria_worker_report', { ticketId: h.ticketId, status: 'done', summary: 'finish', evidence: ['test'] })
   assert.equal(done.ok, false)
   assert.equal(done.code, 'steer_undelivered')
   assert.equal(attempts.length, 2, 'reuse STEER_MAX_DELIVERY_ATTEMPTS=2')
@@ -234,7 +234,7 @@ await run('cancellation while a delivery fails stops retry and keeps it discarde
   h.fixture.ctx.sessionController.prompt = async (request, signal) => {
     if (request.sessionId === h.worker) {
       attempts++
-      const stopped = await h.fixture.callAs(h.chat, 'chat_stop_ticket', { ticketId: h.ticketId, reason: 'cancel pending delivery' })
+      const stopped = await h.fixture.callAs(h.chat, 'ria_chat_stop_ticket', { ticketId: h.ticketId, reason: 'cancel pending delivery' })
       assert.equal(stopped.ok, true)
       throw new Error('cancel won admission')
     }
@@ -257,7 +257,7 @@ for (const mode of deliveryModes) {
       const decision = await h.step()
       assert.match(decision.messages[0].content[0].text, /steer-pre-step-token/)
     } else if (mode === 'done-retry') {
-      const done = await h.fixture.callAs(h.worker, 'worker_report', { ticketId: h.ticketId, status: 'done', summary: 'done', evidence: ['test'] })
+      const done = await h.fixture.callAs(h.worker, 'ria_worker_report', { ticketId: h.ticketId, status: 'done', summary: 'done', evidence: ['test'] })
       assert.equal(done.ok, true)
     }
     assert.deepEqual(h.inbox(), [])

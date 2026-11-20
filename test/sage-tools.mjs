@@ -10,7 +10,7 @@ import { createFixture } from './support/ria-fixture.mjs'
 // regression in their agent creation/restriction paths fails this test too.
 // Router is not an agent or a session: lib/router/cli.mjs is a standalone
 // classifier process that registers no tools, so it has no surface to snapshot.
-const SAGE_TOOLS = ['sage_read', 'sage_request', 'sage_topic', 'sage_write']
+const SAGE_TOOLS = ['ria_sage_read', 'ria_sage_request', 'ria_sage_topic', 'ria_sage_write']
 const SAGE_FORBIDDEN = [
   'bash', 'write', 'edit', 'read', 'read_image', 'grep', 'glob', 'task',
   'run_code', 'subagent', 'subagent_fork', 'list_agents', 'send_message',
@@ -18,10 +18,10 @@ const SAGE_FORBIDDEN = [
   'schedule_create', 'skill', 'todo_write', 'workflow', 'working_directory',
 ]
 const CHAT_TOOLS = [
-  'chat_co_manage', 'chat_direct', 'chat_grant', 'chat_models', 'chat_new_session',
-  'chat_propose', 'chat_read', 'chat_request', 'chat_resume',
-  'chat_send_image', 'chat_sessions', 'chat_status', 'chat_steer', 'chat_stop_ticket',
-  'chat_watch', 'chat_worker_config',
+  'ria_chat_co_manage', 'ria_chat_direct', 'ria_chat_grant', 'ria_chat_models', 'ria_chat_new_session',
+  'ria_chat_propose', 'ria_chat_read', 'ria_chat_request', 'ria_chat_resume',
+  'ria_chat_send_image', 'ria_chat_sessions', 'ria_chat_status', 'ria_chat_steer', 'ria_chat_stop_ticket',
+  'ria_chat_watch', 'ria_chat_worker_config',
 ]
 // Preset/global tools this fixture mounts. It deliberately mirrors the families
 // the deployed standard/ptc presets expose (shell, fs, search, delegation,
@@ -34,8 +34,8 @@ const MOUNTED_GLOBALS = [
   'ask_user_question', 'job_list', 'list_subagent_models', 'exit_plan_mode',
 ]
 const ADVISOR_TOOLS = [
-  'glob', 'grep', 'lesson_review', 'lesson_search', 'read',
-  'ticket_block', 'ticket_dispatch', 'ticket_plan', 'ticket_read',
+  'glob', 'grep', 'read', 'ria_lesson_review', 'ria_lesson_search',
+  'ria_ticket_block', 'ria_ticket_dispatch', 'ria_ticket_plan', 'ria_ticket_read',
 ]
 const WORKER_DENY = ['subagent', 'subagent_fork', 'list_agents', 'send_message', 'interrupt_agent']
 
@@ -43,7 +43,7 @@ const fixture = await createFixture({ stateDefault: true, extraGlobalTools: MOUN
 try {
   const controller = fixture.service.controller
   const chat = (await controller.ensureChat()).sessionId
-  const created = await fixture.callAs(chat, 'chat_request', { goal: 'role tool surface baseline' })
+  const created = await fixture.callAs(chat, 'ria_chat_request', { goal: 'role tool surface baseline' })
   assert.equal(created.ok, true, JSON.stringify(created))
   const advisor = created.advisorResult.sessionId
 
@@ -70,7 +70,7 @@ try {
   // 2. The old wrong-namespace call really fails against a host-faithful
   //    restrict(): this is why Sage used to keep every global tool.
   assert.throws(
-    () => fixture.agentFor(sage).ctx.tools.restrict({ allow: ['sage_read'] }),
+    () => fixture.agentFor(sage).ctx.tools.restrict({ allow: ['ria_sage_read'] }),
     /unknown global tool/,
   )
 
@@ -83,9 +83,9 @@ try {
   // 4. Worker baseline: untouched by this ticket. The Worker is created only
   //    after Sage is installed, so its surface also proves install() for Sage
   //    did not alter the shared tool registry.
-  const planned = await fixture.callAs(advisor, 'ticket_plan', { ticketId: created.ticketId, summary: 'do the work', steps: ['x'] })
+  const planned = await fixture.callAs(advisor, 'ria_ticket_plan', { ticketId: created.ticketId, summary: 'do the work', steps: ['x'] })
   assert.equal(planned.ok, true, JSON.stringify(planned))
-  const dispatched = await fixture.callAs(advisor, 'ticket_dispatch', { ticketId: created.ticketId })
+  const dispatched = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: created.ticketId })
   assert.equal(dispatched.ok, true, JSON.stringify(dispatched))
   const worker = dispatched.workerSessionId
   const workerTools = fixture.visibleTools(worker).sort()
@@ -94,7 +94,7 @@ try {
     'task', 'web_fetch', 'web_search', 'plugin_manager', 'present',
     'schedule_create', 'skill', 'todo_write', 'workflow', 'working_directory',
     'create_goal', 'get_goal', 'update_goal', 'ask_user_question', 'job_list',
-    'list_subagent_models', 'exit_plan_mode', 'worker_report', 'write',
+    'list_subagent_models', 'exit_plan_mode', 'ria_worker_report', 'write',
   ].sort())
   for (const name of WORKER_DENY) {
     assert.equal(workerTools.includes(name), false, name + ' must stay denied to Workers')
@@ -112,7 +112,7 @@ try {
   assert.throws(
     () => controller.restrictSage({
       id: 'leak',
-      ctx: { tools: { restrict() {}, view() { return { visible: new Map([['bash', {}], ['sage_read', {}]]) } } } },
+      ctx: { tools: { restrict() {}, view() { return { visible: new Map([['bash', {}], ['ria_sage_read', {}]]) } } } },
     }),
     /unexpected tools: bash/,
   )

@@ -7,7 +7,7 @@ const reflectionPlan = async (fixture, controller) => {
   const request = await controller.requestTicket({ goal: 'reflect on recent work', acceptance: 'report' }, { agent: { id: chat } }, { mode: 'reflection' })
   assert.equal(request.ok, true, JSON.stringify(request))
   const advisor = controller.state.advisor('global').sessionId
-  const plan = await fixture.callAs(advisor, 'ticket_plan', {
+  const plan = await fixture.callAs(advisor, 'ria_ticket_plan', {
     ticketId: request.ticketId,
     summary: 'read evidence and write a retrospective',
     steps: ['ria_reflect_status', 'ria_reflect_read_context', 'ria_reflect_report'],
@@ -24,7 +24,7 @@ const reflectionPlan = async (fixture, controller) => {
     const controller = fixture.service.controller
     const { request, advisor } = await reflectionPlan(fixture, controller)
     controller.state.setTicketMeta(request.ticketId, { routingTags: ['reflect'], requireTagMatch: true })
-    const dispatched = await fixture.callAs(advisor, 'ticket_dispatch', { ticketId: request.ticketId })
+    const dispatched = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: request.ticketId })
     assert.equal(dispatched.ok, true, JSON.stringify(dispatched))
     assert.equal(controller.state.worker(dispatched.workerSessionId).workerType, 'reflection')
     assert.deepEqual(controller.state.worker(dispatched.workerSessionId).tags || [], [])
@@ -48,7 +48,7 @@ const reflectionPlan = async (fixture, controller) => {
     })
     const { request, advisor } = await reflectionPlan(fixture, controller)
     controller.state.setTicketMeta(request.ticketId, { routingTags: ['reflect'], requireTagMatch: true })
-    const dispatched = await fixture.callAs(advisor, 'ticket_dispatch', { ticketId: request.ticketId })
+    const dispatched = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: request.ticketId })
     assert.equal(dispatched.ok, true, JSON.stringify(dispatched))
     assert.equal(dispatched.workerSessionId, 'session-reflect-tagged')
   } finally { fixture.cleanup() }
@@ -70,7 +70,7 @@ const reflectionPlan = async (fixture, controller) => {
     const originalEvent = controller.routerEvent.bind(controller)
     controller.routerEvent = event => { events.push(event); originalEvent(event) }
     controller.promptSession = async () => { throw new Error('prompt transport down') }
-    const dispatched = await fixture.callAs(advisor, 'ticket_dispatch', { ticketId: request.ticketId })
+    const dispatched = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: request.ticketId })
     assert.equal(dispatched.ok, false)
     assert.equal(dispatched.code, 'dispatch_failed')
     const ticket = fixture.service.tickets.ticket(request.ticketId)
@@ -99,7 +99,7 @@ const reflectionPlan = async (fixture, controller) => {
     const request = await controller.requestTicket({ goal: 'final recheck failure', acceptance: 'x' }, { agent: { id: chat } }, { mode: 'work' })
     assert.equal(request.ok, true, JSON.stringify(request))
     const advisor = controller.state.advisor('global').sessionId
-    const plan = await fixture.callAs(advisor, 'ticket_plan', { ticketId: request.ticketId, summary: 'work', steps: ['work'] })
+    const plan = await fixture.callAs(advisor, 'ria_ticket_plan', { ticketId: request.ticketId, summary: 'work', steps: ['work'] })
     assert.equal(plan.ok, true, JSON.stringify(plan))
     const idle = await controller.ensureWorker('global')
     controller.ensureWorker = async () => {
@@ -109,7 +109,7 @@ const reflectionPlan = async (fixture, controller) => {
     const events = []
     const originalEvent = controller.routerEvent.bind(controller)
     controller.routerEvent = event => { events.push(event); originalEvent(event) }
-    const dispatched = await fixture.callAs(advisor, 'ticket_dispatch', { ticketId: request.ticketId })
+    const dispatched = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: request.ticketId })
     assert.equal(dispatched.ok, false)
     assert.equal(dispatched.code, 'dispatch_recheck_failed')
     const ticket = fixture.service.tickets.ticket(request.ticketId)

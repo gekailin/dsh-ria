@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { apply } from '../../lib/index.js'
 import { roleSessionTitle } from '../../lib/core/controller.mjs'
 import { ticketBrief } from '../../lib/core/prompts.mjs'
+import { isDeprecatedToolAlias } from '../../lib/tools/registry.mjs'
 
 const RIA_ID = 'session-ria'
 const MODEL_CATALOG = [
@@ -92,7 +93,7 @@ export async function createFixture(options = {}) {
     restrict(filter) {
       // Model dsh-tools/lib/index.js:453-467 exactly: a filter is validated
       // against inherited (global/preset) names only. A scope-local name such
-      // as sage_read, an unknown name, run_code, or an empty filter throws the
+      // as ria_sage_read, an unknown name, run_code, or an empty filter throws the
       // same way the host does. Without this validation a wrong-namespace
       // restriction silently no-ops in production yet passes the suite.
       const allow = filter && Array.isArray(filter.allow) ? filter.allow : undefined
@@ -501,7 +502,7 @@ export async function createFixture(options = {}) {
           ? Boolean(runningOverrides.get(id))
           : queues.has(id) ? (options.running === undefined ? true : Boolean(options.running)) : false
         const pendingInput = pendingInputs(id)
-        // The event cursor is the log end session_events starts from. Fixtures
+        // The event cursor is the log end ria_session_events starts from. Fixtures
         // with a seeded event log report its highest seq; the historical default
         // (1) stays for sessions without one.
         const recorded = options.sessionEvents && options.sessionEvents[id]
@@ -628,7 +629,7 @@ export async function createFixture(options = {}) {
   // Production Advisor planning is stateless (lib/core/controller.mjs). Most
   // suites here test Router/Worker mechanics and need a planned ticket whose
   // WorkOrder they control, plus an advisor-shaped session for the
-  // ticket_plan/ticket_dispatch tool surface. This scaffolding keeps that
+  // ria_ticket_plan/ria_ticket_dispatch tool surface. This scaffolding keeps that
   // surface in the fixture only; suites that exercise stateless planning pass
   // advisorPlan: 'stateless' and use the real LLM path.
   let advisorSeq = 0
@@ -725,7 +726,7 @@ export async function createFixture(options = {}) {
     visibleTools(sessionId) {
       const agent = makeAgent(String(sessionId))
       if (!agent) return []
-      return [...agent.ctx.tools.view(agent).visible.keys()]
+      return [...agent.ctx.tools.view(agent).visible.keys()].filter(name => !isDeprecatedToolAlias(name))
     },
     queues,
     restrictions,

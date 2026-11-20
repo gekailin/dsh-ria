@@ -22,7 +22,7 @@ try {
   assert.ok(prompt.includes('你是 Sage（Ria 的慢脑）'))
   assert.ok(prompt.includes('[PRINCIPLES 摘要]'))
   assert.ok(prompt.includes('cognition/INDEX.md'))
-  assert.ok(prompt.includes('需要最新认知时用 sage_read'))
+  assert.ok(prompt.includes('需要最新认知时用 ria_sage_read'))
   assert.equal(prompt.includes('[COGNITION INDEX]'), false)
   assert.equal(prompt.includes('project-static.md'), false)
   assert.equal(prompt.includes('上限 ' + SAGE_PRINCIPLES_MAX_CHARS), true)

@@ -51,7 +51,7 @@ try {
 
   // ② A reflection ticket: no Worker exists yet, so dispatch creates one.
   assert.equal(fixture.service.controller.state.workers().filter(item => item.workerType === 'reflection').length, 0)
-  // Reflection tickets are created internally now; chat_request is work-only.
+  // Reflection tickets are created internally now; ria_chat_request is work-only.
   const reflectionRequest = await fixture.service.controller.requestTicket({
     goal: '复盘最近两次会话',
     acceptance: '给出根因与建议',
@@ -59,13 +59,13 @@ try {
   assert.equal(reflectionRequest.ok, true, JSON.stringify(reflectionRequest))
   assert.equal(reflectionRequest.mode, 'reflection')
   const advisor = advisorOf()
-  const reflectionPlan = await fixture.callAs(advisor, 'ticket_plan', {
+  const reflectionPlan = await fixture.callAs(advisor, 'ria_ticket_plan', {
     ticketId: reflectionRequest.ticketId,
     summary: 'read the session logs and write a retrospective',
-    steps: ['session_list', 'session_events', 'report'],
+    steps: ['ria_session_list', 'ria_session_events', 'report'],
   })
   assert.equal(reflectionPlan.ok, true)
-  const reflectionDispatch = await fixture.callAs(advisor, 'ticket_dispatch', { ticketId: reflectionRequest.ticketId })
+  const reflectionDispatch = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: reflectionRequest.ticketId })
   assert.equal(reflectionDispatch.ok, true, JSON.stringify(reflectionDispatch))
   const reflectionWorkerId = reflectionDispatch.workerSessionId
   const reflectionMeta = workerOf(reflectionWorkerId)
@@ -80,25 +80,25 @@ try {
   // write/execute tools.
   const reflectionTools = fixture.visibleTools(reflectionWorkerId).sort()
   assert.deepEqual(reflectionTools, [
-    'glob', 'grep', 'read', 'session_events', 'session_list', 'worker_report',
+    'glob', 'grep', 'read', 'ria_session_events', 'ria_session_list', 'ria_worker_report',
   ])
   assert.equal(reflectionTools.includes('write'), false)
   assert.equal(reflectionTools.includes('edit'), false)
   assert.equal(reflectionTools.includes('bash'), false)
 
   // ③ A normal work ticket goes to a work Worker, never the reflection one.
-  const workRequest = await fixture.callAs(chat, 'chat_request', {
+  const workRequest = await fixture.callAs(chat, 'ria_chat_request', {
     goal: '修一个普通 bug',
     acceptance: '测试通过',
     mode: 'work',
   })
   assert.equal(workRequest.ok, true)
-  await fixture.callAs(advisor, 'ticket_plan', {
+  await fixture.callAs(advisor, 'ria_ticket_plan', {
     ticketId: workRequest.ticketId,
     summary: 'fix it',
     steps: ['edit', 'test'],
   })
-  const workDispatch = await fixture.callAs(advisor, 'ticket_dispatch', { ticketId: workRequest.ticketId })
+  const workDispatch = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: workRequest.ticketId })
   assert.equal(workDispatch.ok, true, JSON.stringify(workDispatch))
   const workWorkerId = workDispatch.workerSessionId
   const workMeta = workerOf(workWorkerId)
@@ -106,24 +106,24 @@ try {
   assert.notEqual(workWorkerId, reflectionWorkerId)
   const workTools = fixture.visibleTools(workWorkerId).sort()
   assert.deepEqual(workTools, [
-    'bash', 'edit', 'glob', 'grep', 'read', 'run_code', 'worker_report', 'write',
+    'bash', 'edit', 'glob', 'grep', 'read', 'ria_worker_report', 'run_code', 'write',
   ])
-  assert.equal(workTools.includes('session_list'), false)
-  assert.equal(workTools.includes('session_events'), false)
+  assert.equal(workTools.includes('ria_session_list'), false)
+  assert.equal(workTools.includes('ria_session_events'), false)
 
   // ④ The Advisor lost the retrospective tools entirely.
   const advisorTools = fixture.visibleTools(advisor)
-  assert.equal(advisorTools.includes('session_list'), false)
-  assert.equal(advisorTools.includes('session_events'), false)
+  assert.equal(advisorTools.includes('ria_session_list'), false)
+  assert.equal(advisorTools.includes('ria_session_events'), false)
 
   // ⑤ Kind mismatch is refused before anything is dispatched.
-  const mismatchRequest = await fixture.callAs(chat, 'chat_request', {
+  const mismatchRequest = await fixture.callAs(chat, 'ria_chat_request', {
     goal: '又一个普通工单',
     acceptance: 'x',
     mode: 'work',
   })
-  await fixture.callAs(advisor, 'ticket_plan', { ticketId: mismatchRequest.ticketId, summary: 'x', steps: ['x'] })
-  const mismatch = await fixture.callAs(advisor, 'ticket_dispatch', {
+  await fixture.callAs(advisor, 'ria_ticket_plan', { ticketId: mismatchRequest.ticketId, summary: 'x', steps: ['x'] })
+  const mismatch = await fixture.callAs(advisor, 'ria_ticket_dispatch', {
     ticketId: mismatchRequest.ticketId,
     workerSessionId: reflectionWorkerId,
   })

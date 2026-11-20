@@ -17,12 +17,12 @@ async function setup() {
   const textOf = prompt => (Array.isArray(prompt.content) ? prompt.content : [])
     .filter(part => part && part.type === 'text').map(part => part.text).join('\n')
   async function register(sessionId = 'session-cm', extra = {}) {
-    const added = await fixture.callAs(chat, 'chat_co_manage', { action: 'add', sessionId, ...extra })
+    const added = await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'add', sessionId, ...extra })
     assert.equal(added.ok, true, JSON.stringify(added))
     return added
   }
   async function ticket(goal, projectCwd, workerId = 'session-cm') {
-    const made = await fixture.callAs(chat, 'chat_request', { goal })
+    const made = await fixture.callAs(chat, 'ria_chat_request', { goal })
     assert.equal(made.ok, true, JSON.stringify(made))
     if (projectCwd !== undefined) state.setTicketMeta(made.ticketId, { projectCwd })
     if (workerId) state.setTicketMeta(made.ticketId, { workerId })
@@ -30,7 +30,7 @@ async function setup() {
   }
   async function plan(ticketId) {
     const advisor = state.advisor('global').sessionId
-    const made = await fixture.callAs(advisor, 'ticket_plan', {
+    const made = await fixture.callAs(advisor, 'ria_ticket_plan', {
       ticketId, summary: 'wire the transport', steps: ['read code', 'change dispatch'],
       acceptance: 'tests pass', artifacts: ['lib/roles/co-managed.mjs'], notes: 'keep it read-only first',
     })
@@ -40,7 +40,7 @@ async function setup() {
   async function dispatch(ticketId) {
     await plan(ticketId)
     const advisor = state.advisor('global').sessionId
-    const sent = await fixture.callAs(advisor, 'ticket_dispatch', { ticketId })
+    const sent = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId })
     assert.equal(sent.ok, true, JSON.stringify(sent))
     return sent
   }
@@ -56,16 +56,16 @@ async function setup() {
     assert.equal(added.worker.cwd, '/work/proj')
     assert.equal(added.worker.title, 'CM Session')
     assert.equal(added.worker.allowAutoDispatch, true)
-    assert.deepEqual((await fixture.callAs(chat, 'chat_co_manage', { action: 'list' })).workers.map(item => item.sessionId), ['session-cm'])
+    assert.deepEqual((await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'list' })).workers.map(item => item.sessionId), ['session-cm'])
     const off = await register('session-cm', { allowAutoDispatch: false })
     assert.equal(off.worker.allowAutoDispatch, false)
     assert.equal(state.worker('session-cm').allowAutoDispatch, false)
     await register('session-cm', { allowAutoDispatch: true })
     assert.equal(state.worker('session-cm').allowAutoDispatch, true)
-    const removed = await fixture.callAs(chat, 'chat_co_manage', { action: 'remove', sessionId: 'session-cm' })
+    const removed = await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'remove', sessionId: 'session-cm' })
     assert.equal(removed.ok, true)
     assert.equal(state.worker('session-cm'), null)
-    const missing = await fixture.callAs(chat, 'chat_co_manage', { action: 'add', sessionId: 'session-does-not-exist' })
+    const missing = await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'add', sessionId: 'session-does-not-exist' })
     assert.equal(missing.ok, false)
     assert.equal(missing.code, 'session_unavailable')
     console.log('co-managed registration ok')
@@ -94,7 +94,7 @@ async function setup() {
     assert.equal(watch.ticketId, ticketId)
     assert.equal(watch.options.relayReplies, true)
     assert.equal(watch.options.relayQuestions, true)
-    const list = await fixture.callAs(chat, 'chat_watch', { action: 'list' })
+    const list = await fixture.callAs(chat, 'ria_chat_watch', { action: 'list' })
     assert.equal(list.watches.find(item => item.sessionId === 'session-cm').addedBy, 'ticket:' + ticketId)
     // Idempotent: a second attach for the same ticket adds nothing.
     controller.attachTicketWatch(fixture.service.store.ticket(ticketId), state.worker('session-cm'))
@@ -120,7 +120,7 @@ async function setup() {
     assert.equal(loose.unstructured, true)
     assert.equal(loose.summary, '随便说说，没有结构')
     // stop_ticket works for co-managed: cancelled + the ticket watch is removed.
-    const stopped = await fixture.callAs(chat, 'chat_stop_ticket', { ticketId, reason: '演练结束' })
+    const stopped = await fixture.callAs(chat, 'ria_chat_stop_ticket', { ticketId, reason: '演练结束' })
     assert.equal(stopped.ok, true, JSON.stringify(stopped))
     assert.equal(fixture.service.store.ticket(ticketId).status, 'cancelled')
     assert.equal(controller.coManagement.watch('session-cm'), null, 'terminal state removes the ticket watch')
@@ -223,7 +223,7 @@ async function setup() {
   const { fixture, chat, state, controller, register, ticket, dispatch } = await setup()
   try {
     // The user watches the session first; registering it later must not replace the watch.
-    const manual = await fixture.callAs(chat, 'chat_watch', { action: 'add', sessionId: 'session-cm-other' })
+    const manual = await fixture.callAs(chat, 'ria_chat_watch', { action: 'add', sessionId: 'session-cm-other' })
     assert.equal(manual.ok, true, JSON.stringify(manual))
     const manualWatchId = manual.watch.watchId
     assert.notEqual(manual.watch.addedBy.startsWith('ticket:'), true)
@@ -231,7 +231,7 @@ async function setup() {
     const ticketId = await ticket('use the watched session', '/work/other/proj', 'session-cm-other')
     await dispatch(ticketId)
     assert.equal(controller.coManagement.watches().filter(item => item.sessionId === 'session-cm-other').length, 1, 'manual watch is reused, not duplicated')
-    await fixture.callAs(chat, 'chat_stop_ticket', { ticketId, reason: 'done rehearsing' })
+    await fixture.callAs(chat, 'ria_chat_stop_ticket', { ticketId, reason: 'done rehearsing' })
     const remaining = controller.coManagement.watches().filter(item => item.sessionId === 'session-cm-other')
     assert.equal(remaining.length, 1)
     assert.equal(remaining[0].watchId, manualWatchId, 'manual watch is untouched')
@@ -246,7 +246,7 @@ async function setup() {
     await register()
     const ticketId = await ticket('no plan yet', '/work/proj/e')
     const advisor = state.advisor('global').sessionId
-    const sent = await fixture.callAs(advisor, 'ticket_dispatch', { ticketId })
+    const sent = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId })
     assert.equal(sent.ok, false)
     assert.equal(sent.code, 'work_order_missing')
     assert.equal(fixture.service.store.ticket(ticketId).status, 'open')

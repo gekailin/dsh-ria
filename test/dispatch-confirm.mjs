@@ -9,15 +9,15 @@ async function setup() {
   return { fixture, chat }
 }
 
-// Dispatch through the real state path (chat_request -> ticket_plan ->
-// ticket_dispatch) so the attempt record is exactly the one production writes.
+// Dispatch through the real state path (ria_chat_request -> ria_ticket_plan ->
+// ria_ticket_dispatch) so the attempt record is exactly the one production writes.
 async function dispatch(fixture, chat, goal = 'ship the thing') {
-  const made = await fixture.callAs(chat, 'chat_request', { goal })
+  const made = await fixture.callAs(chat, 'ria_chat_request', { goal })
   assert.equal(made.ok, true)
   const advisor = fixture.service.controller.state.advisor('global').sessionId
-  const plan = await fixture.callAs(advisor, 'ticket_plan', { ticketId: made.ticketId, summary: 'do the work' })
+  const plan = await fixture.callAs(advisor, 'ria_ticket_plan', { ticketId: made.ticketId, summary: 'do the work' })
   assert.equal(plan.ok, true)
-  const sent = await fixture.callAs(advisor, 'ticket_dispatch', { ticketId: made.ticketId })
+  const sent = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: made.ticketId })
   assert.equal(sent.ok, true)
   return { ticketId: made.ticketId, workerId: sent.workerSessionId }
 }
@@ -52,7 +52,7 @@ function expire(fixture, ticketId) {
   }
 }
 
-// 2. A worker_report(progress) is equally hard evidence: those events can be
+// 2. A ria_worker_report(progress) is equally hard evidence: those events can be
 // observed without a turn/start, and the report path must confirm before the
 // sweep runs. The reconcile scan also treats an existing progress record as
 // one-time evidence, covering a lost confirmation from an older build.
@@ -60,7 +60,7 @@ function expire(fixture, ticketId) {
   const { fixture, chat } = await setup()
   try {
     const { ticketId, workerId } = await dispatch(fixture, chat)
-    const reported = await fixture.callAs(workerId, 'worker_report', {
+    const reported = await fixture.callAs(workerId, 'ria_worker_report', {
       ticketId,
       status: 'progress',
       summary: 'baseline checked',

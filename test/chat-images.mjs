@@ -47,16 +47,16 @@ const originalGet = fixture.ctx.get.bind(fixture.ctx)
 fixture.ctx.get = name => name === 'attachments'
   ? { ...originalGet(name), imageHostPath: () => imagePath }
   : originalGet(name)
-const send = args => fixture.callAs(chat, 'chat_send_image', args)
+const send = args => fixture.callAs(chat, 'ria_chat_send_image', args)
 const directNotices = []
 controller.notifyDirect = message => directNotices.push(message)
 let server
 let originalFetch
 try {
   // Tool surfaces and optional image parameters.
-  assert.ok(fixture.visibleTools(chat).includes('chat_send_image'))
+  assert.ok(fixture.visibleTools(chat).includes('ria_chat_send_image'))
   const schemas = fixture.agentTools.get(chat)
-  assert.equal(schemas.get('chat_send_image').parameters.properties.paths.maxItems, 5)
+  assert.equal(schemas.get('ria_chat_send_image').parameters.properties.paths.maxItems, 5)
 
   // Direct: keep the old string branch for text; encoded and stored image
   // parts preserve their identity/order through Claw.promptContent.

@@ -26,10 +26,10 @@ const ticketOf = ticketId => fixture.service.store.ticket(ticketId)
 
 try {
   await fixture.service.ensure()
-  const request = await fixture.callAs(chat, 'chat_request', { goal: 'approval probe', acceptance: 'none' })
+  const request = await fixture.callAs(chat, 'ria_chat_request', { goal: 'approval probe', acceptance: 'none' })
   const advisor = fixture.service.controller.state.advisor('global').sessionId
-  await fixture.callAs(advisor, 'ticket_plan', { ticketId: request.ticketId, summary: 'do the probe', steps: ['probe'] })
-  const dispatch = await fixture.callAs(advisor, 'ticket_dispatch', { ticketId: request.ticketId })
+  await fixture.callAs(advisor, 'ria_ticket_plan', { ticketId: request.ticketId, summary: 'do the probe', steps: ['probe'] })
+  const dispatch = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: request.ticketId })
   assert.equal(dispatch.ok, true)
   const ticketId = request.ticketId
   const worker = dispatch.workerSessionId
@@ -118,7 +118,7 @@ try {
   // cancelled (the budget-exhaustion shape) also stays blocked.
   // A manual resume is allowed while waiting on an approval.
   {
-    const resume = await fixture.callAs(chat, 'chat_resume', { ticketId })
+    const resume = await fixture.callAs(chat, 'ria_chat_resume', { ticketId })
     assert.equal(resume.ok, true, JSON.stringify(resume))
     assert.equal(ticketOf(ticketId).status, 'working')
   }
@@ -135,7 +135,7 @@ try {
   // Resuming also clears the recorded denial/cancellation, so the timeout case
   // starts from a healthy working ticket.
   {
-    const resume = await fixture.callAs(chat, 'chat_resume', { ticketId })
+    const resume = await fixture.callAs(chat, 'ria_chat_resume', { ticketId })
     assert.equal(resume.ok, true, JSON.stringify(resume))
     assert.equal(ticketOf(ticketId).status, 'working')
     assert.equal(ticketOf(ticketId).failure, null)
@@ -146,10 +146,10 @@ try {
   assert.equal(ticketOf(ticketId).status, 'blocked')
   assert.equal(ticketOf(ticketId).waitingOn, 'approval')
   {
-    const progress = await fixture.callAs(worker, 'worker_report', { ticketId, status: 'progress', summary: 'still waiting' })
+    const progress = await fixture.callAs(worker, 'ria_worker_report', { ticketId, status: 'progress', summary: 'still waiting' })
     assert.equal(progress.ok, true)
     assert.equal(progress.status, 'blocked')
-    const done = await fixture.callAs(worker, 'worker_report', { ticketId, status: 'done', summary: 'finished', evidence: ['command exit 0'] })
+    const done = await fixture.callAs(worker, 'ria_worker_report', { ticketId, status: 'done', summary: 'finished', evidence: ['command exit 0'] })
     assert.equal(done.ok, true, JSON.stringify(done))
     assert.equal(done.status, 'done')
     const ticket = ticketOf(ticketId)

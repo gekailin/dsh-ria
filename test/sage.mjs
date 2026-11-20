@@ -23,7 +23,7 @@ try {
   assert.equal(await titleOf(sage), 'Sage')
   assert.equal(controller.state.sageSessionId, sage)
   const sageTools = fixture.visibleTools(sage)
-  assert.deepEqual(sageTools.slice().sort(), ['sage_read', 'sage_request', 'sage_topic', 'sage_write'])
+  assert.deepEqual(sageTools.slice().sort(), ['ria_sage_read', 'ria_sage_request', 'ria_sage_topic', 'ria_sage_write'])
   assert.equal(sageTools.includes('bash'), false)
   assert.equal(sageTools.includes('write'), false)
   assert.equal(sageTools.includes('edit'), false)
@@ -46,7 +46,7 @@ try {
 
   // Path traversal is rejected; normal write updates INDEX and audits.
   assert.throws(() => cognition.read('../../ria.json'), /invalid|cognition/i)
-  const written = await fixture.callAs(sage, 'sage_write', {
+  const written = await fixture.callAs(sage, 'ria_sage_write', {
     path: 'chat/preferences.md',
     content: '用户偏好：回答简洁，先给结论。',
     mode: 'replace',
@@ -57,23 +57,23 @@ try {
   assert.equal(cognition.read('chat/preferences.md').includes('先给结论'), true)
 
   // User proposals are high priority and land in proposals/.
-  const proposed = await fixture.callAs(fixture.service.controller.state.chatSessionId, 'chat_propose', {
+  const proposed = await fixture.callAs(fixture.service.controller.state.chatSessionId, 'ria_chat_propose', {
     text: '用户喜欢先给结论',
     evidence: ['conversation'],
   })
   assert.equal(proposed.ok, true, JSON.stringify(proposed))
   assert.equal(proposed.proposal.priority, 'high')
   assert.ok(cognition.listProposals().some(item => item.id === proposed.proposal.id && item.author === 'user'))
-  const inbox = await fixture.callAs(sage, 'sage_read', { inbox: true })
+  const inbox = await fixture.callAs(sage, 'ria_sage_read', { inbox: true })
   assert.ok(inbox.proposals.some(item => item.id === proposed.proposal.id))
 
   // Planned tickets: each ticket gets its own Advisor session and the second
   // prompt does not carry the first ticket's context.
   const chat = fixture.service.controller.state.chatSessionId
-  const firstTicket = await fixture.callAs(chat, 'chat_request', { goal: 'alpha task', acceptance: 'alpha done' })
+  const firstTicket = await fixture.callAs(chat, 'ria_chat_request', { goal: 'alpha task', acceptance: 'alpha done' })
   assert.equal(firstTicket.ok, true)
   const firstSession = controller.state.ticketMeta(firstTicket.ticketId).advisorSessionId
-  const planned = await fixture.callAs(firstSession, 'ticket_plan', {
+  const planned = await fixture.callAs(firstSession, 'ria_ticket_plan', {
     ticketId: firstTicket.ticketId,
     summary: 'alpha plan',
     steps: ['do alpha'],
@@ -82,7 +82,7 @@ try {
   assert.equal(planned.ok, true, JSON.stringify(planned))
   assert.ok(planned.cognitionProposal && planned.cognitionProposal.author === 'advisor')
   assert.ok(cognition.listProposals().some(item => item.id === planned.cognitionProposal.id))
-  const secondTicket = await fixture.callAs(chat, 'chat_request', { goal: 'beta task', acceptance: 'beta done' })
+  const secondTicket = await fixture.callAs(chat, 'ria_chat_request', { goal: 'beta task', acceptance: 'beta done' })
   assert.equal(secondTicket.ok, true)
   const secondSession = controller.state.ticketMeta(secondTicket.ticketId).advisorSessionId
   assert.notEqual(firstSession, secondSession)
@@ -93,7 +93,7 @@ try {
   // Retrieval failure is explicit in the Advisor prompt.
   const originalRetrieve = cognition.retrieve.bind(cognition)
   cognition.retrieve = () => ({ snapshot: '', degraded: true, files: [] })
-  const degradedTicket = await fixture.callAs(chat, 'chat_request', { goal: 'gamma task' })
+  const degradedTicket = await fixture.callAs(chat, 'ria_chat_request', { goal: 'gamma task' })
   assert.equal(degradedTicket.ok, true)
   const degradedSession = controller.state.ticketMeta(degradedTicket.ticketId).advisorSessionId
   assert.ok(fixture.prompts.filter(item => String(item.sessionId) === String(degradedSession)).some(item => String(item.content[0].text).includes('cognition_status: degraded')))

@@ -1,19 +1,19 @@
 import assert from 'node:assert/strict'
 import { createFixture } from './support/ria-fixture.mjs'
 
-const BASE_WORKER_TOOLS = ['bash', 'edit', 'read', 'run_code', 'worker_report', 'write']
-const ADVISOR_TOOLS = ['lesson_review', 'lesson_search', 'read', 'ticket_block', 'ticket_dispatch', 'ticket_plan', 'ticket_read']
-const CHAT_TOOLS = ['chat_co_manage', 'chat_direct', 'chat_grant', 'chat_models', 'chat_new_session', 'chat_propose', 'chat_read', 'chat_request', 'chat_resume', 'chat_send_image', 'chat_sessions', 'chat_status', 'chat_steer', 'chat_stop_ticket', 'chat_watch', 'chat_worker_config']
+const BASE_WORKER_TOOLS = ['bash', 'edit', 'read', 'ria_worker_report', 'run_code', 'write']
+const ADVISOR_TOOLS = ['read', 'ria_lesson_review', 'ria_lesson_search', 'ria_ticket_block', 'ria_ticket_dispatch', 'ria_ticket_plan', 'ria_ticket_read']
+const CHAT_TOOLS = ['ria_chat_co_manage', 'ria_chat_direct', 'ria_chat_grant', 'ria_chat_models', 'ria_chat_new_session', 'ria_chat_propose', 'ria_chat_read', 'ria_chat_request', 'ria_chat_resume', 'ria_chat_send_image', 'ria_chat_sessions', 'ria_chat_status', 'ria_chat_steer', 'ria_chat_stop_ticket', 'ria_chat_watch', 'ria_chat_worker_config']
 const FULL_DENY = ['subagent', 'subagent_fork', 'list_agents', 'send_message', 'interrupt_agent']
 
 async function dispatchWorker(fixture) {
   const chat = fixture.service.controller.state.chatSessionId
-  const made = await fixture.callAs(chat, 'chat_request', { goal: 'delegation deny test' })
+  const made = await fixture.callAs(chat, 'ria_chat_request', { goal: 'delegation deny test' })
   assert.equal(made.ok, true)
   const advisor = fixture.service.controller.state.advisor('global').sessionId
-  const plan = await fixture.callAs(advisor, 'ticket_plan', { ticketId: made.ticketId, summary: 'do the work' })
+  const plan = await fixture.callAs(advisor, 'ria_ticket_plan', { ticketId: made.ticketId, summary: 'do the work' })
   assert.equal(plan.ok, true)
-  const sent = await fixture.callAs(advisor, 'ticket_dispatch', { ticketId: made.ticketId })
+  const sent = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: made.ticketId })
   assert.equal(sent.ok, true)
   return { chat, advisor, worker: sent.workerSessionId }
 }

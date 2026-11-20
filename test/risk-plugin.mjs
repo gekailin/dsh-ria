@@ -14,7 +14,7 @@ assert.equal(resolveEscalationPolicy({ ticket: { escalationPolicy: 'auto-low-med
 const fixture = await createFixture({ stateDefault: true })
 try {
   const chat = fixture.service.controller.state.chatSessionId
-  const created = await fixture.callAs(chat, 'chat_request', {
+  const created = await fixture.callAs(chat, 'ria_chat_request', {
     goal: 'deploy the plugin',
     escalationPolicy: 'auto-low-medium',
   })
@@ -30,7 +30,7 @@ try {
   assert.equal(reflection.ok, true, JSON.stringify(reflection))
   assert.equal(fixture.service.controller.state.ticketMeta(reflection.ticketId).escalationPolicy, undefined)
 
-  const invalid = await fixture.callAs(chat, 'chat_request', {
+  const invalid = await fixture.callAs(chat, 'ria_chat_request', {
     goal: 'bad policy',
     escalationPolicy: 'nope',
   })

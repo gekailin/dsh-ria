@@ -19,7 +19,7 @@ try {
   store.addWorker(worker.sessionId, { status: 'idle', currentTicketId: null, tags: ['frontend'], roleNote: '前端' })
   const topic = fixture.service.store.addTopic({ title: '前端主题', projectKey: projectKey(workspace) })
 
-  const request = await fixture.callAs(chat, 'chat_request', {
+  const request = await fixture.callAs(chat, 'ria_chat_request', {
     goal: 'frontend polish', workspace, preferredTags: ['frontend', 'docs'], topicId: topic.topicId,
   })
   assert.equal(request.ok, true, JSON.stringify(request))
@@ -28,7 +28,7 @@ try {
 
   // Reset the dispatch-time learning so this test proves the done path.
   store.addWorker(worker.sessionId, { autoTags: [], recentTopics: [] })
-  const done = await fixture.callAs(worker.sessionId, 'worker_report', {
+  const done = await fixture.callAs(worker.sessionId, 'ria_worker_report', {
     ticketId: request.ticketId, status: 'done', summary: 'completed', evidence: ['test: soft tags'],
   })
   assert.equal(done.ok, true, JSON.stringify(done))

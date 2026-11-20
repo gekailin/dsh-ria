@@ -53,7 +53,7 @@ try {
   try {
     await fixture.service.ensure()
     const chat = fixture.service.controller.state.chatSessionId
-    const planned = await fixture.callAs(chat, 'chat_request', { goal: 'legacy role ticket' })
+    const planned = await fixture.callAs(chat, 'ria_chat_request', { goal: 'legacy role ticket' })
     assert.equal(planned.ok, true, JSON.stringify(planned))
     assert.equal(planned.stateless, true)
     fixture.service.store.save()

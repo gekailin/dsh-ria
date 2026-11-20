@@ -15,10 +15,10 @@ const auditLines = () => {
 
 try {
   await fixture.service.ensure()
-  const made = await fixture.callAs(chat, 'chat_request', { goal: 'grant pending approval', acceptance: 'no cancelled' })
+  const made = await fixture.callAs(chat, 'ria_chat_request', { goal: 'grant pending approval', acceptance: 'no cancelled' })
   const advisor = fixture.service.controller.state.advisor('global').sessionId
-  await fixture.callAs(advisor, 'ticket_plan', { ticketId: made.ticketId, summary: 'wait on approval', steps: ['approval'] })
-  const dispatched = await fixture.callAs(advisor, 'ticket_dispatch', { ticketId: made.ticketId })
+  await fixture.callAs(advisor, 'ria_ticket_plan', { ticketId: made.ticketId, summary: 'wait on approval', steps: ['approval'] })
+  const dispatched = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: made.ticketId })
   const ticketId = made.ticketId
   const worker = dispatched.workerSessionId
   const ticket = () => fixture.service.store.ticket(ticketId)
@@ -47,7 +47,7 @@ try {
   assert.ok(fixture.service.controller.pendingApprovals.has('apr_grant_pending'))
 
   // The grant lands while the request is still pending.
-  const granted = await fixture.callAs(chat, 'chat_grant', {
+  const granted = await fixture.callAs(chat, 'ria_chat_grant', {
     action: 'set',
     sessionId: worker,
     sandboxMode: 'danger-full-access',
@@ -123,9 +123,9 @@ try {
   }
 
   // No pending request: grant still works and must not claim it settled anything.
-  await fixture.callAs(chat, 'chat_grant', { action: 'reset', grantId: granted.grant.grantId })
+  await fixture.callAs(chat, 'ria_chat_grant', { action: 'reset', grantId: granted.grant.grantId })
   const before = notices().length
-  const second = await fixture.callAs(chat, 'chat_grant', {
+  const second = await fixture.callAs(chat, 'ria_chat_grant', {
     action: 'set',
     sessionId: worker,
     sandboxMode: 'read-only',
@@ -137,7 +137,7 @@ try {
   await settle()
   const added = notices().slice(before)
   assert.equal(added.some(text => text.includes('已放行此前挂起的请求')), false)
-  await fixture.callAs(chat, 'chat_grant', { action: 'reset', grantId: second.grant.grantId })
+  await fixture.callAs(chat, 'ria_chat_grant', { action: 'reset', grantId: second.grant.grantId })
 
   // Stale records without a live settler are superseded, not kept blocking.
   const controller = fixture.service.controller
@@ -179,7 +179,7 @@ try {
   controller.state.setTicketMeta(complete.ticketId, { phase: 'blocked', workerId: worker })
   controller.state.addReport({ reportId: 'saved_done', ticketId: complete.ticketId, workerId: worker, status: 'done', summary: 'already completed', evidence: ['exit 0'], at: Date.now() })
   controller.pendingApprovals.set('apr_saved_done', { ticketId: complete.ticketId, sessionId: worker, toolName: 'bash', callId: 'saved-done-call', key: 'saved-done-key' })
-  const completingGrant = await fixture.callAs(chat, 'chat_grant', { action: 'set', ticketId: complete.ticketId,
+  const completingGrant = await fixture.callAs(chat, 'ria_chat_grant', { action: 'set', ticketId: complete.ticketId,
     sandboxMode: 'danger-full-access', approvalPolicy: 'never', reason: 'finish recorded result' })
   assert.equal(completingGrant.ok, true, JSON.stringify(completingGrant))
   assert.equal(fixture.service.store.ticket(complete.ticketId).status, 'done')
@@ -197,7 +197,7 @@ try {
   controller.recordSuccessfulApprovalOperation(worker, { callId: 'success-call', exitCode: 0 })
   assert.equal(controller.pendingApprovals.has('apr_success'), false)
   assert.equal(fixture.service.store.ticket(successful.ticketId).status, 'working')
-  const done = await fixture.callAs(worker, 'worker_report', { ticketId: successful.ticketId, status: 'done', summary: 'operation finished', evidence: ['matching exit 0'] })
+  const done = await fixture.callAs(worker, 'ria_worker_report', { ticketId: successful.ticketId, status: 'done', summary: 'operation finished', evidence: ['matching exit 0'] })
   assert.equal(done.ok, true, JSON.stringify(done))
   fixture.service.onSessionEvent({ header: { id: worker } }, { type: 'approval/decided', data: { id: 'apr_success', outcome: 'cancelled' } })
   assert.equal(fixture.service.store.ticket(successful.ticketId).status, 'done')
@@ -218,7 +218,7 @@ try {
   const orphan = fixture.service.store.addTicket({ status: 'blocked', executor: worker, waitingOn: 'approval', blockedReason: 'orphan request' })
   controller.state.setTicketMeta(orphan.ticketId, { phase: 'blocked', workerId: worker })
   const orphanSettler = controller.createApprovalSettler(worker, 'bash', 'orphan-call', '', { ticketId: orphan.ticketId })
-  const orphanDone = await fixture.callAs(worker, 'worker_report', { ticketId: orphan.ticketId, status: 'done', summary: 'orphan finished', evidence: ['done output'] })
+  const orphanDone = await fixture.callAs(worker, 'ria_worker_report', { ticketId: orphan.ticketId, status: 'done', summary: 'orphan finished', evidence: ['done output'] })
   assert.equal(orphanDone.ok, true, JSON.stringify(orphanDone))
   assert.equal(await orphanSettler.promise, 'rejected', 'completion cannot authorize an obsolete request')
   assert.equal(controller.pendingSettlers.has(orphanSettler.key), false)

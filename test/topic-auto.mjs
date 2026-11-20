@@ -74,7 +74,7 @@ try {
   reuseTopic = fixture.service.store.addTopic({ title: '前端候选主题', projectKey: expectedProjectKey })
   const probes = fixture.llmCalls.length
 
-  const reused = await fixture.callAs(chat, 'chat_request', { goal: 'REUSE-ME', workspace })
+  const reused = await fixture.callAs(chat, 'ria_chat_request', { goal: 'REUSE-ME', workspace })
   assert.equal(reused.ok, true, JSON.stringify(reused))
   assert.equal(fixture.service.store.primaryTopicFor(reused.ticketId), reuseTopic.topicId)
   const prompt = textOf(fixture.llmCalls[probes])
@@ -83,7 +83,7 @@ try {
   assert.ok(prompt.includes('数据库事务专用'), 'dedicated worker role note must be injected')
 
   // create: new Topic with the ticket projectKey and a primary link.
-  const created = await fixture.callAs(chat, 'chat_request', { goal: 'CREATE-ME', workspace })
+  const created = await fixture.callAs(chat, 'ria_chat_request', { goal: 'CREATE-ME', workspace })
   assert.equal(created.ok, true, JSON.stringify(created))
   const createdTopicId = fixture.service.store.primaryTopicFor(created.ticketId)
   assert.ok(createdTopicId)
@@ -94,7 +94,7 @@ try {
   // dedupe: a create whose title already exists is converted to reuse.
   dedupeTopic = fixture.service.store.addTopic({ title: '已有主题标题', projectKey: expectedProjectKey })
   const beforeDedupe = fixture.service.store.topics().length
-  const deduped = await fixture.callAs(chat, 'chat_request', { goal: 'DEDUPE-ME', workspace })
+  const deduped = await fixture.callAs(chat, 'ria_chat_request', { goal: 'DEDUPE-ME', workspace })
   assert.equal(deduped.ok, true, JSON.stringify(deduped))
   assert.equal(fixture.service.store.primaryTopicFor(deduped.ticketId), dedupeTopic.topicId)
   assert.equal(fixture.service.store.topics().length, beforeDedupe, 'dedupe must not create a duplicate topic')
@@ -103,7 +103,7 @@ try {
 
   // explicit topicId always wins over the Advisor's topic suggestion.
   explicitTopic = fixture.service.store.addTopic({ title: '用户显式主题', projectKey: expectedProjectKey })
-  const explicit = await fixture.callAs(chat, 'chat_request', { goal: 'EXPLICIT-ME', workspace, topicId: explicitTopic.topicId })
+  const explicit = await fixture.callAs(chat, 'ria_chat_request', { goal: 'EXPLICIT-ME', workspace, topicId: explicitTopic.topicId })
   assert.equal(explicit.ok, true, JSON.stringify(explicit))
   assert.equal(fixture.service.store.primaryTopicFor(explicit.ticketId), explicitTopic.topicId)
   assert.equal(fixture.service.store.topics().some(topic => topic.title === '不应创建的主题'), false)
@@ -113,7 +113,7 @@ try {
   const originalLink = fixture.service.store.linkTicket
   fixture.service.store.linkTicket = () => { throw new Error('link store unavailable') }
   try {
-    const degraded = await fixture.callAs(chat, 'chat_request', { goal: 'DEGRADE-ME', workspace })
+    const degraded = await fixture.callAs(chat, 'ria_chat_request', { goal: 'DEGRADE-ME', workspace })
     assert.equal(degraded.ok, true, JSON.stringify(degraded))
     const ticket = fixture.service.store.ticket(degraded.ticketId)
     assert.equal(ticket.status, 'working', 'topic failure must not block dispatch')

@@ -13,10 +13,10 @@ async function withFixture(test, options = {}) {
 async function plannedTicket(fixture, args = {}) {
   const controller = fixture.service.controller
   const chat = controller.state.chatSessionId
-  const request = await fixture.callAs(chat, 'chat_request', { goal: 'auto-dispatch policy', ...args })
+  const request = await fixture.callAs(chat, 'ria_chat_request', { goal: 'auto-dispatch policy', ...args })
   assert.equal(request.ok, true, JSON.stringify(request))
   const advisor = controller.state.advisor('global').sessionId
-  const plan = await fixture.callAs(advisor, 'ticket_plan', {
+  const plan = await fixture.callAs(advisor, 'ria_ticket_plan', {
     ticketId: request.ticketId, summary: 'execute the ticket', steps: ['work'],
   })
   assert.equal(plan.ok, true, JSON.stringify(plan))
@@ -65,7 +65,7 @@ await withFixture(async fixture => {
   const controller = fixture.service.controller
   const chat = controller.state.chatSessionId
   const explicitOnly = await controller.ensureWorker('global')
-  const off = await fixture.callAs(chat, 'chat_worker_config', {
+  const off = await fixture.callAs(chat, 'ria_chat_worker_config', {
     action: 'set', workerId: explicitOnly.sessionId, allowAutoDispatch: false,
   })
   assert.equal(off.ok, true, JSON.stringify(off))
@@ -80,9 +80,9 @@ await withFixture(async fixture => {
   assert.equal(controller.state.worker(explicitOnly.sessionId).cwd, auto.meta.cwd)
   controller.state.addWorker(explicitOnly.sessionId, { lastUsedAt: Date.now() + 1000 })
   assert.equal((await controller.ensureWorker('global')).sessionId, auto.sessionId)
-  const get = await fixture.callAs(chat, 'chat_worker_config', { action: 'get' })
+  const get = await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'get' })
   assert.equal(get.workers.find(item => item.sessionId === explicitOnly.sessionId).allowAutoDispatch, false)
-  const on = await fixture.callAs(chat, 'chat_worker_config', {
+  const on = await fixture.callAs(chat, 'ria_chat_worker_config', {
     action: 'set', seq: explicitOnly.meta.seq, allowAutoDispatch: true,
   })
   assert.equal(on.ok, true, JSON.stringify(on))
@@ -96,13 +96,13 @@ await withFixture(async fixture => {
   assert.ok(changes.some(event => event.payload.before === true && event.payload.after === false))
   assert.ok(changes.some(event => event.payload.before === false && event.payload.after === true))
   assert.ok(changes.every(event => event.actor === 'chat' && event.payload.workerId === explicitOnly.sessionId))
-  const repeated = await fixture.callAs(chat, 'chat_worker_config', {
+  const repeated = await fixture.callAs(chat, 'ria_chat_worker_config', {
     action: 'set', workerId: explicitOnly.sessionId, allowAutoDispatch: true,
   })
   assert.equal(repeated.ok, true)
   assert.equal(eventsFor(fixture).filter(event => event.event === 'worker.config.changed' && event.payload.field === 'allowAutoDispatch').length, 2)
   for (const value of ['false', 0, null]) {
-    const invalid = await fixture.callAs(chat, 'chat_worker_config', {
+    const invalid = await fixture.callAs(chat, 'ria_chat_worker_config', {
       action: 'set', workerId: explicitOnly.sessionId, allowAutoDispatch: value,
     })
     assert.equal(invalid.code, 'invalid_allow_auto_dispatch')
@@ -121,16 +121,16 @@ for (const selector of ['workerId', 'workerSeq']) {
     assert.equal(controller.state.ticketMeta(request.ticketId).workerId, target.sessionId)
     if (selector === 'workerSeq') assert.equal(controller.state.ticketMeta(request.ticketId).workerSeq, target.meta.seq)
     const beforeCreates = fixture.creates.length
-    const sent = await fixture.callAs(advisor, 'ticket_dispatch', { ticketId: request.ticketId })
+    const sent = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: request.ticketId })
     assert.equal(sent.ok, true, JSON.stringify(sent))
     assert.equal(sent.workerSessionId, target.sessionId)
     assert.equal(fixture.creates.length, beforeCreates)
     assert.equal(fixture.service.tickets.ticket(request.ticketId).executor, target.sessionId)
     assert.equal(controller.state.worker(target.sessionId).allowAutoDispatch, false)
     // The opt-out concerns new automatic assignments, not reporting or resuming this ticket.
-    const blocked = await fixture.callAs(target.sessionId, 'worker_report', { ticketId: request.ticketId, status: 'blocked', question: 'continue?' })
+    const blocked = await fixture.callAs(target.sessionId, 'ria_worker_report', { ticketId: request.ticketId, status: 'blocked', question: 'continue?' })
     assert.equal(blocked.ok, true)
-    const resumed = await fixture.callAs(chat, 'chat_resume', { ticketId: request.ticketId })
+    const resumed = await fixture.callAs(chat, 'ria_chat_resume', { ticketId: request.ticketId })
     assert.equal(resumed.ok, true, JSON.stringify(resumed))
     assert.equal(resumed.workerSessionId, target.sessionId)
   })
@@ -145,7 +145,7 @@ for (const selector of ['metaId', 'metaSeq', 'toolId']) {
     const { request, advisor } = await plannedTicket(fixture)
     if (selector === 'metaId') controller.state.setTicketMeta(request.ticketId, { workerId: target.sessionId })
     if (selector === 'metaSeq') controller.state.setTicketMeta(request.ticketId, { workerSeq: target.meta.seq })
-    const sent = await fixture.callAs(advisor, 'ticket_dispatch', {
+    const sent = await fixture.callAs(advisor, 'ria_ticket_dispatch', {
       ticketId: request.ticketId, ...(selector === 'toolId' ? { workerSessionId: target.sessionId } : {}),
     })
     assert.equal(sent.ok, true, JSON.stringify(sent))
@@ -181,7 +181,7 @@ for (const scenario of ['archived', 'busy', 'kind', 'missing', 'unresolvable', '
     }
     const beforeCreates = fixture.creates.length
     const beforePrompts = fixture.prompts.length
-    const sent = await fixture.callAs(advisor, 'ticket_dispatch', { ticketId: request.ticketId })
+    const sent = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: request.ticketId })
     assert.equal(sent.ok, false, scenario + ': ' + JSON.stringify(sent))
     assert.equal(sent.code, 'specified_worker_unavailable')
     assert.equal(sent.status, 'blocked')
@@ -199,7 +199,7 @@ for (const scenario of ['archived', 'busy', 'kind', 'missing', 'unresolvable', '
     assert.ok(event)
     assert.equal(event.payload.workerId, target.sessionId)
     // A later resume remains pinned too (including initially failed dispatches).
-    const resumed = await fixture.callAs(chat, 'chat_resume', { ticketId: request.ticketId })
+    const resumed = await fixture.callAs(chat, 'ria_chat_resume', { ticketId: request.ticketId })
     assert.equal(resumed.ok, false, JSON.stringify(resumed))
     assert.equal(fixture.creates.length, beforeCreates)
     assert.equal(fixture.service.tickets.ticket(request.ticketId).waitingOn, 'user')
@@ -217,13 +217,13 @@ await withFixture(async fixture => {
     { workerSeq: 0 }, { workerSeq: 1.5 }, { workerSeq: '1' },
     { workerSeq: 999999 },
   ]) {
-    const result = await fixture.callAs(chat, 'chat_request', { goal: 'invalid selector', ...args })
+    const result = await fixture.callAs(chat, 'ria_chat_request', { goal: 'invalid selector', ...args })
     assert.equal(result.ok, false, JSON.stringify(result))
     assert.equal(fixture.service.tickets.tickets().length, before)
   }
   // The independent reflection sequence must not shadow work Worker seq=1.
   await controller.ensureReflectionWorker('global')
-  const request = await fixture.callAs(chat, 'chat_request', { goal: 'work seq', workerSeq: target.meta.seq })
+  const request = await fixture.callAs(chat, 'ria_chat_request', { goal: 'work seq', workerSeq: target.meta.seq })
   assert.equal(request.ok, true)
   assert.equal(controller.state.ticketMeta(request.ticketId).workerId, target.sessionId)
 })
@@ -237,7 +237,7 @@ await withFixture(async fixture => {
   assert.equal(reflection.meta.seq, work.meta.seq)
   const { request, advisor } = await plannedTicket(fixture, { workerSeq: work.meta.seq })
   assert.equal(controller.state.ticketMeta(request.ticketId).workerId, work.sessionId)
-  const sent = await fixture.callAs(advisor, 'ticket_dispatch', { ticketId: request.ticketId })
+  const sent = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: request.ticketId })
   assert.equal(sent.workerSessionId, work.sessionId)
 })
 
@@ -251,8 +251,8 @@ await withFixture(async fixture => {
   const request = await controller.requestTicket({ goal: 'reflection auto-dispatch' }, { agent: { id: controller.state.chatSessionId } }, { mode: 'reflection' })
   assert.equal(request.ok, true, JSON.stringify(request))
   const advisor = controller.state.advisor('global').sessionId
-  assert.equal((await fixture.callAs(advisor, 'ticket_plan', { ticketId: request.ticketId, summary: 'read the logs', steps: ['session_list'] })).ok, true)
-  const sent = await fixture.callAs(advisor, 'ticket_dispatch', {
+  assert.equal((await fixture.callAs(advisor, 'ria_ticket_plan', { ticketId: request.ticketId, summary: 'read the logs', steps: ['ria_session_list'] })).ok, true)
+  const sent = await fixture.callAs(advisor, 'ria_ticket_dispatch', {
     ticketId: request.ticketId, workerSessionId: reflection.sessionId,
   })
   assert.equal(sent.ok, true, JSON.stringify(sent))
@@ -263,15 +263,15 @@ await withFixture(async fixture => {
 await withFixture(async fixture => {
   const controller = fixture.service.controller
   const { request, advisor, chat } = await plannedTicket(fixture)
-  const sent = await fixture.callAs(advisor, 'ticket_dispatch', { ticketId: request.ticketId })
-  const updated = await fixture.callAs(chat, 'chat_worker_config', {
+  const sent = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: request.ticketId })
+  const updated = await fixture.callAs(chat, 'ria_chat_worker_config', {
     action: 'set', workerId: sent.workerSessionId, allowAutoDispatch: false,
   })
   assert.equal(updated.ok, true, JSON.stringify(updated))
   assert.equal(updated.worker.currentTicketId, request.ticketId)
   assert.equal(fixture.service.tickets.ticket(request.ticketId).status, 'working')
   assert.equal(fixture.cancelCalls.length, 0)
-  const report = await fixture.callAs(sent.workerSessionId, 'worker_report', {
+  const report = await fixture.callAs(sent.workerSessionId, 'ria_worker_report', {
     ticketId: request.ticketId, status: 'done', summary: 'complete', evidence: ['test'],
   })
   assert.equal(report.ok, true)
@@ -300,14 +300,14 @@ await withFixture(async fixture => {
   const controller = fixture.service.controller
   const chat = controller.state.chatSessionId
   const target = await controller.ensureWorker('global')
-  const combined = await fixture.callAs(chat, 'chat_worker_config', {
+  const combined = await fixture.callAs(chat, 'ria_chat_worker_config', {
     action: 'set', workerId: target.sessionId, model: 'model-fast', provider: 'provider-ok', allowAutoDispatch: false,
   })
   assert.equal(combined.ok, true, JSON.stringify(combined))
   assert.equal(combined.after.model, 'model-fast')
   assert.deepEqual(combined.autoDispatch, { before: true, after: false })
   assert.equal(combined.worker.allowAutoDispatch, false)
-  const recreated = await fixture.callAs(chat, 'chat_worker_config', {
+  const recreated = await fixture.callAs(chat, 'ria_chat_worker_config', {
     action: 'set', workerId: target.sessionId, preset: 'minimal', recreate: true,
   })
   assert.equal(recreated.ok, true, JSON.stringify(recreated))
@@ -326,7 +326,7 @@ for (const unavailable of [false, true]) {
     const alternative = await controller.ensureWorker('global')
     if (unavailable) fixture.archivedSessions.push(target.sessionId)
     const beforeCreates = fixture.creates.length
-    const made = await fixture.callAs(chat, 'chat_request', {
+    const made = await fixture.callAs(chat, 'ria_chat_request', {
       goal: 'stateless explicit selection', workerSeq: target.meta.seq,
     })
     const ticket = fixture.service.tickets.ticket(made.ticketId)
@@ -350,7 +350,7 @@ await withFixture(async fixture => {
   controller.state.addWorker(replacement.sessionId, { allowAutoDispatch: false })
   const { request, advisor } = await plannedTicket(fixture, { workerId: original.sessionId })
   fixture.archivedSessions.push(original.sessionId)
-  const sent = await fixture.callAs(advisor, 'ticket_dispatch', {
+  const sent = await fixture.callAs(advisor, 'ria_ticket_dispatch', {
     ticketId: request.ticketId, workerSessionId: replacement.sessionId,
   })
   assert.equal(sent.ok, true, JSON.stringify(sent))
@@ -365,7 +365,7 @@ await withFixture(async fixture => {
   const alternative = await controller.ensureWorker('global')
   const { request, advisor } = await plannedTicket(fixture)
   controller.state.setTicketMeta(request.ticketId, { workerSeq: 999999 })
-  const sent = await fixture.callAs(advisor, 'ticket_dispatch', { ticketId: request.ticketId })
+  const sent = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: request.ticketId })
   assert.equal(sent.code, 'specified_worker_unavailable')
   assert.match(sent.message, /seq=999999/)
   assert.equal(fixture.service.tickets.ticket(request.ticketId).waitingOn, 'user')
@@ -406,7 +406,7 @@ await withFixture(async fixture => {
     controller.state.removeWorker(worker.sessionId)
     return snapshot
   }
-  const updated = await fixture.callAs(chat, 'chat_worker_config', {
+  const updated = await fixture.callAs(chat, 'ria_chat_worker_config', {
     action: 'set', workerId: target.sessionId, allowAutoDispatch: false,
   })
   assert.equal(updated.ok, false)

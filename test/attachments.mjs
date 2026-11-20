@@ -30,7 +30,7 @@ try {
     { header: { id: chat } },
     { type: 'user/message', seq: 1, time: Date.now(), data: { content, source: { kind: 'user', rpcId: 'user-with-image' } } },
   )
-  const request = (extra = {}) => fixture.callAs(chat, 'chat_request', { goal: 'inspect screenshot', ...extra })
+  const request = (extra = {}) => fixture.callAs(chat, 'ria_chat_request', { goal: 'inspect screenshot', ...extra })
   const created = id => fixture.service.routerEvents.query({ ticketId: id }).events.find(item => item.event === 'ticket.created')
 
   const sha1 = shaOf('image-one')

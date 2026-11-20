@@ -35,7 +35,7 @@ try {
   const delivered = events.filter(event => event.event === 'ticket.blocked.notified')
   assert.equal(delivered.length, 1)
   assert.equal(delivered[0].ticketId, ticket.ticketId)
-  assert.equal(delivered[0].payload.edge, 'blocked_user')
+  assert.equal(delivered[0].payload.edge, 'blocked.user')
 
   // A repeat callback for an already-blocked ticket is not a new edge.
   const current = store.ticket(ticket.ticketId)

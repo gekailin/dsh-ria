@@ -103,7 +103,7 @@ export function migrateTickets({ stateDir, dbPath = join(stateDir, 'ria.sqlite')
     if (!existsSync(dbPath)) throw error('sqlite_missing', 'SQLite DB is missing: ' + dbPath)
     const db = openDatabase(dbPath, { readOnly: true })
     try {
-      const verification = verifyDatabase(db, new SqliteTicketAdapter(db), source, { sampleSize })
+      const verification = verifyDatabase(db, new SqliteTicketAdapter(db), source, { sampleSize, requireSourceHash: false })
       return { ok: verification.ok, mode: 'verify-only', dbPath, ...describe(verification) }
     } finally { db.close() }
   }
@@ -168,6 +168,12 @@ export function repairTicketMeta({ stateDir, dbPath = join(stateDir, 'ria.sqlite
   } finally { db.close() }
 }
 
+function verificationFailed(result) {
+  return result.mode === 'verify-only' && (result.ok === false || result.countsMatch === false
+    || (Array.isArray(result.sampleMismatches) && result.sampleMismatches.length > 0)
+    || !Array.isArray(result.integrity) || result.integrity.some(value => value !== 'ok')
+    || result.foreignKeyViolations > 0 || result.orphanHistory > 0)
+}
 
 export function cliArgs(argv) {
   const result = {}
@@ -188,6 +194,9 @@ export function cliArgs(argv) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
-    console.log(JSON.stringify(migrateTickets(cliArgs(process.argv.slice(2))), null, 2))
+    const args = cliArgs(process.argv.slice(2))
+    const result = args.repairMeta ? repairTicketMeta(args) : migrateTickets(args)
+    console.log(JSON.stringify(result, null, 2))
+    if (verificationFailed(result)) process.exitCode = 1
   } catch (cause) { console.error(JSON.stringify({ ok: false, code: cause.code || 'error', message: cause.message })); process.exitCode = 1 }
 }

@@ -128,5 +128,24 @@ try {
     assert.equal(verified.countsMatch, true)
   }
 
+  {
+    // CLI --verify-only must exit non-zero for any failed signal, zero when clean.
+    const script = fileURLToPath(new URL('../scripts/sqlite-migrate.mjs', import.meta.url))
+    const okDir = makeDir('exit-ok')
+    seed(okDir)
+    migrateTickets({ stateDir: okDir })
+    const ok = spawnSync(process.execPath, [script, '--state-dir', okDir, '--verify-only'], { encoding: 'utf8' })
+    assert.equal(ok.status, 0, ok.stderr)
+    const badDir = makeDir('exit-bad')
+    seed(badDir)
+    migrateTickets({ stateDir: badDir })
+    const badDb = openDatabase(join(badDir, 'ria.sqlite'))
+    badDb.prepare("UPDATE tickets SET status='done' WHERE id='t2'").run()
+    badDb.close()
+    const bad = spawnSync(process.execPath, [script, '--state-dir', badDir, '--verify-only'], { encoding: 'utf8' })
+    assert.notEqual(bad.status, 0, 'verify failure must be a non-zero exit')
+    assert.match(bad.stdout, /"ok": false/)
+  }
+
   console.log('sqlite migration verification ok')
 } finally { rmSync(root, { recursive: true, force: true }) }

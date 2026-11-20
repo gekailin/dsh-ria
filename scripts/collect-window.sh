@@ -6,7 +6,16 @@
 # is insufficient: a profile with a missing lib/prompts directory can answer
 # health while the Ria plugin itself failed to load.
 set -uo pipefail
+# The window runs from a systemd user unit that does not inherit the interactive
+# shell PATH (the job is started through D-Bus StartTransientUnit here). Without
+# this export the dsh launcher's "#!/usr/bin/env node" fails in the deploy step,
+# after the service was already stopped. Export a known-good PATH first and keep
+# the value identical to the Environment=PATH the unit is started with.
+export PATH="${COLLECT_WINDOW_PATH:-/home/gkl/.nvm/versions/node/v26.2.0/bin:/usr/local/bin:/usr/bin:/bin}"
 NODE=/home/gkl/.nvm/versions/node/v26.2.0/bin/node
+# Resolve dsh's real JS entry so the deploy call never depends on the launcher
+# shebang or PATH lookup: node <abs>/lib/node_modules/@deepseek-ai/dsh/lib/bin.js
+DSH_JS=${COLLECT_WINDOW_DSH_JS:-/home/gkl/.nvm/versions/node/v26.2.0/lib/node_modules/@deepseek-ai/dsh/lib/bin.js}
 DSH=/home/gkl/.nvm/versions/node/v26.2.0/bin/dsh
 DAEMON=/home/gkl/.nvm/versions/node/v26.2.0/bin/dsh-daemon
 REPO=/home/gkl/Desktop/vibe_proj/dsh-ria
@@ -57,6 +66,18 @@ if [ -z "$STOP_CMD" ]; then STOP_CMD="$DAEMON stop"; fi
 if [ -z "$START_CMD" ]; then START_CMD="$DAEMON start"; fi
 mkdir -p "$(dirname "$LOG")" "$(dirname "$RESULT")"
 exec >>"$LOG" 2>&1
+# Startup self-check: prove the window can actually run node/dsh before it
+# touches the backup, the service or the profile. A missing toolchain must fail
+# here, not in the deploy step after the stop.
+log(){ printf '[%s] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*"; }
+SELF_NODE=$(command -v node 2>/dev/null || true)
+SELF_DSH=$(command -v dsh 2>/dev/null || true)
+log "selfcheck PATH=$PATH node=${SELF_NODE:-missing} dsh=${SELF_DSH:-missing} dsh_js=$DSH_JS"
+if [ -z "$SELF_NODE" ]; then log "FATAL selfcheck: node not found on PATH ($PATH); refusing to start"; exit 1; fi
+if [ -z "$SELF_DSH" ]; then log "FATAL selfcheck: dsh not found on PATH ($PATH); refusing to start"; exit 1; fi
+if [ ! -f "$DSH_JS" ]; then log "FATAL selfcheck: dsh entry $DSH_JS missing; refusing to start"; exit 1; fi
+SELF_NODE_VERSION=$("$SELF_NODE" -v 2>&1) || { log "FATAL selfcheck: node -v failed ($SELF_NODE_VERSION); refusing to start"; exit 1; }
+log "selfcheck ok: node $SELF_NODE_VERSION at $SELF_NODE; dsh at $SELF_DSH"
 TS=$(date +%Y%m%dT%H%M%S)
 BACKUP="$BACKUP_ROOT/ria-backup-collect2-$TS"
 PROFILE_TGZ="$BACKUP/profile-dsh-ria.tgz"
@@ -197,7 +218,7 @@ if [ "$NO_DEPLOY" = 1 ]; then
 elif [ -n "$DEPLOY_CMD" ]; then
   eval "$DEPLOY_CMD" || fail "deploy command failed"
 else
-  "$DSH" plugin --profile web add "file:$REPO" >"$BACKUP/deploy.log" 2>&1 || fail "dsh plugin add failed"
+  "$NODE" "$DSH_JS" plugin --profile web add "file:$REPO" >"$BACKUP/deploy.log" 2>&1 || fail "dsh plugin add failed"
 fi
 if [ "$NO_DEPLOY" = 0 ]; then
   diff -rq "$REPO/lib" "$PROFILE/lib" >"$BACKUP/diff.txt" 2>&1 || fail "profile lib differs from repo lib"

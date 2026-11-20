@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { createFixture } from './support/ria-fixture.mjs'
 
-// Sage must see exactly its three cognition tools. The restriction is an empty
+// Sage must see exactly its four cognition/governance tools. The restriction is an empty
 // allow-list: dsh-tools only validates/removes INHERITED (global/preset) tools
 // there, while the agent's own scoped registrations stay visible (see
 // lib/v2/controller.mjs restrictSage and dsh-tools/lib/index.js:453-467).
@@ -10,7 +10,7 @@ import { createFixture } from './support/ria-fixture.mjs'
 // regression in their agent creation/restriction paths fails this test too.
 // Router is not an agent or a session: lib/router/cli.mjs is a standalone
 // classifier process that registers no tools, so it has no surface to snapshot.
-const SAGE_TOOLS = ['sage_read', 'sage_request', 'sage_write']
+const SAGE_TOOLS = ['sage_read', 'sage_request', 'sage_topic', 'sage_write']
 const SAGE_FORBIDDEN = [
   'bash', 'write', 'edit', 'read', 'read_image', 'grep', 'glob', 'task',
   'run_code', 'subagent', 'subagent_fork', 'list_agents', 'send_message',

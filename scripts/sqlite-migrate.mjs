@@ -146,6 +146,29 @@ export function migrateTickets({ stateDir, dbPath = join(stateDir, 'ria.sqlite')
   }
 }
 
+
+export function repairTicketMeta({ stateDir, dbPath = join(stateDir, 'ria.sqlite'), dryRun = false } = {}) {
+  if (!stateDir) throw error('invalid_arguments', 'stateDir is required')
+  if (!existsSync(dbPath)) throw error('sqlite_missing', 'SQLite DB is missing: ' + dbPath)
+  const source = readMigrationSource(stateDir)
+  const metaById = new Map(source.records.filter(record => record.meta != null)
+    .map(record => [record.ticket.ticketId, record.meta]))
+  const db = openDatabase(dbPath)
+  try {
+    const adapter = new SqliteTicketAdapter(db)
+    const missing = adapter.records({ includeArchived: true })
+      .filter(record => record.meta == null && metaById.has(record.ticket.ticketId))
+    const ticketIds = missing.map(record => record.ticket.ticketId)
+    if (!dryRun && missing.length) {
+      transaction(db, () => {
+        for (const record of missing) adapter.save(record.ticket, { ...record, meta: metaById.get(record.ticket.ticketId) })
+      })
+    }
+    return { ok: true, mode: 'repair-meta', dryRun, repaired: missing.length, ticketIds }
+  } finally { db.close() }
+}
+
+
 export function cliArgs(argv) {
   const result = {}
   for (let i = 0; i < argv.length; i += 1) {
@@ -156,12 +179,15 @@ export function cliArgs(argv) {
     else if (arg === '--sample') result.sampleSize = Number(argv[++i])
     else if (arg === '--replace') result.replace = true
     else if (arg === '--verify-only') result.verifyOnly = true
+    else if (arg === '--repair-meta') result.repairMeta = true
     else throw new Error('Unknown argument: ' + arg)
   }
-  if (!result.stateDir) throw new Error('Usage: node scripts/sqlite-migrate.mjs --state-dir <offline-state-dir> [--db <path>] [--backup-dir <path>] [--sample 20] [--replace] [--verify-only]')
+  if (!result.stateDir) throw new Error('Usage: node scripts/sqlite-migrate.mjs --state-dir <offline-state-dir> [--db <path>] [--backup-dir <path>] [--sample 20] [--replace] [--verify-only] [--repair-meta]')
   return result
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  try { console.log(JSON.stringify(migrateTickets(cliArgs(process.argv.slice(2))), null, 2)) } catch (cause) { console.error(JSON.stringify({ ok: false, code: cause.code || 'error', message: cause.message })); process.exitCode = 1 }
+  try {
+    console.log(JSON.stringify(migrateTickets(cliArgs(process.argv.slice(2))), null, 2))
+  } catch (cause) { console.error(JSON.stringify({ ok: false, code: cause.code || 'error', message: cause.message })); process.exitCode = 1 }
 }

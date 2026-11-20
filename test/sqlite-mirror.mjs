@@ -365,4 +365,31 @@ function setup() {
   } finally { await f.cleanup() }
 }
 
+// New tickets get DB-owned meta in the same transaction as the ticket row.
+{
+  const f = setup()
+  try {
+    let id
+    assert.throws(() => f.repository.runSync('create-rollback', () => {
+      const created = f.store.addTicket({ status: 'intake', waitingOn: 'ria', executor: null, goal: 'rollback' })
+      id = created.ticketId
+      f.v2.setTicketMeta(id, { scope: 'global', workerId: 'w1', projectCwd: '/x' })
+      throw new Error('force rollback')
+    }), /force rollback/)
+    assert.equal(f.external.record(id), undefined, 'ticket and meta roll back together')
+
+    const created = f.repository.runSync('create-with-meta', () => {
+      const ticket = f.store.addTicket({ status: 'intake', waitingOn: 'ria', executor: null, goal: 'with meta' })
+      f.v2.setTicketMeta(ticket.ticketId, { scope: 'global', workerId: 'w2', projectCwd: '/repo' })
+      return ticket
+    })
+    const record = f.external.record(created.ticketId)
+    assert.ok(record.meta, 'DB meta is written with the new ticket')
+    assert.equal(record.meta.scope, 'global')
+    assert.equal(record.meta.workerId, 'w2')
+    assert.equal(record.meta.projectCwd, '/repo')
+    assert.equal(record.meta.ticketId, created.ticketId)
+  } finally { await f.cleanup() }
+}
+
 console.log('sqlite DB metadata authority and durable mirror retry ok')

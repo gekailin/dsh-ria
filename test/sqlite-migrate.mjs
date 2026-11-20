@@ -2,7 +2,9 @@ import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { migrateTickets } from '../scripts/sqlite-migrate.mjs'
+import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
+import { migrateTickets, repairTicketMeta } from '../scripts/sqlite-migrate.mjs'
 import { openDatabase } from '../lib/state/sqlite/db.mjs'
 
 const ticket = (id, extra = {}) => ({
@@ -107,5 +109,24 @@ try {
     assert.equal(verified.countsMatch, true, 'row counts still match')
     assert.ok(verified.sampleMismatches.length >= 1, 'deep comparison flags the drifted ticket')
   }
+  {
+    // --repair-meta restores JSON meta for DB rows that lost it, and is idempotent.
+    const dir = makeDir('repair-meta')
+    seed(dir)
+    migrateTickets({ stateDir: dir })
+    const db = openDatabase(join(dir, 'ria.sqlite'))
+    db.prepare("UPDATE tickets SET meta=json_set(meta,'$.v2',json('null')) WHERE id='t1'").run()
+    db.close()
+    const repaired = repairTicketMeta({ stateDir: dir })
+    assert.equal(repaired.ok, true)
+    assert.equal(repaired.repaired, 1)
+    assert.deepEqual(repaired.ticketIds, ['t1'])
+    const again = repairTicketMeta({ stateDir: dir })
+    assert.equal(again.repaired, 0, 'repair is idempotent')
+    const verified = migrateTickets({ stateDir: dir, verifyOnly: true })
+    assert.equal(verified.ok, true)
+    assert.equal(verified.countsMatch, true)
+  }
+
   console.log('sqlite migration verification ok')
 } finally { rmSync(root, { recursive: true, force: true }) }

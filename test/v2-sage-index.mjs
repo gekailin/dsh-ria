@@ -19,7 +19,7 @@ try {
   controller.cognition.write('projects/project-static.md', '静态项目事实', { reason: 'test' })
   const sage = (await controller.ensureSage()).sessionId
   const prompt = fixture.systemPrompts.get(sage)
-  assert.ok(prompt.includes('你是 Sage（大脑）'))
+  assert.ok(prompt.includes('你是 Sage（Ria 的慢脑）'))
   assert.ok(prompt.includes('[PRINCIPLES 摘要]'))
   assert.ok(prompt.includes('cognition/INDEX.md'))
   assert.ok(prompt.includes('需要最新认知时用 sage_read'))

@@ -20,7 +20,7 @@ try {
   }
 
   // Sage role and tool surface.
-  assert.equal(await titleOf(sage), 'Ria Sage')
+  assert.equal(await titleOf(sage), 'Sage')
   assert.equal(controller.v2.sageSessionId, sage)
   const sageTools = fixture.visibleTools(sage)
   assert.deepEqual(sageTools.slice().sort(), ['sage_read', 'sage_request', 'sage_write'])
@@ -140,7 +140,7 @@ try {
     const migrated = await controller.ensureSage()
     assert.notEqual(migrated.sessionId, oldId)
     assert.equal(controller.v2.sageSessionId, migrated.sessionId)
-    assert.equal(await titleOf(migrated.sessionId), 'Ria Sage')
+    assert.equal(await titleOf(migrated.sessionId), 'Sage')
     const migratedSummary = (await fixture.service.ctx.sessionController.list({})).items.find(item => String(item.sessionId) === String(migrated.sessionId))
     assert.equal(migratedSummary.cwd, controller.stateDir)
     assert.ok(fixture.archivedSessions.includes(oldId))

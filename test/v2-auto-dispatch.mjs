@@ -95,7 +95,7 @@ await withFixture(async fixture => {
   assert.equal(changes.length, 2)
   assert.ok(changes.some(event => event.payload.before === true && event.payload.after === false))
   assert.ok(changes.some(event => event.payload.before === false && event.payload.after === true))
-  assert.ok(changes.every(event => event.actor === 'chatbot' && event.payload.workerId === explicitOnly.sessionId))
+  assert.ok(changes.every(event => event.actor === 'chat' && event.payload.workerId === explicitOnly.sessionId))
   const repeated = await fixture.callAs(chatbot, 'chatbot_worker_config', {
     action: 'set', workerId: explicitOnly.sessionId, allowAutoDispatch: true,
   })

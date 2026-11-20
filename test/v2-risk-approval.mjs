@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createFixture } from './support/ria-fixture.mjs'
-import { advisorPrompt, chatbotPrompt, workerPrompt } from '../lib/v2/prompts.mjs'
+import { advisorPrompt, chatPrompt, workerPrompt } from '../lib/v2/prompts.mjs'
 import {
   DEFAULT_ESCALATION_POLICY,
   ESCALATION_POLICIES,
@@ -333,7 +333,7 @@ try {
   await fixture.callAs(chatbot, 'chatbot_grant', { action: 'reset', grantId: granted.grant.grantId })
 
   // 4. Prompt/docs positioning is part of the contract.
-  assert.match(chatbotPrompt(), /调试\/应急/)
+  assert.match(chatPrompt(), /调试\/应急/)
   assert.match(advisorPrompt(), /escalationPolicy/)
   assert.match(advisorPrompt(), /chatbot_grant 仅调试\/应急/)
   assert.match(workerPrompt({}), /提权按风险逐条审批/)

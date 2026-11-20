@@ -23,7 +23,7 @@ try {
       event: 'ticket.created',
       ticketId: 'ticket_a',
       sessionId: 'session_chatbot',
-      actor: 'chatbot',
+      actor: 'chat',
       reason: 'chatbot_request',
       payload: { mode: 'work', workspace: '/tmp/ws' },
     })
@@ -59,7 +59,7 @@ try {
 
     // Month rotation: the January hot file becomes a monthly file.
     now = Date.parse('2026-02-01T00:00:00Z')
-    log.append({ event: 'ticket.created', ticketId: 'ticket_c', sessionId: 's', actor: 'chatbot', reason: 'x', payload: null })
+    log.append({ event: 'ticket.created', ticketId: 'ticket_c', sessionId: 's', actor: 'chat', reason: 'x', payload: null })
     assert.ok(existsSync(join(dir, 'router-events-2026-01.jsonl')))
     const hot = readFileSync(join(dir, 'router-events.jsonl'), 'utf8').trim().split('\n').filter(Boolean)
     assert.equal(hot.length, 1)
@@ -68,7 +68,7 @@ try {
     // Size rotation: a tiny maxBytes rotates the hot file into this month's file.
     const sizeDir = tempDir()
     const tiny = new RouterEventLog({ stateDir: sizeDir, now: () => now, maxBytes: 80 })
-    tiny.append({ event: 'ticket.created', ticketId: 'ticket_size', sessionId: 's', actor: 'chatbot', reason: 'x', payload: null })
+    tiny.append({ event: 'ticket.created', ticketId: 'ticket_size', sessionId: 's', actor: 'chat', reason: 'x', payload: null })
     tiny.append({ event: 'dispatch.attempt', ticketId: 'ticket_size', sessionId: 'w', actor: 'router', reason: 'x', payload: null })
     assert.ok(existsSync(join(sizeDir, 'router-events-2026-02.jsonl')))
     assert.equal(tiny.query({ ticketId: 'ticket_size' }).events.length, 2)
@@ -214,7 +214,7 @@ try {
       const empty = await fixture.call('ria_status', { scope: 'events' })
       assert.equal(empty.scope, 'events')
       assert.deepEqual(empty.events, [])
-      fixture.service.routerEvents.append({ event: 'ticket.created', ticketId: 'ticket_q', sessionId: 's', actor: 'chatbot', reason: 'q', payload: { mode: 'work' } })
+      fixture.service.routerEvents.append({ event: 'ticket.created', ticketId: 'ticket_q', sessionId: 's', actor: 'chat', reason: 'q', payload: { mode: 'work' } })
       fixture.service.routerEvents.append({ event: 'dispatch.attempt', ticketId: 'ticket_q', sessionId: 'w', actor: 'router', reason: 'q', payload: { workerId: 'w' } })
       const before = readFileSync(join(fixture.stateDir, 'router-events.jsonl'), 'utf8')
       const queried = await fixture.call('ria_status', { scope: 'events', ticketId: 'ticket_q', type: 'dispatch.*' })

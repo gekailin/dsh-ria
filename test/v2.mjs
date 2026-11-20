@@ -537,15 +537,17 @@ const errorDir = mkdtempSync(join(tmpdir(), 'dsh-ria-v2-error-'))
 try {
   const { V2Store } = await import('../lib/v2/store.mjs')
   const store = new V2Store(errorDir)
+  // A legacy scope spelling ('chatbot') is normalized on write so old and new
+  // callers share one stored identity.
   store.recordError('chatbot', new Error('install exploded'), { sessionId: 'session-bad', phase: 'create' })
   const reloaded = new V2Store(errorDir)
-  assert.equal(reloaded.data.lastError.scope, 'chatbot')
+  assert.equal(reloaded.data.lastError.scope, 'chat')
   assert.equal(reloaded.data.lastError.message, 'install exploded')
   assert.equal(reloaded.data.lastError.sessionId, 'session-bad')
   assert.match(reloaded.data.lastError.stack, /install exploded/)
   reloaded.clearError('advisor')
   assert.ok(reloaded.data.lastError)
-  reloaded.clearError('chatbot')
+  reloaded.clearError('chat')
   assert.equal(reloaded.data.lastError, null)
 } finally {
   rmSync(errorDir, { recursive: true, force: true })

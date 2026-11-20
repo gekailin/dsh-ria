@@ -37,7 +37,7 @@ const eventsOf = stateDir => {
     const after = store.ticket(ticket.ticketId)
     assert.equal(after.status, 'cancelled')
     assert.equal(after.resolution.reason, 'user changed their mind')
-    assert.equal(after.resolution.by, 'chatbot')
+    assert.equal(after.resolution.by, 'chat')
     assert.equal(controller.v2.pendingInbox(ticket.ticketId, worker).length, 0)
     // A guard marker remains so a retained DSH queue cannot resume work.
     assert.equal(controller.v2.workerStop(worker).ticketId, ticket.ticketId)
@@ -47,7 +47,7 @@ const eventsOf = stateDir => {
     const events = eventsOf(fixture.stateDir)
     const cancelled = events.filter(item => item.event === 'ticket.cancelled')
     assert.equal(cancelled.length, 1)
-    assert.equal(cancelled[0].actor, 'chatbot')
+    assert.equal(cancelled[0].actor, 'chat')
     assert.equal(cancelled[0].payload.reason, 'user changed their mind')
     assert.equal(cancelled[0].payload.hardAbort, true)
     assert.ok(fixture.prompts.some(request => String(request.content[0].text).includes('已立即停止')))
@@ -96,7 +96,7 @@ const eventsOf = stateDir => {
     // The stop cleared the queue, and the normal steer entry point rejects a
     // closed ticket. A raw inbox row injected afterwards is never picked up by
     // the soft-stop pre-step.
-    controller.v2.addInbox({ id: 'inbox_late', ticketId: ticket.ticketId, workerId: worker, message: 'late direction', from: 'chatbot', at: Date.now() })
+    controller.v2.addInbox({ id: 'inbox_late', ticketId: ticket.ticketId, workerId: worker, message: 'late direction', from: 'chat', at: Date.now() })
     const rejectedSteer = await fixture.callAs(chatbot, 'chatbot_steer', { ticketId: ticket.ticketId, message: 'late' })
     assert.equal(rejectedSteer.ok, false)
     assert.equal(rejectedSteer.code, 'ticket_closed')

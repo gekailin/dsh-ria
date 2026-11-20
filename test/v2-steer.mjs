@@ -51,7 +51,7 @@ try {
   const third = fixture.service.store.addTicket({ status: 'working', executor: worker, goal: 'rearm failure' })
   controller.v2.setTicketMeta(third.ticketId, { phase: 'working', workerId: worker })
   fixture.setPromptFailure(new Error('cannot wake'))
-  const rearmed = await controller.rearmWorkingTicket(third.ticketId, worker, 'resume msg', 'chatbot')
+  const rearmed = await controller.rearmWorkingTicket(third.ticketId, worker, 'resume msg', 'chat')
   assert.equal(rearmed.ok, false)
   assert.equal(rearmed.code, 'steer_undelivered')
   assert.equal(fixture.service.store.ticket(third.ticketId).status, 'blocked')

@@ -31,7 +31,7 @@ try {
     return await originalRename(request)
   }
 
-  const chatbot = (await controller.ensureChatbot()).sessionId
+  const chatbot = (await controller.ensureChat()).sessionId
   const advisor = (await controller.ensureAdvisor('global')).sessionId
   const worker1 = (await controller.ensureWorker('global')).sessionId
   // New Workers are created idle and are reusable for the next ticket, so
@@ -125,7 +125,7 @@ try {
     }
     const result = await controller.renameRoleSessions()
     assert.equal(sawSignal, true)
-    assert.equal(await rawTitle('session-sage'), 'Ria Sage')
+    assert.equal(await rawTitle('session-sage'), 'Sage')
     assert.equal(await rawTitle('session-read-fail'), 'Worker 50')
     assert.equal(await rawTitle('session-rename-fail'), 'Worker 51')
     assert.ok(warnings.some(text => text.includes('session-read-fail') && text.includes('signal.throwIfAborted')))

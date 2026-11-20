@@ -42,7 +42,7 @@ const WORKER_DENY = ['subagent', 'subagent_fork', 'list_agents', 'send_message',
 const fixture = await createFixture({ v2Default: true, extraGlobalTools: MOUNTED_GLOBALS })
 try {
   const controller = fixture.service.v2
-  const chatbot = (await controller.ensureChatbot()).sessionId
+  const chatbot = (await controller.ensureChat()).sessionId
   const created = await fixture.callAs(chatbot, 'chatbot_request', { goal: 'role tool surface baseline' })
   assert.equal(created.ok, true, JSON.stringify(created))
   const advisor = created.advisorResult.sessionId

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { RiaStore } from '../lib/index.js'
 import { V2Store } from '../lib/v2/store.mjs'
-import { advisorPrompt, chatbotPrompt, ticketBrief, workerPrompt } from '../lib/v2/prompts.mjs'
+import { advisorPrompt, chatPrompt, ticketBrief, workerPrompt } from '../lib/v2/prompts.mjs'
 import { createFixture } from './support/ria-fixture.mjs'
 
 // The role used to be called "thinker"; these tests keep the upgrade path honest.
@@ -73,8 +73,8 @@ try {
 assert.match(advisorPrompt(), /^你是 Advisor（参谋）/)
 assert.match(advisorPrompt(), /plan of record/)
 assert.match(advisorPrompt(), /没有 WorkOrder 的工单不得进入 working/)
-assert.match(chatbotPrompt(), /Advisor（参谋）/)
-assert.doesNotMatch(chatbotPrompt(), /Thinker/)
+assert.match(chatPrompt(), /Advisor（参谋）/)
+assert.doesNotMatch(chatPrompt(), /Thinker/)
 assert.doesNotMatch(workerPrompt({}), /Thinker/)
 assert.match(workerPrompt({}), /只对 Ria\/Advisor 负责/)
 assert.match(ticketBrief({ ticketId: 't', goal: 'g' }, {}, {}), /阶段: advisor/)

@@ -17,7 +17,7 @@ try {
   // 1. The system prompt carries the digest and the fixed disclaimer.
   cognition.write('chatbot/preferences.md', '用户偏好：先给结论，再展开。', { reason: 'test' })
   const first = prompt()
-  assert.ok(first.includes('你是 Chatbot'), 'base Chatbot prompt is still present')
+  assert.ok(first.includes('你是 Chat（Ria 的快脑）'), 'base Chat prompt is still present')
   assert.ok(first.includes('以下为长期记忆摘要，可能滞后；细节以 cognition 文件为准'))
   assert.ok(first.includes('用户偏好：先给结论，再展开。'))
 

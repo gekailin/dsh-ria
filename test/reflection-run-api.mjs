@@ -21,6 +21,8 @@ try {
     tickets: () => tickets,
     ticket: id => tickets.find(ticket => ticket.ticketId === id),
   }
+  // Mirror the real shape: RiaService.v2 is the V2Controller, and the
+  // metadata store is controller.v2. A flat stub previously hid the 503.
   service.v2 = {
     requestTicket: async () => {
       creates += 1
@@ -30,8 +32,10 @@ try {
       meta[ticket.ticketId] = { ticketId: ticket.ticketId, mode: 'reflection' }
       return { ok: true, ticketId: ticket.ticketId, status: 'open' }
     },
-    ticketMeta: id => meta[id] || { ticketId: id },
-    setTicketMeta: (id, patch) => Object.assign(meta[id] || (meta[id] = { ticketId: id }), patch),
+    v2: {
+      ticketMeta: id => meta[id] || { ticketId: id },
+      setTicketMeta: (id, patch) => Object.assign(meta[id] || (meta[id] = { ticketId: id }), patch),
+    },
   }
 
   const first = await service.startReflectionRun({ forDate: '2026-11-20' })
@@ -43,6 +47,8 @@ try {
   assert.equal(creates, 1)
   assert.equal(readReflectionState(dir).activeRunId, 'ticket_reflect_1')
   assert.equal(service.reflectionStatusSummary().activeRunId, 'ticket_reflect_1')
+  assert.equal(meta['ticket_reflect_1'].reflectionForDate, '2026-11-20')
+  assert.equal(meta['ticket_reflect_1'].reflectionTrigger, 'manual')
 
   const second = await service.startReflectionRun({ forDate: '2026-11-20' })
   assert.equal(second.already_running, true)

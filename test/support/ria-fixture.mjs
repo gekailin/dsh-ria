@@ -623,9 +623,7 @@ export async function createFixture(options = {}) {
 
   // Legacy tests stay on the explicit old manager. A test that wants to check
   // the shipped default asks for v2Default instead of opting in by hand.
-  const service = options.v2Default === true
-    ? apply(ctx, { stateDir })
-    : apply(ctx, { stateDir, v2: options.v2 === true })
+  const service = apply(ctx, { stateDir })
   await service.ensure()
   // Tests keep the legacy Advisor tool/session path by default so existing
   // ticket_plan/ticket_dispatch cases remain meaningful. New stateless tests

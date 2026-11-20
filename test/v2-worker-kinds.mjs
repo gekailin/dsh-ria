@@ -20,7 +20,7 @@ const workerOf = sessionId => fixture.service.v2.v2.worker(sessionId)
 
 try {
   await fixture.service.ensure()
-  const chatbot = fixture.service.v2.v2.chatbotSessionId
+  const chatbot = fixture.service.v2.v2.chatSessionId
 
   // ① Old v2.json: a worker row without workerType is a work Worker.
   {
@@ -28,7 +28,7 @@ try {
     try {
       writeFileSync(join(dir, 'v2.json'), JSON.stringify({
         schemaVersion: 1,
-        chatbotSessionId: null,
+        chatSessionId: null,
         advisors: {},
         workers: { 'session-old': { sessionId: 'session-old', kind: 'managed', scope: 'global', status: 'idle', cwd: '/tmp/old-worker' } },
         requests: {},

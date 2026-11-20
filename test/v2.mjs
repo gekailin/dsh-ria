@@ -51,7 +51,7 @@ fixture.setRunning('session-busy', true)
 for (const id of ['session-pending-approval', 'session-pending-question', 'session-pending-other']) fixture.setRunning(id, true)
 try {
   const ensured = await fixture.service.ensure()
-  const chatbot = fixture.service.v2.v2.chatbotSessionId
+  const chatbot = fixture.service.v2.v2.chatSessionId
   assert.equal(ensured.sessionId, chatbot)
   // Dispatch is ticket-only: the direct session talk channel is gone.
   assert.equal(fixture.visibleTools(chatbot).includes('chatbot_talk'), false)
@@ -497,7 +497,7 @@ const stateDir = first.stateDir
 let workingTicketId
 let workerId
 try {
-  const chatbot = first.service.v2.v2.chatbotSessionId
+  const chatbot = first.service.v2.v2.chatSessionId
   const created = await first.callAs(chatbot, 'chatbot_request', { goal: 'long running task' })
   const advisor = first.service.v2.v2.advisor('global').sessionId
   await first.callAs(advisor, 'ticket_plan', { ticketId: created.ticketId, summary: 'do the work' })
@@ -511,7 +511,7 @@ try {
 
 const second = await createFixture({ v2: true, stateDir })
 try {
-  const chatbot = second.service.v2.v2.chatbotSessionId
+  const chatbot = second.service.v2.v2.chatSessionId
   assert.ok(chatbot)
   assert.equal(second.service.store.riaSessionId, chatbot)
   assert.deepEqual(second.visibleTools(chatbot).sort(), ['chatbot_co_manage', 'chatbot_direct', 'chatbot_grant', 'chatbot_models', 'chatbot_new_session', 'chatbot_propose', 'chatbot_read', 'chatbot_request', 'chatbot_resume', 'chatbot_send_image', 'chatbot_sessions', 'chatbot_status', 'chatbot_steer', 'chatbot_stop_ticket', 'chatbot_watch', 'chatbot_worker_config'])
@@ -522,7 +522,7 @@ try {
   assert.match(parked.blockedReason, /重启/)
   assert.equal(second.service.v2.v2.worker(workerId).status, 'idle')
   const status = second.service.v2.status()
-  assert.equal(status.chatbotSessionId, chatbot)
+  assert.equal(status.chatSessionId, chatbot)
   assert.equal(status.lastError, null)
   assert.ok(status.tickets.some(item => item.ticketId === workingTicketId && item.status === 'blocked'))
   assert.ok(status.workers.some(item => item.sessionId === workerId && item.status === 'idle'))
@@ -537,9 +537,7 @@ const errorDir = mkdtempSync(join(tmpdir(), 'dsh-ria-v2-error-'))
 try {
   const { V2Store } = await import('../lib/v2/store.mjs')
   const store = new V2Store(errorDir)
-  // A legacy scope spelling ('chatbot') is normalized on write so old and new
-  // callers share one stored identity.
-  store.recordError('chatbot', new Error('install exploded'), { sessionId: 'session-bad', phase: 'create' })
+  store.recordError('chat', new Error('install exploded'), { sessionId: 'session-bad', phase: 'create' })
   const reloaded = new V2Store(errorDir)
   assert.equal(reloaded.data.lastError.scope, 'chat')
   assert.equal(reloaded.data.lastError.message, 'install exploded')

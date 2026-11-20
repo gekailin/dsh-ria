@@ -104,7 +104,7 @@ try {
       ],
     })
     try {
-      const chatbot = fixture.service.v2.v2.chatbotSessionId
+      const chatbot = fixture.service.v2.v2.chatSessionId
       const added = await fixture.callAs(chatbot, 'chatbot_watch', { action: 'add', sessionId: 'session-watch' })
       assert.equal(added.ok, true, JSON.stringify(added))
       assert.equal(added.watch.sessionId, 'session-watch')

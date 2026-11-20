@@ -37,7 +37,7 @@ try {
   // Cognition bootstrap is idempotent and creates the expected files.
   const first = await controller.bootstrapCognition()
   assert.equal(first.bootstrapped, true)
-  for (const file of ['principles.md', 'projects/dsh-ria.md', 'chatbot/preferences.md', 'chatbot/agreements.md', 'chatbot/decisions.md', 'INDEX.md']) {
+  for (const file of ['principles.md', 'projects/dsh-ria.md', 'chat/preferences.md', 'chat/agreements.md', 'chat/decisions.md', 'INDEX.md']) {
     assert.equal(existsSync(join(controller.stateDir, 'cognition', file)), true, file)
   }
   const second = await controller.bootstrapCognition()
@@ -47,17 +47,17 @@ try {
   // Path traversal is rejected; normal write updates INDEX and audits.
   assert.throws(() => cognition.read('../../ria.json'), /invalid|cognition/i)
   const written = await fixture.callAs(sage, 'sage_write', {
-    path: 'chatbot/preferences.md',
+    path: 'chat/preferences.md',
     content: '用户偏好：回答简洁，先给结论。',
     mode: 'replace',
     reason: 'test',
   })
   assert.equal(written.ok, true, JSON.stringify(written))
-  assert.ok(cognition.read('INDEX.md').includes('chatbot/preferences.md'))
-  assert.equal(cognition.read('chatbot/preferences.md').includes('先给结论'), true)
+  assert.ok(cognition.read('INDEX.md').includes('chat/preferences.md'))
+  assert.equal(cognition.read('chat/preferences.md').includes('先给结论'), true)
 
   // User proposals are high priority and land in proposals/.
-  const proposed = await fixture.callAs(fixture.service.v2.v2.chatbotSessionId, 'chatbot_propose', {
+  const proposed = await fixture.callAs(fixture.service.v2.v2.chatSessionId, 'chatbot_propose', {
     text: '用户喜欢先给结论',
     evidence: ['conversation'],
   })
@@ -67,9 +67,9 @@ try {
   const inbox = await fixture.callAs(sage, 'sage_read', { inbox: true })
   assert.ok(inbox.proposals.some(item => item.id === proposed.proposal.id))
 
-  // Stateless Advisor: two tickets get two sessions and the second prompt does
-  // not carry the first ticket's context.
-  const chatbot = fixture.service.v2.v2.chatbotSessionId
+  // Planned tickets: each ticket gets its own Advisor session and the second
+  // prompt does not carry the first ticket's context.
+  const chatbot = fixture.service.v2.v2.chatSessionId
   const firstTicket = await fixture.callAs(chatbot, 'chatbot_request', { goal: 'alpha task', acceptance: 'alpha done' })
   assert.equal(firstTicket.ok, true)
   const firstSession = controller.v2.ticketMeta(firstTicket.ticketId).advisorSessionId
@@ -102,62 +102,19 @@ try {
   // Chatbot memory is part of the dynamic system prompt, not a pre-step host
   // message. Re-assembling sees a cognition write without any event.
   const chatAgent = fixture.agentFor(chatbot)
-  cognition.write('chatbot/preferences.md', '用户偏好：先给结论，再展开。', { reason: 'change' })
+  cognition.write('chat/preferences.md', '用户偏好：先给结论，再展开。', { reason: 'change' })
   const chatPrompt = fixture.assembleSystemPrompt(chatbot, { scope: chatAgent })
   assert.ok(chatPrompt.includes('以下为长期记忆摘要，可能滞后；细节以 cognition 文件为准'))
   assert.ok(chatPrompt.includes('用户偏好：先给结论，再展开。'))
   const decision = () => ({ kind: 'enter', messages: [] })
   const firstStep = await controller.onPreStep({ agent: chatAgent, turn: 1 }, async () => decision())
   assert.equal(firstStep.messages.length, 0)
-  cognition.write('chatbot/preferences.md', '用户偏好：先给结论，再展开；必要时附证据。', { reason: 'change' })
+  cognition.write('chat/preferences.md', '用户偏好：先给结论，再展开；必要时附证据。', { reason: 'change' })
   const nextPrompt = fixture.assembleSystemPrompt(chatbot, { scope: chatAgent })
   assert.ok(nextPrompt.includes('必要时附证据'))
   const thirdStep = await controller.onPreStep({ agent: chatAgent, turn: 3 }, async () => decision())
   assert.equal(thirdStep.messages.length, 0)
 
-  // Legacy retirement only runs in stateless mode; legacy mode is a rollback switch.
-  controller.v2.setAdvisorMode('stateless')
-  controller.v2.setAdvisor('global', 'session-legacy-advisor', { cwd: '/tmp' })
-  const retired = await controller.retireLegacyAdvisor()
-  assert.equal(retired.retired, true)
-  assert.equal(controller.v2.advisor('global'), null)
-  assert.equal(controller.v2.data.advisorMode, 'stateless')
-
-  // Sage cwd migration: old stateDir/sage session is archived once, a new Sage
-  // is created at stateDir root, and the migration is idempotent.
-  {
-    const events = () => {
-      try {
-        return readFileSync(join(fixture.stateDir, 'router-events.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
-      } catch { return [] }
-    }
-    const oldId = 'session-old-sage'
-    const oldCwd = join(controller.stateDir, 'sage')
-    await fixture.service.ctx.sessionController.create({ sessionId: oldId, cwd: oldCwd, agentPreset: 'standard' })
-    controller.v2.setSage(oldId)
-    controller.sageIndexInjected = false
-    const beforeCreates = fixture.creates.length
-    const migrated = await controller.ensureSage()
-    assert.notEqual(migrated.sessionId, oldId)
-    assert.equal(controller.v2.sageSessionId, migrated.sessionId)
-    assert.equal(await titleOf(migrated.sessionId), 'Sage')
-    const migratedSummary = (await fixture.service.ctx.sessionController.list({})).items.find(item => String(item.sessionId) === String(migrated.sessionId))
-    assert.equal(migratedSummary.cwd, controller.stateDir)
-    assert.ok(fixture.archivedSessions.includes(oldId))
-    const migratedPrompt = fixture.systemPrompts.get(migrated.sessionId)
-    assert.ok(String(migratedPrompt).includes('cognition/INDEX.md'))
-    assert.ok(String(migratedPrompt).includes('[PRINCIPLES 摘要]'))
-    const migratedEvents = events().filter(item => item.event === 'sage.migrated')
-    assert.equal(migratedEvents.length, 1)
-    assert.equal(migratedEvents[0].sessionId, oldId)
-    assert.equal(migratedEvents[0].payload.from, oldCwd)
-    assert.equal(migratedEvents[0].payload.to, controller.stateDir)
-    const afterCreates = fixture.creates.length
-    const again = await controller.ensureSage()
-    assert.equal(again.created, false)
-    assert.equal(fixture.creates.length, afterCreates)
-    assert.equal(events().filter(item => item.event === 'sage.migrated').length, 1)
-  }
 
   console.log('v2 sage ok')
 } finally {

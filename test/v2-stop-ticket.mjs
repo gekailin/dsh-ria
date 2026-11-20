@@ -15,7 +15,7 @@ const eventsOf = stateDir => {
   try {
     const controller = fixture.service.v2
     const store = fixture.service.store
-    const chatbot = controller.v2.chatbotSessionId
+    const chatbot = controller.v2.chatSessionId
     const worker = (await controller.ensureWorker('global')).sessionId
     controller.v2.addWorker(worker, { status: 'idle', currentTicketId: null })
     const ticket = store.addTicket({ status: 'working', executor: worker, goal: 'stop me' })
@@ -75,7 +75,7 @@ const eventsOf = stateDir => {
   try {
     const controller = fixture.service.v2
     const store = fixture.service.store
-    const chatbot = controller.v2.chatbotSessionId
+    const chatbot = controller.v2.chatSessionId
     const worker = (await controller.ensureWorker('global')).sessionId
     controller.v2.addWorker(worker, { status: 'idle', currentTicketId: null })
     delete fixture.ctx.sessionController.cancel
@@ -136,7 +136,7 @@ const eventsOf = stateDir => {
   try {
     const controller = fixture.service.v2
     const store = fixture.service.store
-    const chatbot = controller.v2.chatbotSessionId
+    const chatbot = controller.v2.chatSessionId
     const worker = (await controller.ensureWorker('global')).sessionId
     controller.v2.addWorker(worker, { status: 'idle', currentTicketId: null })
     const ticket = store.addTicket({ status: 'working', executor: worker, goal: 'idle stop' })
@@ -160,7 +160,7 @@ const eventsOf = stateDir => {
   try {
     const controller = fixture.service.v2
     const store = fixture.service.store
-    const chatbot = controller.v2.chatbotSessionId
+    const chatbot = controller.v2.chatSessionId
     const worker = (await controller.ensureWorker('global')).sessionId
     controller.v2.addWorker(worker, { status: 'idle', currentTicketId: null })
     const ticket = store.addTicket({ status: 'working', executor: worker, goal: 'already done' })

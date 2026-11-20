@@ -12,7 +12,7 @@ fixture.service.routerEvent = event => { events.push(event) }
 try {
   const controller = fixture.service.v2
   const store = controller.v2
-  const chatbot = fixture.service.v2.v2.chatbotSessionId
+  const chatbot = fixture.service.v2.v2.chatSessionId
 
   async function planAndDispatch(request) {
     const plan = await fixture.callAs(controller.v2.advisor('global').sessionId, 'ticket_plan', {

@@ -7,7 +7,7 @@ const CHATBOT_TOOLS = ['chatbot_co_manage', 'chatbot_direct', 'chatbot_grant', '
 const FULL_DENY = ['subagent', 'subagent_fork', 'list_agents', 'send_message', 'interrupt_agent']
 
 async function dispatchWorker(fixture) {
-  const chatbot = fixture.service.v2.v2.chatbotSessionId
+  const chatbot = fixture.service.v2.v2.chatSessionId
   const made = await fixture.callAs(chatbot, 'chatbot_request', { goal: 'delegation deny test' })
   assert.equal(made.ok, true)
   const advisor = fixture.service.v2.v2.advisor('global').sessionId

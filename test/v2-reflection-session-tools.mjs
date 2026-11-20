@@ -49,7 +49,7 @@ const fixture = await createFixture({
 })
 
 try {
-  const chatbot = fixture.service.v2.v2.chatbotSessionId
+  const chatbot = fixture.service.v2.v2.chatSessionId
   const made = await fixture.callAs(chatbot, 'chatbot_request', { goal: 'review the retrospective tools' })
   assert.equal(made.ok, true)
   const advisor = fixture.service.v2.v2.advisor('global').sessionId

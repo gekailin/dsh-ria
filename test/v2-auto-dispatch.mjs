@@ -12,7 +12,7 @@ async function withFixture(test, options = {}) {
 
 async function plannedTicket(fixture, args = {}) {
   const controller = fixture.service.v2
-  const chatbot = controller.v2.chatbotSessionId
+  const chatbot = controller.v2.chatSessionId
   const request = await fixture.callAs(chatbot, 'chatbot_request', { goal: 'auto-dispatch policy', ...args })
   assert.equal(request.ok, true, JSON.stringify(request))
   const advisor = controller.v2.advisor('global').sessionId
@@ -63,7 +63,7 @@ await withFixture(async fixture => {
 // immediate; flipping the flag does not recreate or stop a Worker or its ticket.
 await withFixture(async fixture => {
   const controller = fixture.service.v2
-  const chatbot = controller.v2.chatbotSessionId
+  const chatbot = controller.v2.chatSessionId
   const explicitOnly = await controller.ensureWorker('global')
   const off = await fixture.callAs(chatbot, 'chatbot_worker_config', {
     action: 'set', workerId: explicitOnly.sessionId, allowAutoDispatch: false,
@@ -209,7 +209,7 @@ for (const scenario of ['archived', 'busy', 'kind', 'missing', 'unresolvable', '
 // Validate selectors without creating tickets or forwarding to the Advisor.
 await withFixture(async fixture => {
   const controller = fixture.service.v2
-  const chatbot = controller.v2.chatbotSessionId
+  const chatbot = controller.v2.chatSessionId
   const target = await controller.ensureWorker('global')
   const before = fixture.service.tickets.tickets().length
   for (const args of [
@@ -248,7 +248,7 @@ await withFixture(async fixture => {
   const reflection = await controller.ensureReflectionWorker('global')
   controller.v2.addWorker(reflection.sessionId, { allowAutoDispatch: false })
   assert.notEqual((await controller.ensureReflectionWorker('global')).sessionId, reflection.sessionId)
-  const request = await controller.requestTicket({ goal: 'reflection auto-dispatch' }, { agent: { id: controller.v2.chatbotSessionId } }, { mode: 'reflection' })
+  const request = await controller.requestTicket({ goal: 'reflection auto-dispatch' }, { agent: { id: controller.v2.chatSessionId } }, { mode: 'reflection' })
   assert.equal(request.ok, true, JSON.stringify(request))
   const advisor = controller.v2.advisor('global').sessionId
   assert.equal((await fixture.callAs(advisor, 'ticket_plan', { ticketId: request.ticketId, summary: 'read the logs', steps: ['session_list'] })).ok, true)
@@ -298,7 +298,7 @@ await withFixture(async fixture => {
 // distinct field events and get reflects both immediately.
 await withFixture(async fixture => {
   const controller = fixture.service.v2
-  const chatbot = controller.v2.chatbotSessionId
+  const chatbot = controller.v2.chatSessionId
   const target = await controller.ensureWorker('global')
   const combined = await fixture.callAs(chatbot, 'chatbot_worker_config', {
     action: 'set', workerId: target.sessionId, model: 'model-fast', provider: 'provider-ok', allowAutoDispatch: false,
@@ -320,7 +320,7 @@ await withFixture(async fixture => {
 for (const unavailable of [false, true]) {
   await withFixture(async fixture => {
     const controller = fixture.service.v2
-    const chatbot = controller.v2.chatbotSessionId
+    const chatbot = controller.v2.chatSessionId
     const target = await controller.ensureWorker('global')
     controller.v2.addWorker(target.sessionId, { allowAutoDispatch: false })
     const alternative = await controller.ensureWorker('global')
@@ -337,7 +337,7 @@ for (const unavailable of [false, true]) {
     assert.equal(ticket.executor, target.sessionId)
     assert.equal(fixture.creates.length, beforeCreates)
     assert.equal(controller.v2.worker(alternative.sessionId).currentTicketId, null)
-  }, { advisorMode: 'stateless', llmReply: JSON.stringify({ action: 'plan', workOrder: { summary: 'plan', steps: ['execute'] } }) })
+  }, { advisorPlan: 'stateless', llmReply: JSON.stringify({ action: 'plan', workOrder: { summary: 'plan', steps: ['execute'] } }) })
 }
 
 // A tool-supplied id is a deliberate reassignment, not a fallback; an
@@ -398,7 +398,7 @@ await withFixture(async fixture => {
 // binding or emit a successful flag-change event.
 await withFixture(async fixture => {
   const controller = fixture.service.v2
-  const chatbot = controller.v2.chatbotSessionId
+  const chatbot = controller.v2.chatSessionId
   const target = await controller.ensureWorker('global')
   const view = controller.workerConfigView.bind(controller)
   controller.workerConfigView = async worker => {

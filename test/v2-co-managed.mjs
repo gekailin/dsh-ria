@@ -11,7 +11,7 @@ async function setup() {
     ],
   })
   await fixture.service.ensure()
-  const chatbot = fixture.service.v2.v2.chatbotSessionId
+  const chatbot = fixture.service.v2.v2.chatSessionId
   const v2 = fixture.service.v2.v2
   const controller = fixture.service.v2
   const textOf = prompt => (Array.isArray(prompt.content) ? prompt.content : [])

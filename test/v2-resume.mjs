@@ -3,7 +3,7 @@ import { createFixture } from './support/ria-fixture.mjs'
 
 async function setup() {
   const fixture = await createFixture({ v2: true })
-  const chatbot = fixture.service.v2.v2.chatbotSessionId
+  const chatbot = fixture.service.v2.v2.chatSessionId
   return { fixture, chatbot }
 }
 

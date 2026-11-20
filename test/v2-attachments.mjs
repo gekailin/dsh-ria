@@ -22,10 +22,10 @@ const imageRef = (sha, extra = {}) => ({
 })
 const shaOf = text => createHash('sha256').update(text).digest('hex')
 
-const fixture = await createFixture({ v2Default: true, advisorMode: 'stateless', llmReply: () => JSON.stringify({ action: 'plan', workOrder: { summary: 'inspect screenshot', steps: ['read image'] } }) })
+const fixture = await createFixture({ v2Default: true, advisorPlan: 'stateless', llmReply: () => JSON.stringify({ action: 'plan', workOrder: { summary: 'inspect screenshot', steps: ['read image'] } }) })
 try {
   const controller = fixture.service.v2
-  const chatbot = fixture.service.v2.v2.chatbotSessionId
+  const chatbot = fixture.service.v2.v2.chatSessionId
   const sendUser = (content) => fixture.service.onSessionEvent(
     { header: { id: chatbot } },
     { type: 'user/message', seq: 1, time: Date.now(), data: { content, source: { kind: 'user', rpcId: 'user-with-image' } } },

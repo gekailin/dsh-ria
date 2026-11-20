@@ -4,7 +4,7 @@ import { MODEL_CATALOG_TTL_MS } from '../lib/v2/model-catalog.mjs'
 
 async function setup(options = {}) {
   const fixture = await createFixture({ v2: true, ...options })
-  const chatbot = fixture.service.v2.v2.chatbotSessionId
+  const chatbot = fixture.service.v2.v2.chatSessionId
   return { fixture, chatbot }
 }
 

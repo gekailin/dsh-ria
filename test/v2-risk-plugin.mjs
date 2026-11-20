@@ -13,7 +13,7 @@ assert.equal(resolveEscalationPolicy({ ticket: { escalationPolicy: 'auto-low-med
 
 const fixture = await createFixture({ v2Default: true })
 try {
-  const chatbot = fixture.service.v2.v2.chatbotSessionId
+  const chatbot = fixture.service.v2.v2.chatSessionId
   const created = await fixture.callAs(chatbot, 'chatbot_request', {
     goal: 'deploy the plugin',
     escalationPolicy: 'auto-low-medium',

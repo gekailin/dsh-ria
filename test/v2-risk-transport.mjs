@@ -98,7 +98,7 @@ const probe = '/home/gkl/Desktop/ria-risk-probe.txt'
 
 const fixture = await createFixture({ v2Default: true })
 const settle = () => new Promise(resolve => setTimeout(resolve, 20))
-const chatbot = fixture.service.v2.v2.chatbotSessionId
+const chatbot = fixture.service.v2.v2.chatSessionId
 const notices = () => fixture.prompts.filter(item => String(item.sessionId) === String(chatbot)).map(item => String(item.content[0].text))
 const auditLines = () => {
   const file = join(fixture.stateDir, 'audit.jsonl')

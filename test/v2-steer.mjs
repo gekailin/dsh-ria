@@ -6,7 +6,7 @@ import { createFixture } from './support/ria-fixture.mjs'
 const fixture = await createFixture({ v2Default: true })
 try {
   const controller = fixture.service.v2
-  const chatbot = fixture.service.v2.v2.chatbotSessionId
+  const chatbot = fixture.service.v2.v2.chatSessionId
   const worker = (await controller.ensureWorker('global')).sessionId
   controller.v2.addWorker(worker, { status: 'idle', currentTicketId: null })
   const ticket = fixture.service.store.addTicket({ status: 'working', executor: worker, goal: 'steer test' })

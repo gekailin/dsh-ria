@@ -153,7 +153,7 @@ const WORKSPACE = process.cwd()
 
 const fixture = await createFixture({ v2Default: true })
 const settle = () => new Promise(resolve => setTimeout(resolve, 20))
-const chatbot = fixture.service.v2.v2.chatbotSessionId
+const chatbot = fixture.service.v2.v2.chatSessionId
 const notices = () => fixture.prompts.filter(item => String(item.sessionId) === String(chatbot))
 const bodyOf = prompt => String(prompt && prompt.content && prompt.content[0] ? prompt.content[0].text : '')
 const auditLines = () => {

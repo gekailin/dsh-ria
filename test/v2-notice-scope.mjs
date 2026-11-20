@@ -13,7 +13,7 @@ const fixture = await createFixture({
 const settle = () => new Promise(resolve => setTimeout(resolve, 20))
 try {
   const controller = fixture.service.v2
-  const chatbot = fixture.service.v2.v2.chatbotSessionId
+  const chatbot = fixture.service.v2.v2.chatSessionId
   const notices = () => fixture.prompts.filter(item => String(item.sessionId) === String(chatbot)).map(item => String(item.content[0].text))
   const events = () => {
     try {
@@ -77,7 +77,7 @@ try {
   assert.equal(suppressed('approval').some(item => item.sessionId === 'session-watched'), false)
 
   // Role sessions remain silent with no suppressed event.
-  const advisor = (await controller.ensureAdvisor('global')).sessionId
+  const advisor = await fixture.advisorSession()
   const worker = (await controller.ensureWorker('global')).sessionId
   for (const id of [chatbot, advisor, worker]) {
     before = notices().length

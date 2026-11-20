@@ -26,7 +26,7 @@ async function planned(fixture, chatbot, request, advisor) {
 {
   const fixture = await createFixture({ v2Default: true })
   try {
-    const chatbot = fixture.service.v2.v2.chatbotSessionId
+    const chatbot = fixture.service.v2.v2.chatSessionId
     const request = await fixture.callAs(chatbot, 'chatbot_request', { goal: '改 v2 角色名', mode: 'work' })
     const advisor = fixture.service.v2.v2.advisor('global').sessionId
     await planned(fixture, chatbot, request, advisor)
@@ -97,7 +97,7 @@ async function planned(fixture, chatbot, request, advisor) {
 {
   const fixture = await createFixture({ v2Default: true, extraGlobalTools: ['grep', 'glob'] })
   try {
-    const chatbot = fixture.service.v2.v2.chatbotSessionId
+    const chatbot = fixture.service.v2.v2.chatSessionId
     const lessons = fixture.service.v2.lessons
     const seeded = lessons.accept({
       scenario: 'v2 改角色名要同步 ria.json 旧字段兼容',
@@ -185,7 +185,7 @@ async function planned(fixture, chatbot, request, advisor) {
   try {
     writeFileSync(join(dir, 'v2.json'), JSON.stringify({
       schemaVersion: 1,
-      chatbotSessionId: null,
+      chatSessionId: null,
       advisors: {},
       workers: {},
       requests: {},

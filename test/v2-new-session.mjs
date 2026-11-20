@@ -7,7 +7,7 @@ import { createFixture } from './support/ria-fixture.mjs'
 const cwd = mkdtempSync(join(tmpdir(), 'ria-new-session-'))
 const fixture = await createFixture({ v2Default: true })
 try {
-  const chatbot = fixture.service.v2.v2.chatbotSessionId
+  const chatbot = fixture.service.v2.v2.chatSessionId
   const events = () => {
     try {
       return readFileSync(join(fixture.stateDir, 'router-events.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
@@ -56,7 +56,7 @@ try {
   assert.equal(badPreset.code, 'preset_invalid')
 
   // Other roles have no such tool.
-  const advisor = (await fixture.service.v2.ensureAdvisor('global')).sessionId
+  const advisor = await fixture.advisorSession()
   await assert.rejects(() => fixture.callAs(advisor, 'chatbot_new_session', { title: 'No', cwd }), /tool not installed|forbidden/)
 
   // Rate limit: the normal create above already used one slot; four more hit 5,
@@ -80,7 +80,7 @@ try {
   const failCwd = mkdtempSync(join(tmpdir(), 'ria-new-session-fail-'))
   const failing = await createFixture({ v2Default: true })
   try {
-    const chatbot = failing.service.v2.v2.chatbotSessionId
+    const chatbot = failing.service.v2.v2.chatSessionId
     failing.service.ctx.sessionController.create = async () => { throw new Error('host denied') }
     const result = await failing.callAs(chatbot, 'chatbot_new_session', { title: 'Fail', cwd: failCwd })
     assert.equal(result.ok, false)

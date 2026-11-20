@@ -29,7 +29,7 @@ const fixture = await createFixture({
   },
 })
 const controller = fixture.service.v2
-const chatbot = controller.v2.chatbotSessionId
+const chatbot = controller.v2.chatSessionId
 const claw = fixture.service.wechatClaw
 const imagePath = join(fixture.stateDir, 'shot.png')
 const secondPath = join(fixture.stateDir, 'shot-two.png')

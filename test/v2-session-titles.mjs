@@ -32,7 +32,7 @@ try {
   }
 
   const chatbot = (await controller.ensureChat()).sessionId
-  const advisor = (await controller.ensureAdvisor('global')).sessionId
+  const advisor = await fixture.advisorSession()
   const worker1 = (await controller.ensureWorker('global')).sessionId
   // New Workers are created idle and are reusable for the next ticket, so
   // occupy the first one before asking for a second distinct Worker.

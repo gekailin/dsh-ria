@@ -86,7 +86,7 @@ const assistant = text => ({ type: 'assistant/message', data: { message: { conte
     if (options && typeof options.onSettled === 'function') options.onSettled({ reason: 'delivered' })
   }
   try {
-    const chatbot = fixture.service.v2.v2.chatbotSessionId
+    const chatbot = fixture.service.v2.v2.chatSessionId
     fixture.service.v2.setDirect({ sessionId: 'session-independent', title: 'Alpha' })
     fixture.service.v2.onSessionEvent(
       { header: { id: 'session-independent' } },

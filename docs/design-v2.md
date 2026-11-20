@@ -402,14 +402,14 @@ session_events { "sessionId": "session-abc", "types": ["approval/*", "turn/*"], 
 - **Chat（会话 `Ria`）＝ Ria 的快脑**：直面用户、快速调度、派发与转述；不再只是“聊天”，而是 Ria 对外的响应与编排面。
 - **Sage（会话 `Sage`）＝ Ria 的慢脑**：长期记忆与认知维护、冲突裁决、深度思考。
 - 两者关系：**快脑负责响应与编排，慢脑负责沉淀与裁断**。Chat 不写长期记忆（只能通过 `chatbot_propose` 提案），Sage 不直接面对用户、不派发、不改 ticket。
-- 角色 id 为 `chat`（由旧名 `chatbot` 改名）；读取侧把历史值 `chatbot` 归一化为 `chat`，写入只写 `chat`。为兼容旧数据与工具调用，工具名沿用 `chatbot_*`，存储键沿用 `chatbotSessionId`，认知库路径沿用 `cognition/chatbot/`。
+- 角色 id 为 `chat`；工具名沿用 `chatbot_*`。持久化键为 `chatSessionId`，Chat 记忆位于 `cognition/chat/`。历史数据由 `scripts/migrate-state-rw.mjs` 一次性迁移；SQLite 的 append-only 工单历史无法改写，历史角色名在读取时归一化。
 
 ### 角色会话命名
 
 | 角色 | 标题 | 规则 |
 |---|---|---|
 | Chat | `Ria` | 单例（快脑；标题保持 `Ria`，改名不影响会话标题） |
-| Advisor | `Ria Advisor` | 默认无 session；仅 `advisorMode=legacy` 回滚时创建会话 |
+| Advisor | `Ria Advisor` | 无状态，不创建会话：`planTicketStateless` 单次 LLM 调用产出 WorkOrder |
 | Worker | `Ria Worker <n>` | n 持久化递增，删除/回收不复用 |
 | Reflection Worker | `Ria Reflection Worker <n>` | 独立计数器，同上 |
 | Sage | `Sage` | 单例 |
@@ -421,14 +421,14 @@ session_events { "sessionId": "session-abc", "types": ["approval/*", "turn/*"], 
 
 ### Sage 与无状态 Advisor（实现补充）
 
-- **Sage**：单例标准会话，标题 `Sage`，cwd **`stateDir` 根**；旧 `stateDir/sage` 会话在启动迁移时归档一次（`sage.migrated`），然后新建并绑定新会话；已是 stateDir 的 Sage 幂等复用。工具仅 `sage_read`/`sage_write`/`sage_request`，无 bash/write/edit/read/grep/glob/task/subagent/run_code。启动与 compaction 后读 INDEX，并注入 principles 摘要（≤800 字）。
+- **Sage**：单例标准会话，标题 `Sage`，cwd **`stateDir` 根**；已是 stateDir 的 Sage 幂等复用。工具仅 `sage_read`/`sage_write`/`sage_request`，无 bash/write/edit/read/grep/glob/task/subagent/run_code。启动与 compaction 后读 INDEX，并注入 principles 摘要（≤800 字）。
 - **Sage 工具面限制方式**：三个工具由 `install()` 在 **agent 自身 scope** 注册（`lib/v2/controller.mjs`，`agent.ctx.tools.register`）；限制用 `restrictSage()` 下发 `restrict({ allow: [] })`。宿主 `dsh-tools` 的 `restrict()` 只校验/过滤 **inherited**（global + preset）工具，agent own scope 的注册天然豁免，所以空 allow-list 不需要任何名字即可把 standard preset 与 profile 全局工具全部屏蔽，恰好留下三个 `sage_*`（与 Chat 的 `restrict({ allow: [] })`、reflection Worker 同一机制）。**不能**再用 `restrict({ allow: ['sage_read','sage_write','sage_request'] })`：宿主 `restrict()` 只认 inherited 工具名（`restrictableNames`，`dsh-tools/lib/index.js:453-467`、`489-500`），scope-local 名会抛 `tools.restrict() names unknown global tool ...`；旧实现 `restrictToTools` 用 catch 吞掉该异常并返回 false，导致 Sage 实际继承 43–44 个工具（bash/write/edit/subagent/run_code 等）。现在失败不再吞：缺少 `tools.restrict`、调用失败、或限制后校验发现额外工具/无法校验，都会抛错；`install()` 会回滚本角色 scoped 工具并让 Sage 创建失败（fail-closed），不会留下无限制 Sage。限制在每次 `install()`（新建或恢复会话）时应用；**运行中的旧进程不会热更新，重启后生效**。
 - **Sage 工具面测试**：`test/v2-sage-tools.mjs` 断言 Sage visible 集合严格等于 `sage_read`/`sage_write`/`sage_request`，且不含 bash/write/edit/read/grep/glob/task/run_code/subagent 等；同时断言 Chat/Advisor/Worker 工具面与基线清单逐项一致，并验证缺失/失败的 restrict 会 fail-closed。`test/support/ria-fixture.mjs` 的 `restrict` mock 已按宿主语义校验 unknown/scope-local 名并抛错，防止同类回归再次被静默吞掉。
-- **认知库**：`stateDir/cognition/` 下 `principles.md`、`projects/<key>.md`、`chatbot/{preferences,agreements,decisions}.md`、自动生成的 `INDEX.md`、`proposals/`；仍复用 `stateDir/lessons.json`。所有写入 0600 + tmp+fsync+rename，Sage 独占写，写后更新 INDEX 与 router-events。
-- **无状态 Advisor**：默认不创建会话，由 `planTicketStateless` 单次 LLM 调用产出 `plan`/`block`；输入 = ticket brief + 认知快照；检索失败显式 degraded。LLM 最多 2 次尝试（120s/次），失败先写 `advisor.plan.failed` 再由调用点落 blocked，不静默。`advisor.plan` 审计字段含 `sessionId:''`、`latencyMs`、`attempts`、`usage`、`degraded`、`cognitionIds`、`briefSummary`、`workOrderSummary`；无 session 日志，router-events 是唯一取证入口。`advisorMode=stateless` 为生产默认，`legacy` 保留建会话/ticket_plan 回滚；`advisors` 绑定只在 legacy 使用。
-- **Chat 记忆（system 提示词动态注入）**：Chat 的 `systemPrompt.section`（`ria-v2-chatbot`，order 60）注册的 `text` 是 `section.text(context)` 函数；DSH 每次组装 prompt（每个 model step）都会调用它，函数内实时读取 `cognition/chatbot/{preferences,agreements,decisions}.md`，经 `chatbotDigest()`（返回 `{text, degraded, truncated}`）汇总后拼入系统提示词。摘要固定带「以下为长期记忆摘要，可能滞后；细节以 cognition 文件为准」；整个记忆块（标题 + 免责句 + 摘要 + 截断标注）上限 1500 字符，超限截断并在末尾标「…（已截断）」。文件缺失/读取失败时输出「长期记忆暂不可用…」占位，为空时输出「长期记忆暂无内容…」，都不阻断会话。该路径每轮实时生成，不需要事件、版本哈希或重启；`onPreStep` 不再注入 `chatbot-memory` host 消息，也不存在第二条注入路径。Chat 无写认知工具，用户提案走 `chatbot_propose`（priority=high）。
+- **认知库**：`stateDir/cognition/` 下 `principles.md`、`projects/<key>.md`、`chat/{preferences,agreements,decisions}.md`、自动生成的 `INDEX.md`、`proposals/`；仍复用 `stateDir/lessons.json`。所有写入 0600 + tmp+fsync+rename，Sage 独占写，写后更新 INDEX 与 router-events。
+- **无状态 Advisor**：默认不创建会话，由 `planTicketStateless` 单次 LLM 调用产出 `plan`/`block`；输入 = ticket brief + 认知快照；检索失败显式 degraded。LLM 最多 2 次尝试（120s/次），失败先写 `advisor.plan.failed` 再由调用点落 blocked，不静默。`advisor.plan` 审计字段含 `sessionId:''`、`latencyMs`、`attempts`、`usage`、`degraded`、`cognitionIds`、`briefSummary`、`workOrderSummary`；无 session 日志，router-events 是唯一取证入口。Advisor 固定为纯无状态调用：`advisorMode`、legacy 会话分支与 `ensureAdvisor`/`retireLegacyAdvisor` 已删除。
+- **Chat 记忆（system 提示词动态注入）**：Chat 的 `systemPrompt.section`（`ria-v2-chatbot`，order 60）注册的 `text` 是 `section.text(context)` 函数；DSH 每次组装 prompt（每个 model step）都会调用它，函数内实时读取 `cognition/chat/{preferences,agreements,decisions}.md`，经 `chatDigest()`（返回 `{text, degraded, truncated}`）汇总后拼入系统提示词。摘要固定带「以下为长期记忆摘要，可能滞后；细节以 cognition 文件为准」；整个记忆块（标题 + 免责句 + 摘要 + 截断标注）上限 1500 字符，超限截断并在末尾标「…（已截断）」。文件缺失/读取失败时输出「长期记忆暂不可用…」占位，为空时输出「长期记忆暂无内容…」，都不阻断会话。该路径每轮实时生成，不需要事件、版本哈希或重启；`onPreStep` 不再注入额外的记忆 host 消息，也不存在第二条注入路径。Chat 无写认知工具，用户提案走 `chatbot_propose`（priority=high）。
 - **提案通道**：Advisor `ticket_plan.cognitionProposal`、Worker/Reflection `worker_report.lessons`、用户 `chatbot_propose` 都落 `proposals/`；Sage 采纳后写记忆，积压不阻塞派单。
-- **退役与 bootstrap**：启动时 `bootstrapCognition()` 一次性生成初始记忆（已有 `.bootstrapped` 则跳过）；`retireLegacyAdvisor()` 仅在 `advisorMode=stateless` 时清空 global 旧绑定并尝试归档，legacy 模式直接跳过，避免覆盖回滚开关。
+- **bootstrap**：启动时 `bootstrapCognition()` 一次性生成初始记忆（已有 `.bootstrapped` 则跳过）。
 - **简化口径**：Sage 单例，不做写队列/优先级/冲突引擎/TTL；记忆冲突与过期由 Sage 人工维护。与 `docs/sage-advisor-design.md` 一致，后者补充了更完整的长期目标。
 
 ### 无 answer 模式的失败语义

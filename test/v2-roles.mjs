@@ -1,36 +1,27 @@
-// Role identity rename: 'chatbot' -> 'chat'.
-//
-// The role id, prompt self-reference and docs say Chat; tool names stay
-// `chatbot_*` and the persisted key stays `chatbotSessionId`. Historical
-// values persisted as 'chatbot' must stay readable through normalizeRole.
+// Role identity: the Chat role is 'chat' and the historical 'chatbot' role id
+// is gone. Historical ticket rows still carry it (SQLite history is
+// append-only), so normalizeTicket maps the actor on read only.
 import assert from 'node:assert/strict'
 import { normalizeTicket } from '../lib/tickets.mjs'
-import { LEGACY_ROLE_CHAT, ROLE_CHAT, isChatRole, normalizeRole } from '../lib/v2/roles.mjs'
+import { ROLE_CHAT, isChatRole } from '../lib/v2/roles.mjs'
 import { roleSessionTitle } from '../lib/v2/controller.mjs'
 import { chatPrompt, roleLabel, sagePrompt } from '../lib/v2/prompts.mjs'
+import { readFileSync } from 'node:fs'
 
 // --- role ids ------------------------------------------------------------
 assert.equal(ROLE_CHAT, 'chat')
-assert.equal(LEGACY_ROLE_CHAT, 'chatbot')
-assert.equal(normalizeRole('chatbot'), 'chat')
-assert.equal(normalizeRole('chat'), 'chat')
-assert.equal(normalizeRole('advisor'), 'advisor')
-assert.equal(normalizeRole('ticket:ticket_x'), 'ticket:ticket_x')
-assert.equal(normalizeRole('session-abc'), 'session-abc')
-assert.equal(normalizeRole(null), null)
-assert.equal(normalizeRole(undefined), undefined)
 assert.equal(isChatRole('chat'), true)
-assert.equal(isChatRole('chatbot'), true)
+assert.equal(isChatRole('chatbot'), false)
 assert.equal(isChatRole('advisor'), false)
 assert.equal(isChatRole(undefined), false)
+const rolesSource = readFileSync(new URL('../lib/v2/roles.mjs', import.meta.url), 'utf8')
+assert.equal(rolesSource.includes('LEGACY_ROLE_CHAT'), false)
+assert.equal(rolesSource.includes('normalizeRole'), false)
 
 // --- labels and session titles ------------------------------------------
 assert.equal(roleLabel('chat'), 'Chat')
-assert.equal(roleLabel('chatbot'), 'Chat', 'historical role label normalizes to Chat')
 assert.equal(roleLabel('sage'), 'Sage')
-// Chat keeps the user-facing session title 'Ria' under either spelling.
 assert.equal(roleSessionTitle('chat'), 'Ria')
-assert.equal(roleSessionTitle('chatbot'), 'Ria')
 assert.equal(roleSessionTitle('sage'), 'Sage')
 
 // --- prompts carry the fast-brain/slow-brain positioning ----------------

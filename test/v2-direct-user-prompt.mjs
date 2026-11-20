@@ -20,8 +20,8 @@ const fixture = await createFixture({
 })
 try {
   const controller = fixture.service.v2
-  const chatbot = fixture.service.v2.v2.chatbotSessionId
-  const advisor = (await controller.ensureAdvisor('global')).sessionId
+  const chatbot = fixture.service.v2.v2.chatSessionId
+  const advisor = await fixture.advisorSession()
   const worker = (await controller.ensureWorker('global')).sessionId
   const reflection = (await controller.ensureReflectionWorker('global')).sessionId
   const sage = (await controller.ensureSage()).sessionId

@@ -10,7 +10,7 @@ const observedModes = new Set()
 const run = async (name, body) => {
   const fixture = await createFixture({ v2: true })
   const controller = fixture.service.v2
-  const chatbot = controller.v2.chatbotSessionId
+  const chatbot = controller.v2.chatSessionId
   const host = { running: false, nextTurn: [], inputs: [], attempts: [] }
   const worker = (await controller.ensureWorker('global')).sessionId
   controller.v2.addWorker(worker, { status: 'idle', currentTicketId: null })

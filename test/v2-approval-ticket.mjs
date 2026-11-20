@@ -17,7 +17,7 @@ const fixture = await createFixture({
 })
 
 const settle = () => new Promise(resolve => setTimeout(resolve, 20))
-const chatbot = fixture.service.v2.v2.chatbotSessionId
+const chatbot = fixture.service.v2.v2.chatSessionId
 const notices = () => fixture.prompts.filter(item => String(item.sessionId) === String(chatbot))
 const textOf = prompt => String(prompt && prompt.content && prompt.content[0] ? prompt.content[0].text : '')
 const asked = (worker, data) => fixture.service.onSessionEvent({ header: { id: worker } }, { type: 'approval/asked', time: Date.now(), data })

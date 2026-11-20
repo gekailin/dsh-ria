@@ -388,7 +388,9 @@ try {
       await peerless.claw.shutdown()
     }
   }
-// The Ria tool: validation, channel selection, lastFileSend and durable queueing.
+// Durable file queue: channel_file_send entries left by older builds are still
+// drained when the channel is reachable, and a missing file fails loudly instead
+// of silently disappearing.
 {
   const fixture = await createFixture()
   const file = join(fixture.stateDir, '报告.pdf')
@@ -403,42 +405,34 @@ try {
     setPaused() {},
   }
   claw.lastInboundAt = Date.now()
+  const enqueue = payload => fixture.service.outbox.enqueue({ kind: 'channel_file_send', payload }).entry
   try {
     assert.equal(fixture.service.channelFileOptions('wechat').maxBytes, 20 * 1024 * 1024)
-    assert.equal((await fixture.service.toolSendFile({}, {})).code, 'path_required')
-    assert.equal((await fixture.service.toolSendFile({ path: 'report.pdf' }, {})).code, 'path_not_absolute')
-    assert.equal((await fixture.service.toolSendFile({ path: join(fixture.stateDir, 'missing.pdf') }, {})).code, 'file_not_found')
-    assert.equal((await fixture.service.toolSendFile({ path: fixture.stateDir }, {})).code, 'file_not_regular')
-    writeFileSync(join(fixture.stateDir, 'empty.txt'), '')
-    assert.equal((await fixture.service.toolSendFile({ path: join(fixture.stateDir, 'empty.txt') }, {})).code, 'file_empty')
-    writeFileSync(join(fixture.stateDir, 'run.exe'), 'MZ')
-    assert.equal((await fixture.service.toolSendFile({ path: join(fixture.stateDir, 'run.exe') }, {})).code, 'file_unsupported')
-
-    const ok = await fixture.service.toolSendFile({ path: file, note: '这是报告' }, {})
-    assert.equal(ok.ok, true)
-    assert.equal(ok.delivered, true)
-    assert.equal(ok.channel, 'wechat-claw')
-    assert.equal(ok.name, '报告.pdf')
-    assert.equal(ok.bytes, PDF.length)
+    const delivered = await fixture.service.deliverOutboxEntry(enqueue({ channel: 'wechat-claw', path: file, name: '报告.pdf', bytes: PDF.length, note: '这是报告' }))
+    assert.equal(delivered, true)
     assert.deepEqual(sent, ['📎 这是报告'])
     assert.equal(claw.lastFileSend.delivered, true)
     assert.equal(claw.lastFileSend.name, '报告.pdf')
     assert.equal(claw.lastFileSend.path, file)
 
+    await assert.rejects(
+      () => fixture.service.deliverOutboxEntry(enqueue({ channel: 'wechat-claw', path: join(fixture.stateDir, 'gone.pdf'), name: 'gone.pdf' })),
+      /文件已不存在/,
+    )
+
+    writeFileSync(join(fixture.stateDir, 'empty.txt'), '')
+    await assert.rejects(
+      () => fixture.service.deliverOutboxEntry(enqueue({ channel: 'wechat-claw', path: join(fixture.stateDir, 'empty.txt'), name: 'empty.txt' })),
+      /文件不可用/,
+    )
+
     claw.paused = true
     claw.pausedAt = new Date().toISOString()
-    const queued = await fixture.service.toolSendFile({ path: file }, {})
-    assert.equal(queued.queued, true)
-    assert.equal(queued.channel, 'wechat-claw')
-    assert.match(queued.message, /推送已暂停，文件已排队/)
-    const entry = fixture.service.outbox.all().find(item => item.kind === 'channel_file_send')
-    assert.ok(entry, 'paused file should be in the outbox')
-    assert.equal(entry.payload.path, file)
-    assert.equal(entry.payload.name, '报告.pdf')
+    assert.deepEqual(await fixture.service.deliverOutboxEntry(enqueue({ channel: 'wechat-claw', path: file, name: '报告.pdf' })), { deferred: true })
     claw.paused = false
 
     claw.peer = undefined
-    assert.equal((await fixture.service.toolSendFile({ path: file }, {})).code, 'no_target')
+    assert.deepEqual(await fixture.service.deliverOutboxEntry(enqueue({ channel: 'wechat-claw', path: file, name: '报告.pdf' })), { deferred: true })
   } finally {
     fixture.cleanup()
   }

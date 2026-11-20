@@ -8,11 +8,11 @@ const reply = request => {
   const goal = (user.match(/目标: ([^\n]+)/) || [])[1] || 'plan'
   return JSON.stringify({ action: 'plan', workOrder: { summary: 'plan: ' + goal, steps: ['step 1'] } })
 }
-const fixture = await createFixture({ v2Default: true, advisorMode: 'stateless', llmReply: reply })
+const fixture = await createFixture({ v2Default: true, advisorPlan: 'stateless', llmReply: reply })
 try {
   const controller = fixture.service.v2
   await controller.bootstrapCognition()
-  const chatbot = fixture.service.v2.v2.chatbotSessionId
+  const chatbot = fixture.service.v2.v2.chatSessionId
   const advisorCreates = () => fixture.creates.filter(item => String(item.cwd || '').includes('/advisors'))
   const eventsFor = ticketId => fixture.service.routerEvents.query({ ticketId }).events
 
@@ -68,19 +68,12 @@ try {
   assert.equal(fixture.service.store.ticket(blocked.ticketId).waitingOn, 'user')
   assert.equal(fixture.service.store.ticket(blocked.ticketId).attention.kind, 'question')
 
-  // Legacy rollback still creates sessions, and switching back to stateless
-  // stops creating them.
-  controller.v2.setAdvisorMode('legacy')
-  const legacy = await fixture.callAs(chatbot, 'chatbot_request', { goal: 'legacy goal' })
-  assert.equal(legacy.ok, true, JSON.stringify(legacy))
-  assert.ok(controller.v2.advisor('global'))
-  assert.ok(controller.v2.ticketMeta(legacy.ticketId).advisorSessionId)
-  assert.ok(advisorCreates().length > 0)
-  controller.v2.setAdvisorMode('stateless')
-  const legacyCount = advisorCreates().length
-  const stateless = await fixture.callAs(chatbot, 'chatbot_request', { goal: 'stateless again' })
-  assert.equal(stateless.ok, true)
-  assert.equal(advisorCreates().length, legacyCount)
+  // There is no Advisor session switch: every plan is one stateless LLM call.
+  const statelessAgain = await fixture.callAs(chatbot, 'chatbot_request', { goal: 'stateless again' })
+  assert.equal(statelessAgain.ok, true)
+  assert.equal(statelessAgain.stateless, true)
+  assert.equal(controller.v2.advisor('global'), null)
+  assert.equal(advisorCreates().length, 0)
 
   console.log('v2 advisor stateless ok')
 } finally {
@@ -89,11 +82,11 @@ try {
 
 // Two failed LLM attempts must fail visibly and leave the ticket blocked.
 {
-  const failing = await createFixture({ v2Default: true, advisorMode: 'stateless', llmFailures: 2 })
+  const failing = await createFixture({ v2Default: true, advisorPlan: 'stateless', llmFailures: 2 })
   try {
     const controller = failing.service.v2
     await controller.bootstrapCognition()
-    const chatbot = failing.service.v2.v2.chatbotSessionId
+    const chatbot = failing.service.v2.v2.chatSessionId
     const result = await failing.callAs(chatbot, 'chatbot_request', { goal: 'fail plan' })
     assert.equal(result.ok, false, JSON.stringify(result))
     assert.equal(result.code, 'advisor_unavailable')

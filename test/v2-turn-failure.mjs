@@ -183,26 +183,47 @@ const noticesAbout = (fixture, chatbot, ticketId) => fixture.prompts
   const at = minutes => lastEventAt + minutes * 60000
 
   assert.equal(STUCK_LAST_EVENT_MINUTES, 10)
-  // Exactly 10 minutes is not over the threshold.
+  // Exactly 10 minutes of ticket-record silence is not over the threshold; with
+  // no session activity known this is the degraded (old) rule.
   assert.deepEqual(computeTicketHealth(ticket, { activeTurn: true, now: at(10) }), {
     activeTurn: true,
     lastEventAgeMinutes: 10,
+    sessionLastEventAgeMinutes: null,
     stuckSuspect: false,
     stuckReason: null,
   })
-  // 10 minutes + 1 second is.
+  // 10 minutes + 1 second is: the degraded reason names the ticket record.
   const justOver = computeTicketHealth(ticket, { activeTurn: true, now: at(10) + 1000 })
   assert.equal(justOver.activeTurn, true)
   assert.equal(justOver.lastEventAgeMinutes, 10 + 1 / 60)
   assert.equal(justOver.stuckSuspect, true)
-  assert.equal(justOver.stuckReason, '回合未闭合且长时间无事件')
+  assert.match(justOver.stuckReason, /工单记录无更新 10\.1 分钟/)
+  assert.match(justOver.stuckReason, /阈值 10 分钟/)
   const longTurn = computeTicketHealth(ticket, { activeTurn: true, now: at(155) })
   assert.equal(longTurn.lastEventAgeMinutes, 155)
   assert.equal(longTurn.stuckSuspect, true)
-  assert.equal(longTurn.stuckReason, '回合未闭合且长时间无事件')
+  assert.match(longTurn.stuckReason, /工单记录无更新 155 分钟/)
   assert.equal(computeTicketHealth(ticket, { activeTurn: true, now: at(9) }).stuckSuspect, false)
   assert.equal(computeTicketHealth(ticket, { activeTurn: true, now: at(20), thresholdMinutes: 20 }).stuckSuspect, false)
   assert.equal(computeTicketHealth(ticket, { activeTurn: true, now: at(21), thresholdMinutes: 20 }).stuckSuspect, true)
+  // Primary rule: a fresh Worker session means the ticket is advancing, however
+  // old the ticket record is. A step-running turn never writes worker_report.
+  const sessionFresh = computeTicketHealth(ticket, { activeTurn: true, now: at(60), sessionLastEventAt: at(59) })
+  assert.equal(sessionFresh.sessionLastEventAgeMinutes, 1)
+  assert.equal(sessionFresh.stuckSuspect, false, 'a live session is never stuck')
+  // Both must be stale: a stale session with a fresh ticket record is healthy.
+  assert.equal(computeTicketHealth(ticket, { activeTurn: true, now: at(11), sessionLastEventAt: at(0), thresholdMinutes: 10 }).stuckSuspect, false)
+  // Session silence > 15 min AND ticket record > 10 min: stuck, and the reason
+  // names the session evidence with both clocks.
+  const sessionStale = computeTicketHealth(ticket, { activeTurn: true, now: at(60), sessionLastEventAt: at(44) })
+  assert.equal(sessionStale.stuckSuspect, true)
+  assert.match(sessionStale.stuckReason, /会话无事件 16 分钟/)
+  assert.match(sessionStale.stuckReason, /阈值 15 分钟/)
+  assert.match(sessionStale.stuckReason, /工单记录无更新 60 分钟/)
+  assert.match(sessionStale.stuckReason, /最后事件 \d{4}-\d{2}-\d{2} \d{2}:\d{2}/)
+  assert.match(sessionStale.stuckReason, /最后更新 \d{4}-\d{2}-\d{2} \d{2}:\d{2}/)
+  // Exactly 15 minutes of session silence is not over the threshold.
+  assert.equal(computeTicketHealth(ticket, { activeTurn: true, now: at(60), sessionLastEventAt: at(45) }).stuckSuspect, false)
   // Working without an active turn is a suspect even with a fresh event.
   const noTurn = computeTicketHealth(ticket, { activeTurn: false, now: at(0) })
   assert.equal(noTurn.stuckSuspect, true)
@@ -210,7 +231,7 @@ const noticesAbout = (fixture, chatbot, ticketId) => fixture.prompts
   // Both criteria are reported together.
   const both = computeTicketHealth(ticket, { activeTurn: false, now: at(11) })
   assert.match(both.stuckReason, /没有活跃 turn/)
-  assert.match(both.stuckReason, /最后一个事件/)
+  assert.match(both.stuckReason, /工单记录无更新/)
   // A blocked ticket is never a stuck suspect, however old.
   const blocked = computeTicketHealth({ ...ticket, status: 'blocked', waitingOn: 'environment' }, { activeTurn: false, now: at(60) })
   assert.equal(blocked.stuckSuspect, false)
@@ -263,24 +284,29 @@ const noticesAbout = (fixture, chatbot, ticketId) => fixture.prompts
     assert.equal(workerStuck.currentTicketId, ticketId)
     assert.equal(workerStuck.stateConsistent, true, 'status and currentTicketId stay consistent')
 
-    // Age criterion through the real view (11 minutes > threshold), active
-    // turn still open so only the age can make it stuck. updatedAt moves with
-    // progress, as a real idle ticket's would.
+    // The ticket record is 11 minutes old but the Worker session just emitted
+    // events (turn/start etc.): the ticket is advancing, not stuck.
     fixture.service.v2.turnStartedAt.set(workerId, Date.now())
     const idleSince = Date.now() - 11 * 60000
     const stored = fixture.service.store.ticket(ticketId)
     stored.progress.lastEventAt = idleSince
     stored.updatedAt = idleSince
     fixture.service.store.save()
+    const viewFresh = await viewOf()
+    assert.equal(viewFresh.activeTurn, true)
+    assert.equal(viewFresh.stuckSuspect, false, 'a live Worker session is never stuck')
+    assert.equal(viewFresh.stuckReason, null)
+    // Drop the session signal: the degraded path uses the ticket record alone.
+    fixture.service.v2.sessionLastEventAt.delete(workerId)
     const viewOld = await viewOf()
     const workerOld = await workerOf()
     assert.equal(viewOld.activeTurn, true)
     assert.equal(viewOld.stuckSuspect, true)
-    assert.equal(viewOld.stuckReason, '回合未闭合且长时间无事件')
+    assert.match(viewOld.stuckReason, /工单记录无更新/)
     assert.equal(workerOld.stuckSuspect, viewOld.stuckSuspect)
     // The age text advances between the two reads; the criterion, the verdict
     // and the age itself (within milliseconds) must still agree.
-    assert.equal(workerOld.stuckReason, '回合未闭合且长时间无事件')
+    assert.match(workerOld.stuckReason, /工单记录无更新/)
     assert.ok(Math.abs(workerOld.lastEventAgeMinutes - viewOld.lastEventAgeMinutes) < 0.01)
 
     // A blocked ticket is not a stuck suspect even with an old event.

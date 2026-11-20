@@ -314,14 +314,17 @@ ticket history 是状态快照，`audit.jsonl` 是审批/授权决策审计；�
 
 **卡死检测字段**（`lib/v2/ticket-health.mjs` 的 `computeTicketHealth`）：`chatbot_status` 的 ticket 视图与 `chatbot_worker_config get` 对同一张票复用同一函数，取值一致：
 
+**判据以 Worker 会话为准**：一个连续跑几十个 step 的 Worker 不会在中途调 `worker_report(progress)`，只看工单记录会把它误报成卡死。controller 在 `onSessionEvent` 里为每个会话记录最后事件时间（内存 map，事件驱动、无轮询；重启后未见到事件时走降级路径），判卡时优先用它：
+
 | 字段 | 含义 |
 |---|---|
 | `activeTurn` | 该票 executor 是否有未闭合 turn（`turn/start` 置位、`turn/end` 清除） |
-| `lastEventAgeMinutes` | 距最后事件多少分钟（取 `progress.lastEventAt` 与 `updatedAt` 的较大值；都没有时回退 `createdAt`，再没有为 null） |
-| `stuckSuspect` | 仅 working 票：`!activeTurn` 或 `lastEventAgeMinutes > 10` 为 true；blocked 与终态票不误报 |
-| `stuckReason` | 命中的判据与数值，如「working 但没有活跃 turn；最后一个事件已过去 10.1 分钟（阈值 10 分钟）」 |
+| `lastEventAgeMinutes` | **工单记录**距最后更新多少分钟（`progress.lastEventAt` 与 `updatedAt` 取大；都没有回退 `createdAt`，再没有为 null） |
+| `sessionLastEventAgeMinutes` | **executor 会话**距最后事件多少分钟；拿不到会话时间时为 null |
+| `stuckSuspect` | 仅 working 票：`!activeTurn` 直接 true；否则「会话无事件 > 15 分钟 **且** 工单记录无更新 > 10 分钟」才 true；拿不到会话时间时退回旧口径「工单记录无更新 > 10 分钟」；blocked 与终态票不误报 |
+| `stuckReason` | 命中判据 + 数值 + 墙上时间。会话路径写「会话无事件 16 分钟（最后事件 YYYY-MM-DD HH:mm，阈值 15 分钟）；工单记录无更新 60 分钟（最后更新 …，阈值 10 分钟）」；降级路径只写「工单记录无更新 …（阈值 10 分钟）」 |
 
-阈值是常量 `STUCK_LAST_EVENT_MINUTES = 10`（严格大于；恰好 10 分钟不算 stuck），可用 `options.v2StuckLastEventMinutes` 覆盖。**没有 `progress.stale` 字段**：它从来没有写入点，只是误导；年龄一律按 `lastEventAgeMinutes` 计算。
+两个阈值严格大于才命中（恰好等于不算）：`STUCK_SESSION_EVENT_MINUTES = 15`（会话）与 `STUCK_LAST_EVENT_MINUTES = 10`（工单记录）。分别可用 `options.v2StuckSessionMinutes` / `options.v2StuckLastEventMinutes` 覆盖。**没有 `progress.stale` 字段**：它从来没有写入点，只是误导；年龄一律按上述分钟值计算。
 
 ## 7. 记忆与知识
 

@@ -41,12 +41,16 @@ try {
 
   {
     const write = openDatabase(join(dir, 'ria.sqlite'))
-    write.prepare("INSERT INTO topics(id,title,tags,brief,archived_at,merged_into,created_at,updated_at) VALUES('bad','bad','[]','',1,'topic_a',1,1)").run()
+    // A merged-into target that does not exist is the reportable defect; a topic
+    // that is both archived and merged is the normal shape and must pass.
+    write.prepare("INSERT INTO topics(id,title,tags,brief,archived_at,merged_into,created_at,updated_at) VALUES('okmerged','ok','[]','',1,'topic_a',1,1)").run()
+    write.prepare("INSERT INTO topics(id,title,tags,brief,archived_at,merged_into,created_at,updated_at) VALUES('bad','bad','[]','',NULL,'missing-topic',1,1)").run()
     write.prepare("INSERT INTO lessons(id,status,scenario,approach,pitfall,created_at,ticket_id) VALUES('badl','active','s','a','p',1,'missing-ticket')").run()
     write.close()
     const bad = verifySqliteState({ stateDir: dir })
     assert.equal(bad.domains.ok, false)
-    assert.ok(bad.domains.issues.includes('topics_archived_and_merged'))
+    assert.ok(bad.domains.issues.includes('topics_merged_into_missing'))
+    assert.equal(bad.domains.issues.includes('topics_archived_and_merged'), false)
     assert.ok(bad.domains.issues.includes('lessons_orphan_ticket'))
   }
 

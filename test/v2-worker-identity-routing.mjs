@@ -94,14 +94,18 @@ const planReply = routing => () => JSON.stringify({
     store.addWorker(w2.sessionId, { status: 'idle', currentTicketId: null, tags: ['sqlite'], lastUsedAt: Date.now() })
 
     // Affinity beats lastUsedAt: w2 is newer but w1 matches the requested tags.
-    const request = await fixture.callAs(chatbot, 'chatbot_request', { goal: 'frontend polish', preferredTags: ['Frontend'] })
+    const request = await fixture.callAs(chatbot, 'chatbot_request', { goal: 'frontend polish', preferredTags: ['Frontend', 'docs'] })
     assert.equal(request.ok, true, JSON.stringify(request))
     assert.equal(fixture.service.store.ticket(request.ticketId).executor, w1.sessionId)
-    assert.deepEqual(store.ticketMeta(request.ticketId).routingTags, ['frontend'])
+    assert.deepEqual(store.ticketMeta(request.ticketId).routingTags, ['frontend', 'docs'])
+    // Explicit tags never leak into the learned autoTags.
+    const learned = store.worker(w1.sessionId)
+    assert.deepEqual(learned.tags, ['frontend'])
+    assert.deepEqual(learned.autoTags, ['docs'])
     const events = fixture.service.routerEvents.query({ ticketId: request.ticketId }).events
     const attempt = events.find(event => event.event === 'dispatch.attempt')
     assert.ok(attempt)
-    assert.deepEqual(attempt.payload.routing.ticketTags, ['frontend'])
+    assert.deepEqual(attempt.payload.routing.ticketTags, ['frontend', 'docs'])
     assert.equal(attempt.payload.routing.matchedExplicitTags.includes('frontend'), true)
     assert.ok(attempt.payload.routing.selectedScore >= 100)
 

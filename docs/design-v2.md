@@ -71,7 +71,7 @@ Advisor 的产物只有两种：
 | Workspace | 目录、仓库、工具、权限、密钥；与 Project 默认 1:1，可多对多 |
 
 - ticket 生命周期：intake → open → working → blocked → done / failed / cancelled；forked 预留。终态必须有结论，卡住必须有 waitingOn 和原因。详细状态、命令、lease 和并发规则见 [ticket-flow.md](ticket-flow.md)。
-- 短问答票：Chatbot 对当场可核实的短问题先回一句回执，再用 `chatbot_request` 的 `mode:'answer'` 建票；Advisor 只用 read/grep/glob 做最小只读核对，然后 `ticket_answer` 直接 `open → done`（`resolution.kind='answered'`），不写 WorkOrder、不派 Worker；答案经 `[Router notice]` 回到 Chatbot 转述用户。需要长调查的问题不建 answer 票，走 WorkOrder 交 Worker。
+- **无 answer 模式**：纯问答由 Chatbot 直接答；需要核实（代码/文档/当前状态）或要动手的一律建 work 票。每张票都必须有 WorkOrder 并派 Worker，不存在“只答不派”的票；历史 `meta.mode='answer'` 的票按 work 读取（见下文「兼容：历史 ticket 的 meta.mode='answer'」）。
 - 同一张票同一时间只有一个 executor；依赖未完成不派发；同一次就绪最多派发一次。
 - 所有需要跟踪的委托必须落 ticket；直接 session.send 只用于不跟踪的 ad-hoc。
 - 票的归属状态：unassigned / project / global。intake 默认 unassigned，projectId 为空；unassigned 不派发，派发前必须落定为 project 或 global。unassigned 和 global 都可能是空 projectId，必须用归属状态区分。
@@ -117,7 +117,7 @@ Advisor 的产物只有两种：
 
 - 两种类型不可混用：给 work 工单指定 reflection Worker（或反过来）会按指定 Worker 不可用处理，返回 `specified_worker_unavailable`（`cause='worker_kind_mismatch'`），工单转 `blocked(waitingOn=user)`，不自动换成另一种 Worker。显式选择只绕过 `allowAutoDispatch`，不绕过类型校验。
 - reflection Worker 只读：通过 read/grep/glob 读仓库、通过 session_list/session_events 读历史会话；不写代码、不改配置、不做最终收尾。会话只读工具只属于它，Advisor 和 work Worker 都没有。
-- **复盘票流转**：Chatbot 或用户提出复盘需求 → `chatbot_request(mode=reflection)` 建票 → Advisor 写 WorkOrder（读哪些会话、产出什么报告）→ `ticket_dispatch` 路由到 reflection Worker（当前没有就现场创建一个）→ Worker 用 session_* 与 read 取证，`worker_report(done)` 回传结论与证据 → Router 收口，Chatbot 转述。
+- **复盘票流转**：Chatbot 或用户提出复盘需求 → 内部 `requestTicket(mode=reflection)`（Sage/内部路径）建票 → Advisor 写 WorkOrder（读哪些会话、产出什么报告）→ `ticket_dispatch` 路由到 reflection Worker（当前没有就现场创建一个）→ Worker 用 session_* 与 read 取证，`worker_report(done)` 回传结论与证据 → Router 收口，Chatbot 转述。
 - **为什么不给 Worker 子代理能力**：委派工具族对直管 Worker 全部关闭（`subagent`、`subagent_fork`、`list_agents`、`send_message`、`interrupt_agent`，以及 agent-team 的 `spawn_teammate`/`wait_agent` 若挂载）。① **执行末端**：Worker 是责任链的末端，工单已由 Advisor 拆到可执行粒度，再向下派会让“谁在做这张票”失去单一答案。② **责任链**：Worker 只对 Ria 下结论、只领一张票；子代理没有工单、没有步骤边界指令通道、没有报告，失败无法归因，Ria 也无法纠偏。③ **绕过报告与自动注入**：现有协作靠 `worker_report` 的里程碑与步骤边界注入的 steer；子代理在本轮内部黑盒跑完，等于绕开这两个可观测点。④ **并发不可控**：一张票同一时间只允许一个执行者（lease/attempt 语义）；子代理会制造绕过 lease 的并发写与重复产物，Ria 也无法暂停/恢复它们。实现口径：`restrictWorker` 按可用名求交集后以 deny-list 下发整个委派工具族，未知名自动跳过；Advisor/Chatbot 的工具面不受影响。
 
 ### Worker preset 与模型配置
@@ -198,9 +198,9 @@ v2 的提权不再依赖工具白名单或 `chatbot_grant`。每次 Worker 的�
 
 **风险规则 `plugin-install`**：`dsh plugin` 的 add/update/remove/install（无论 `--profile` 在子命令前后，目标为 `~/.dsh/profiles/**` 或 `file:...`）判 **medium**，rule id `plugin-install`，reason 写「向 profile 安装/更新插件：dsh plugin <action> <target>」；action 无法识别时保持 unknown 并写清。工单设 `escalationPolicy=auto-low-medium` 时该请求自动放行；`strict` 下仍需人工确认。
 
-**`chatbot_request` 的 escalationPolicy**：工具新增可选 `escalationPolicy`（strict/auto-low/auto-low-medium）；仅 `mode=work` 写入 ticket meta，answer/reflection 忽略；非法值返回 `invalid_escalation_policy`。部署类工单可显式声明 auto-low-medium。
+**`chatbot_request` 的 escalationPolicy**：工具可选 `escalationPolicy`（strict/auto-low/auto-low-medium）；只有 work 票写入 ticket meta，reflection 忽略；非法值返回 `invalid_escalation_policy`。部署类工单可显式声明 auto-low-medium。
 
-**`chatbot_request` 的 workerPreset 与 `chatbot_worker_config`**：work 模式可选 `workerPreset`（白名单 ptc/standard/minimal，默认 ptc，仅新建 Worker 生效；answer/reflection 传会返回 `worker_preset_not_supported`）；idle Worker 复用时沿用原 preset。`chatbot_worker_config`（仅 Chatbot）支持 `get`（seq/title/cwd/workerType/preset/model/status/allowAutoDispatch）与 `set`：`allowAutoDispatch` 切换立即生效；模型走 `sessionController.selectModel` 立即生效（下一轮）；preset 因 DSH 不支持运行中切换，未传 `recreate:true` 时返回 `worker_preset_requires_recreate`，recreate 停用旧绑定、同 cwd 新建、旧会话归档；变更写 `worker.config.changed`。
+**`chatbot_request` 的 workerPreset 与 `chatbot_worker_config`**：work 票可选 `workerPreset`（白名单 ptc/standard/minimal，默认 ptc，仅新建 Worker 生效；reflection 传会返回 `worker_preset_not_supported`）；idle Worker 复用时沿用原 preset。`chatbot_worker_config`（仅 Chatbot）支持 `get`（seq/title/cwd/workerType/preset/model/status/allowAutoDispatch）与 `set`：`allowAutoDispatch` 切换立即生效；模型走 `sessionController.selectModel` 立即生效（下一轮）；preset 因 DSH 不支持运行中切换，未传 `recreate:true` 时返回 `worker_preset_requires_recreate`，recreate 停用旧绑定、同 cwd 新建、旧会话归档；变更写 `worker.config.changed`。
 
 **`chatbot_models`**：仅 Chatbot 可调用的只读工具，用于在 `chatbot_worker_config set` 前确认准确模型 id。优先读取 DSH 模型注册表（`ctx.get('llm').listProviders/listModels`，source=`catalog`）；注册表不可用或全部 provider 拉取失败时回退内置 bundled catalog（`lib/v2/model-catalog.mjs`，source=`bundled-fallback`，带 `reason`，不整体报错）；`provider-api` 预留给未来直连 provider 的路径。参数：`provider`（精确过滤）、`query`（id/displayName 大小写不敏感子串）、`limit`（1–200，默认 50）；返回 `models[{provider,model,displayName,contextWindow?,maxOutput?,default?,source}]`、`count`（返回条数）、`total`（过滤后总数）、`source`、`cached`，空结果给 `message` 说明。进程内 5 分钟 TTL 内存缓存，无定时刷新/轮询。
 
@@ -214,7 +214,7 @@ ticket history 是状态快照，`audit.jsonl` 是审批/授权决策审计；�
 
 | event | 产生位置 | payload 关键字段 |
 |---|---|---|
-| `ticket.created` | `chatbotRequest` 建票成功后 | `mode`（work/answer/reflection）、`workspace`、`requestId`、`goal` 摘要 |
+| `ticket.created` | `chatbotRequest` 建票成功后 | `mode`（work/reflection）、`workspace`、`requestId`、`goal` 摘要 |
 | `advisor.plan` | `ticketPlan` 写 WorkOrder 后 | `summary`、`steps` |
 | `dispatch.attempt` | `dispatchTicket` 的 working 迁移后 | `workerId`、`attemptCount`、`requestId` |
 | `dispatch.confirmed` | `confirmWorkerTurnStart` 收到 worker `turn/start` 时 | `workerId`、`requestId` |
@@ -254,7 +254,7 @@ ticket history 是状态快照，`audit.jsonl` 是审批/授权决策审计；�
 
 | 工具 | 作用 |
 |---|---|
-| `chatbot_request` | 建票并交给 Advisor；mode=answer/work/reflection |
+| `chatbot_request` | 建 work 票并交给 Advisor；无 mode 参数（reflection 票由 Sage/内部路径创建） |
 | `chatbot_status` | 只读查询工单与最新进度；ticket 视图带 `activeTurn`/`lastEventAgeMinutes`/`stuckSuspect`/`stuckReason` |
 | `chatbot_steer` | 向运行中的 Worker 同步方向调整；pre-step 合并投递，不打断工具 |
 | `chatbot_stop_ticket` | 强制停止工单：cancelled + reason、清 inbox、硬中断/软停止、通知用户 |
@@ -415,20 +415,19 @@ session_events { "sessionId": "session-abc", "types": ["approval/*", "turn/*"], 
 - **Sage 工具面限制方式**：三个工具由 `install()` 在 **agent 自身 scope** 注册（`lib/v2/controller.mjs`，`agent.ctx.tools.register`）；限制用 `restrictSage()` 下发 `restrict({ allow: [] })`。宿主 `dsh-tools` 的 `restrict()` 只校验/过滤 **inherited**（global + preset）工具，agent own scope 的注册天然豁免，所以空 allow-list 不需要任何名字即可把 standard preset 与 profile 全局工具全部屏蔽，恰好留下三个 `sage_*`（与 Chatbot 的 `restrict({ allow: [] })`、reflection Worker 同一机制）。**不能**再用 `restrict({ allow: ['sage_read','sage_write','sage_request'] })`：宿主 `restrict()` 只认 inherited 工具名（`restrictableNames`，`dsh-tools/lib/index.js:453-467`、`489-500`），scope-local 名会抛 `tools.restrict() names unknown global tool ...`；旧实现 `restrictToTools` 用 catch 吞掉该异常并返回 false，导致 Sage 实际继承 43–44 个工具（bash/write/edit/subagent/run_code 等）。现在失败不再吞：缺少 `tools.restrict`、调用失败、或限制后校验发现额外工具/无法校验，都会抛错；`install()` 会回滚本角色 scoped 工具并让 Sage 创建失败（fail-closed），不会留下无限制 Sage。限制在每次 `install()`（新建或恢复会话）时应用；**运行中的旧进程不会热更新，重启后生效**。
 - **Sage 工具面测试**：`test/v2-sage-tools.mjs` 断言 Sage visible 集合严格等于 `sage_read`/`sage_write`/`sage_request`，且不含 bash/write/edit/read/grep/glob/task/run_code/subagent 等；同时断言 Chatbot/Advisor/Worker 工具面与基线清单逐项一致，并验证缺失/失败的 restrict 会 fail-closed。`test/support/ria-fixture.mjs` 的 `restrict` mock 已按宿主语义校验 unknown/scope-local 名并抛错，防止同类回归再次被静默吞掉。
 - **认知库**：`stateDir/cognition/` 下 `principles.md`、`projects/<key>.md`、`chatbot/{preferences,agreements,decisions}.md`、自动生成的 `INDEX.md`、`proposals/`；仍复用 `stateDir/lessons.json`。所有写入 0600 + tmp+fsync+rename，Sage 独占写，写后更新 INDEX 与 router-events。
-- **无状态 Advisor**：默认不创建会话，由 `planTicketStateless` 单次 LLM 调用产出 `plan`/`answer`/`block`；输入 = ticket brief + 认知快照；检索失败显式 degraded。LLM 最多 2 次尝试（120s/次），失败先写 `advisor.plan.failed` 再由调用点落 blocked，不静默。`advisor.plan` 审计字段含 `sessionId:''`、`latencyMs`、`attempts`、`usage`、`degraded`、`cognitionIds`、`briefSummary`、`workOrderSummary`；无 session 日志，router-events 是唯一取证入口。`advisorMode=stateless` 为生产默认，`legacy` 保留建会话/ticket_plan 回滚；`advisors` 绑定只在 legacy 使用。
+- **无状态 Advisor**：默认不创建会话，由 `planTicketStateless` 单次 LLM 调用产出 `plan`/`block`；输入 = ticket brief + 认知快照；检索失败显式 degraded。LLM 最多 2 次尝试（120s/次），失败先写 `advisor.plan.failed` 再由调用点落 blocked，不静默。`advisor.plan` 审计字段含 `sessionId:''`、`latencyMs`、`attempts`、`usage`、`degraded`、`cognitionIds`、`briefSummary`、`workOrderSummary`；无 session 日志，router-events 是唯一取证入口。`advisorMode=stateless` 为生产默认，`legacy` 保留建会话/ticket_plan 回滚；`advisors` 绑定只在 legacy 使用。
 - **Chatbot 记忆（system 提示词动态注入）**：Chatbot 的 `systemPrompt.section`（`ria-v2-chatbot`，order 60）注册的 `text` 是 `section.text(context)` 函数；DSH 每次组装 prompt（每个 model step）都会调用它，函数内实时读取 `cognition/chatbot/{preferences,agreements,decisions}.md`，经 `chatbotDigest()`（返回 `{text, degraded, truncated}`）汇总后拼入系统提示词。摘要固定带「以下为长期记忆摘要，可能滞后；细节以 cognition 文件为准」；整个记忆块（标题 + 免责句 + 摘要 + 截断标注）上限 1500 字符，超限截断并在末尾标「…（已截断）」。文件缺失/读取失败时输出「长期记忆暂不可用…」占位，为空时输出「长期记忆暂无内容…」，都不阻断会话。该路径每轮实时生成，不需要事件、版本哈希或重启；`onPreStep` 不再注入 `chatbot-memory` host 消息，也不存在第二条注入路径。Chatbot 无写认知工具，用户提案走 `chatbot_propose`（priority=high）。
 - **提案通道**：Advisor `ticket_plan.cognitionProposal`、Worker/Reflection `worker_report.lessons`、用户 `chatbot_propose` 都落 `proposals/`；Sage 采纳后写记忆，积压不阻塞派单。
 - **退役与 bootstrap**：启动时 `bootstrapCognition()` 一次性生成初始记忆（已有 `.bootstrapped` 则跳过）；`retireLegacyAdvisor()` 仅在 `advisorMode=stateless` 时清空 global 旧绑定并尝试归档，legacy 模式直接跳过，避免覆盖回滚开关。
 - **简化口径**：Sage 单例，不做写队列/优先级/冲突引擎/TTL；记忆冲突与过期由 Sage 人工维护。与 `docs/sage-advisor-design.md` 一致，后者补充了更完整的长期目标。
 
-### answer 模式的失败语义
+### 无 answer 模式的失败语义
 
-Advisor 在无状态 answer 模式下失败分四类：`empty`（模型返回空 answer）、`timeout`、`exception`、`parse_error`。
+已删除 answer 模式与 `advisor.answer.failed` 事件：Advisor 只有 plan / block 两种产出，解析失败统一走 `advisor.plan.failed` 并把失败抛回建票路径（`advisor_model_failed` / `invalid_output` 等），不再有 `empty/timeout/exception/parse_error` 四分类、空答复重试或 answer 专用 blocked 文案。
 
-- 每次失败写 `advisor.answer.failed` 事件，payload 含 `failureType/reason/latencyMs/model/retryCount/attempts/usage`。
-- `empty` 重试一次（附带明确提示「必须返回非空 answer.text」）；仍空则 ticket 转 `blocked(waitingOn=environment)`，blockedReason 为可读文案（如「Advisor 返回空答复（重试 1 次仍为空）」），并通知 Chatbot。
-- `timeout`/`exception`/`parse_error` 同样 `blocked(environment)` + 可读原因 + 通知，不退化成裸 blocked 或 `ticket_not_*`。
-- plan/reflection 等其它模式的解析失败仍走原有的 `advisor.plan.failed` 与错误路径。
+### 兼容：历史 ticket 的 meta.mode='answer'
+
+老状态里 `meta.mode='answer'` 的票仍可读：所有读路径经 `ticketKind(meta)` 归一化成 `work`（只有 `reflection` 是另一种 kind），状态机、看板、`ticketView`、`chatbot_status` 都不再暴露或依赖该值，也不会把旧票误判成 blocked/done。
 
 ### 阻塞通知范围
 
@@ -448,7 +447,7 @@ Advisor 在无状态 answer 模式下失败分四类：`empty`（模型返回空
 
 ## 10. 当前实现（MVP）
 
-已实现：Chatbot（standard，仅 `chatbot_*`；可用 `chatbot_new_session` 新建普通会话，title≤80、cwd 必须在 stateDir/~/.dsh/系统目录之外、preset 仅 standard/ptc、同分钟最多 5 次，不能创建角色会话）、Global Advisor（PTC，只读核对 + `ticket_*`，不含会话只读工具）、managed Worker（PTC，两种 `workerType`：work 持 `worker_*` + 执行工具；reflection 只读仓库与会话日志，持 `worker_*` + `session_list`/`session_events`）；Worker 提权按四档风险逐条审批（`lib/v2/risk.mjs`，工单策略 > 全局设置 > 默认 auto-low），low 自动 allowed-once、medium 按策略、high/unknown 一律阻塞并通知，每次决策写 `audit.jsonl`；`chatbot_grant` 降级为调试/应急工具（set/list/reset），只有用户明确要求时才可用且写 `grant_kind` 审计；Chatbot 可用 `chatbot_watch`（add/remove/list/status）协管独立会话，与 direct 无耦合；Advisor/Worker 拦截用户直连消息（`settings.blockDirectUserMessages` 默认 true，`waitingOn=user` 例外），只回固定提示；纯降权永久生效，任何提权必须带 TTL；自动恢复只撤销提权字段，同一 grant 里的降权保留，显式 reset 才撤销全部字段；绑定 ticket 时随 done/cancelled 恢复，重启会 reconcile，审计写 `audit.jsonl`；ticket 的 intake → open → working → blocked/done/failed 主链路；研究类票（`chatbot_request mode=answer`）由 Advisor 只读调查后 `ticket_answer` 直接 `open → done`，不派 Worker；`chatbot_resume` 恢复 blocked 票，`chatbot_stop_ticket` 强制停止（cancelled + reason、清 pending inbox、DSH 可用时硬中断否则 pre-step 软停止）；startup 把中断的 working 票置为 blocked(environment)；微信 Claw 通过 Chatbot 复用入站与 assistant 转发；微信直通模式（`/直通 <会话名>`、`/直通状态`、`/退出直通`）把消息直接 steer 给普通独立会话，只转发正式文本；启动时向已连接通道发送一条重启通知。`chatbot_request` 可带 `workspace` 绝对路径：给定已有项目目录时 Worker 用该项目 cwd、产物放 `{$cwd}/ria-runs/<workerId>/`；不填则用全局 worker 根目录。状态文件为 `ria.json`（ticket）+ `v2.json`（绑定、Request、WorkOrder、报告、inbox）。
+已实现：Chatbot（standard，仅 `chatbot_*`；可用 `chatbot_new_session` 新建普通会话，title≤80、cwd 必须在 stateDir/~/.dsh/系统目录之外、preset 仅 standard/ptc、同分钟最多 5 次，不能创建角色会话）、Global Advisor（PTC，只读核对 + `ticket_*`，不含会话只读工具）、managed Worker（PTC，两种 `workerType`：work 持 `worker_*` + 执行工具；reflection 只读仓库与会话日志，持 `worker_*` + `session_list`/`session_events`）；Worker 提权按四档风险逐条审批（`lib/v2/risk.mjs`，工单策略 > 全局设置 > 默认 auto-low），low 自动 allowed-once、medium 按策略、high/unknown 一律阻塞并通知，每次决策写 `audit.jsonl`；`chatbot_grant` 降级为调试/应急工具（set/list/reset），只有用户明确要求时才可用且写 `grant_kind` 审计；Chatbot 可用 `chatbot_watch`（add/remove/list/status）协管独立会话，与 direct 无耦合；Advisor/Worker 拦截用户直连消息（`settings.blockDirectUserMessages` 默认 true，`waitingOn=user` 例外），只回固定提示；纯降权永久生效，任何提权必须带 TTL；自动恢复只撤销提权字段，同一 grant 里的降权保留，显式 reset 才撤销全部字段；绑定 ticket 时随 done/cancelled 恢复，重启会 reconcile，审计写 `audit.jsonl`；ticket 的 intake → open → working → blocked/done/failed 主链路；没有 answer 模式，也没有 `ticket_answer`：所有票都必须有 WorkOrder 并派 Worker（历史 `meta.mode='answer'` 只读兼容为 work）；`chatbot_resume` 恢复 blocked 票，`chatbot_stop_ticket` 强制停止（cancelled + reason、清 pending inbox、DSH 可用时硬中断否则 pre-step 软停止）；startup 把中断的 working 票置为 blocked(environment)；微信 Claw 通过 Chatbot 复用入站与 assistant 转发；微信直通模式（`/直通 <会话名>`、`/直通状态`、`/退出直通`）把消息直接 steer 给普通独立会话，只转发正式文本；启动时向已连接通道发送一条重启通知。`chatbot_request` 可带 `workspace` 绝对路径：给定已有项目目录时 Worker 用该项目 cwd、产物放 `{$cwd}/ria-runs/<workerId>/`；不填则用全局 worker 根目录。状态文件为 `ria.json`（ticket）+ `v2.json`（绑定、Request、WorkOrder、报告、inbox）。
 
 暂缓：Project 路由与 Project Advisor、知识层、SQLite 迁移、独立 worker 的创建与观察、Topic 亲和、看板动作的 v2 收口、旧 legacy ticket 的迁移。
 

@@ -286,10 +286,10 @@ Router 仍是**第一阶段快速分类**，不是 Advisor 的一部分：
 
 ```text
 用户消息 → Chatbot → Request
-  → Router 分类：answer | work | reflection | control
-      answer      → 短问答路径（Advisor 只读答复 / 直接答复）
+  → Router 分类：work | reflection | control
       reflection  → reflection Worker
       work        → Advisor（brief + cognition snapshot）→ WorkOrder → Router 派发
+      （没有 answer 模式：纯问答由 Chatbot 直接答）
 ```
 
 **为什么不合并且两阶段**：

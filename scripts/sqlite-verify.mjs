@@ -30,6 +30,7 @@ function describe(verification) {
     sampleMismatches: verification.sample.results.filter(result => !result.ok),
     importId: verification.provenance.importId,
     sourceSha256: verification.provenance.sourceSha256,
+    domains: verification.domains,
   }
 }
 
@@ -51,6 +52,7 @@ export function verificationFailed(result) {
     || (Array.isArray(result.sampleMismatches) && result.sampleMismatches.length > 0)
     || !Array.isArray(result.integrity) || result.integrity.some(value => value !== 'ok')
     || result.foreignKeyViolations > 0 || result.orphanHistory > 0
+    || (result.domains && result.domains.ok === false)
 }
 
 export function cliArgs(argv) {

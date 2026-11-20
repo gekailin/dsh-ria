@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs'
+import { writeAtomic } from '../lib/state/atomic-file.mjs'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { openDatabase, transaction } from '../lib/state/sqlite/db.mjs'
@@ -10,12 +11,6 @@ import { verifyDatabase } from '../lib/state/sqlite/verify.mjs'
 const error = (code, message) => Object.assign(new Error(message), { code })
 
 const stamp = (now = Date.now()) => new Date(now).toISOString().replace(/[:.]/g, '-')
-
-function writeAtomic(path, text) {
-  const tmp = path + '.tmp-' + process.pid
-  writeFileSync(tmp, text)
-  renameSync(tmp, path)
-}
 
 /** Copy the JSON sources into state/backup/<ts>/ and write the manifest that makes
  * a rollback auditable. Nothing is published unless every check passes. */
@@ -28,13 +23,13 @@ export function backupState({ stateDir, source, backupDir, dbPath, now = Date.no
   for (const file of source.files) {
     const target = join(dir, file.name)
     mkdirSync(dirname(target), { recursive: true })
-    writeFileSync(target, file.raw)
+    writeAtomic(target, file.raw)
     files.push({ name: file.name, bytes: file.bytes, sha256: file.sha256 })
   }
   if (dbPath && existsSync(dbPath)) {
     // A replaced DB is backed up next to the JSON so a rollback can restore it.
     const name = 'ria.sqlite'
-    copyFileSync(dbPath, join(dir, name))
+    writeAtomic(join(dir, name), readFileSync(dbPath))
     files.push({ name, bytes: readFileSync(join(dir, name)).length, sha256: hashFile(join(dir, name)) })
   }
   const manifest = {

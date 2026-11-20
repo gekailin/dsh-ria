@@ -1,18 +1,11 @@
-import { existsSync, mkdirSync, openSync, closeSync, writeSync, fsyncSync, readFileSync, renameSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { writeAtomic } from '../lib/state/atomic-file.mjs'
 import { pathToFileURL } from 'node:url'
 import { openDatabase } from '../lib/state/sqlite/db.mjs'
 import { SqliteTicketAdapter } from '../lib/state/sqlite/adapter.mjs'
 
 const TICKET_LOG = 'tickets.log.jsonl'
-
-function writeAtomic(file, text) {
-  mkdirSync(dirname(file), { recursive: true })
-  const temp = file + '.' + process.pid + '.tmp'
-  const fd = openSync(temp, 'w', 0o600)
-  try { writeSync(fd, text); fsyncSync(fd) } finally { closeSync(fd) }
-  renameSync(temp, file)
-}
 
 export function exportTickets({ stateDir, dbPath = join(stateDir, 'ria.sqlite') }) {
   const db = openDatabase(dbPath, { readOnly: true })

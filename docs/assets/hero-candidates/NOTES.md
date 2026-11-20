@@ -1,6 +1,6 @@
 # hero 定稿记录
 
-状态：历史记录，现行文件是 `docs/assets/hero/hero.png`。
+状态：历史记录，现行文件是 `docs/assets/hero/hero.jpg`。
 
 ## 最终选定
 

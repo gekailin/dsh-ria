@@ -42,7 +42,7 @@
 
 | 路径 | 用途 |
 | --- | --- |
-| [hero/hero.png](assets/hero/hero.png) | 根 README 首屏 hero（1376×768，由定稿 JPG 转 PNG） |
+| [hero/hero.jpg](assets/hero/hero.jpg) | 根 README 首屏 hero（1376×768，由定稿 JPG 转 PNG） |
 | [brand/ria-avatar.png](assets/brand/ria-avatar.png) | 人物身份基准图 |
 | [screenshots/](assets/screenshots/) | 现行文档引用的界面截图：会话入口、设置页、微信弹层、派发 note 卡片 |
 | [board/](assets/board/) | 看板 preview 与 tooltip 截图 |

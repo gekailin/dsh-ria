@@ -22,6 +22,13 @@ try {
 
   const result = migrateLegacyState({ stateDir })
   assert.equal(result.changed, true)
+  const logLines = () => readFileSync(join(stateDir, 'operation-events.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line))
+  const firstLogs = logLines()
+  assert.ok(firstLogs.some(item => item.event === 'naming_migration.start'))
+  const finish = firstLogs.find(item => item.event === 'naming_migration.finish')
+  assert.ok(finish)
+  assert.equal(finish.backupDir, result.backupDir)
+  assert.ok(finish.counts.files > 0 && finish.counts.keys > 0 && finish.counts.columns > 0)
   assert.ok(existsSync(join(stateDir, 'state.json')))
   assert.ok(!existsSync(join(stateDir, 'v2.json')))
   assert.ok(readdirSync(stateDir).some(name => name.startsWith('v2.json.bak-')))
@@ -44,6 +51,7 @@ try {
   const again = migrateLegacyState({ stateDir })
   assert.equal(again.changed, false)
   assert.equal(again.backupDir, null)
+  assert.ok(logLines().some(item => item.event === 'naming_migration.noop'))
 
   const boot = join(root, 'boot')
   mkdirSync(boot, { recursive: true })

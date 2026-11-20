@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { join } from 'node:path'
+import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { migrateDomains } from '../lib/state/sqlite/domain-migration.mjs'
 
@@ -22,9 +23,15 @@ export function cliArgs(argv) {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     const args = cliArgs(process.argv.slice(2))
-    const result = args.dryRun
-      ? { ok: true, mode: 'dry-run', stateDir: args.stateDir, dbPath: args.dbPath || join(args.stateDir, 'ria.sqlite') }
-      : migrateDomains(args)
+    let result
+    if (args.dryRun) {
+      const ria = JSON.parse(readFileSync(join(args.stateDir, 'ria.json'), 'utf8'))
+      const lessons = JSON.parse(readFileSync(join(args.stateDir, 'lessons.json'), 'utf8'))
+      result = { ok: true, mode: 'dry-run', stateDir: args.stateDir, dbPath: args.dbPath || join(args.stateDir, 'ria.sqlite'),
+        counts: { topics: Array.isArray(ria.topics) ? ria.topics.length : 0,
+          topicLinks: Array.isArray(ria.links) ? ria.links.length : 0,
+          lessons: lessons && lessons.entries && typeof lessons.entries === 'object' ? Object.keys(lessons.entries).length : 0 } }
+    } else result = migrateDomains(args)
     console.log(JSON.stringify(result, null, 2))
     if (result.ok === false) process.exitCode = 1
   } catch (cause) {

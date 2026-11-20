@@ -6,9 +6,9 @@
 
 根 DESIGN.md 第 5 条要求阿汐能以无侵入方式协管常规会话：不改原上下文，派发任务、查询进展、获取结果。现在只有临时能力：
 
-- Chatbot 提示词里让模型用 `chatbot_sessions` 找会话、`chatbot_read` 读后续；给会话派活一律走 ticket（co-managed 执行者），不再有直接发消息的 talk 通道；
+- Chat 提示词里让模型用 `chatbot_sessions` 找会话、`chatbot_read` 读后续；给会话派活一律走 ticket（co-managed 执行者），不再有直接发消息的 talk 通道；
 - 没有「协管范围」的持久状态，跨轮次不记得用户在跟踪谁；
-- 没有事件监控：目标会话的回复、提问、提权审批都不会主动到达 Chatbot/用户；
+- 没有事件监控：目标会话的回复、提问、提权审批都不会主动到达 Chat/用户；
 - 与直通（direct）**无耦合**：协管用独立状态/去重，不与 direct 共享或仲裁。
 
 结果是：用户说“帮我盯着这个会话”，Ria 只能当下读一次，之后靠用户再问。
@@ -34,13 +34,13 @@
 
 ## 1. 概念与边界
 
-**协管 = Chatbot 仍在场的「监控 + 转述 + 路由」。** Chatbot 不退出；它订阅目标会话的事件，把该让用户知道的部分转述回来，并在用户发话时把话带过去。
+**协管 = Chat 仍在场的「监控 + 转述 + 路由」。** Chat 不退出；它订阅目标会话的事件，把该让用户知道的部分转述回来，并在用户发话时把话带过去。
 
 | 能力 | 谁在对话 | 入站消息去往 | 事件处理 | 典型用途 |
 |---|---|---|---|---|
-| 协管（watch） | Chatbot 在场 | 用户对 Chatbot 说，Ria 再转给目标 | 回复转述 / 提问转达 / 审批走风险分级 | 「帮我盯着这个会话」 |
-| 直通（direct） | Chatbot 退出该通道 | 用户消息**全部**直接进目标会话 | 只转发目标回复（【直通·标题】） | 「接下来我直接和它聊」 |
-| ticket | Chatbot + Advisor + Worker | 变成工单，由 Worker 执行 | Advisor 出 WorkOrder、Worker 报告 | 有验收的正式工作 |
+| 协管（watch） | Chat 在场 | 用户对 Chat 说，Ria 再转给目标 | 回复转述 / 提问转达 / 审批走风险分级 | 「帮我盯着这个会话」 |
+| 直通（direct） | Chat 退出该通道 | 用户消息**全部**直接进目标会话 | 只转发目标回复（【直通·标题】） | 「接下来我直接和它聊」 |
+| ticket | Chat + Advisor + Worker | 变成工单，由 Worker 执行 | Advisor 出 WorkOrder、Worker 报告 | 有验收的正式工作 |
 | 独立 worker 观察 | Ria 只读 | 用户直接指挥该 worker | 只读观察、给建议，不转述不路由 | 了解进度、提效建议 |
 
 三条硬边界（沿用 [worker-observability.md](worker-observability.md) 的「观察 ≠ 指挥」）：
@@ -66,7 +66,7 @@
       "watchId": "watch_<time36>_<rand>",
       "sessionId": "session-…",
       "titleSnapshot": "Alpha Session",
-      "addedAt": 1795…, "addedBy": "chatbot",
+      "addedAt": 1795…, "addedBy": "chat",
       "status": "active | paused | stale | revoked",
       "options": {
         "relayReplies": true,
@@ -92,7 +92,7 @@
 | `assistant/message`（正式文本） | session/event | **转述**，前缀 `【协管·<标题>】` | `sessionId:seq` | 合并窗口 + 速率上限；工具调用/参数不转述 |
 | `user-questions/request` / `ask_user_question` pending | waterfall / 会话事件 | **转达问题**给用户，保存 pending；不自动回答 | `questionId` / `callId` | 用户回答后以普通消息回传（§4）；超时可配置为提醒或放弃 |
 | `approval/request` | waterfall | **风险分级**（复用 `lib/v2/risk.mjs`）：low 自动 `allowed-once` + 通知；medium/high/unknown 交宿主 UI 并通知 | `approvalId` | 不因协管绕过审批；决策写 `audit.jsonl`（reason=watch-risk） |
-| `user/message` | session/event | **观测用户直连**：过滤 `host_` 注入，记录摘要与 `lastUserSeq` 并通知 Chatbot | `sessionId:seq` | 不重复派活；Ria 已知悉用户直接交代 |
+| `user/message` | session/event | **观测用户直连**：过滤 `host_` 注入，记录摘要与 `lastUserSeq` 并通知 Chat | `sessionId:seq` | 不重复派活；Ria 已知悉用户直接交代 |
 | `turn/end` / error | session/event | 默认**不进频道**；不转述 | `sessionId:turn` | 错误不刷屏 |
 | session 归档/删除/不可用 | list/state 查询 | 标 `stale` + 通知一次 | `sessionId` | 只在事件/命令触发时判定，不轮询 |
 
@@ -106,8 +106,8 @@
 
 路由目标池 = **协管会话 + 直管 Worker**，由 Ria 判断该给谁；不设 `smartRoute` 开关，不做模型式自主路由。
 
-- 用户对 Chatbot 说「让 X 去做 …」时，Ria 建 ticket 并派发：目标会话先用 `chatbot_co_manage` 登记为 co-managed 执行者，投递内容是 Advisor WorkOrder（首行 `[WorkOrder #<ticketId>]`）；直管 Worker 走同一套 ticket 派发。协管通道只用于转述/盯进展，不再承担派活。
-- **每次路由都通知用户「已转给 X」**；Chatbot 必须转述，不静默。
+- 用户对 Chat 说「让 X 去做 …」时，Ria 建 ticket 并派发：目标会话先用 `chatbot_co_manage` 登记为 co-managed 执行者，投递内容是 Advisor WorkOrder（首行 `[WorkOrder #<ticketId>]`）；直管 Worker 走同一套 ticket 派发。协管通道只用于转述/盯进展，不再承担派活。
+- **每次路由都通知用户「已转给 X」**；Chat 必须转述，不静默。
 - 路由不改变目标会话的权限、模型、工具或 ticket 归属。
 
 **与 ticket 的边界**：同一件事不要既建 ticket 又走协管；需要验收、要跨轮次追踪的正式工作建 ticket，只是「带个话/盯进展」走协管。
@@ -119,15 +119,15 @@
 - 协管只写 `co-management.json` 与自己的内存 LRU；direct 状态仍在 controller 内存里，互不读写。
 - 同一会话同时 direct + watch 时，可能各转一份（`【直通·标题】` 与 `【协管·标题】`），这是**已知行为**；不实现「先到先转/抑制」，也不要求两者同开时的特殊处理。
 - 互不影响生命周期：开启/退出 direct 不改 watch；取消 watch 不改 direct。
-- 命令解析：`/直通` 系列仍走 direct 钩子；`/协管` 系列由 Chatbot 解析，direct 生效时需退出直通或在 Web 端操作。
+- 命令解析：`/直通` 系列仍走 direct 钩子；`/协管` 系列由 Chat 解析，direct 生效时需退出直通或在 Web 端操作。
 
 **抽象等同直管 Worker**：协管会话与直管 Worker 只差通信机制（co-managed 会话通过 ticket 接收 WorkOrder）。权限/审批走同一套风险分级与 `audit.jsonl`；状态、事件、限流、失败重试复用同一套 controller 逻辑；`co-management.json` 只存 transport（sessionId、cursors、订阅选项），不另造状态机。
 
-**观测用户直连**：watched 会话的 `user/message` 也订阅；过滤 `host_` 注入后记录摘要与 `lastUserSeq`，以 `【协管·标题】用户直接对会话说：…` 通知 Chatbot，避免重复派活。
+**观测用户直连**：watched 会话的 `user/message` 也订阅；过滤 `host_` 注入后记录摘要与 `lastUserSeq`，以 `【协管·标题】用户直接对会话说：…` 通知 Chat，避免重复派活。
 
 ## 6. 命令与工具
 
-用户侧（由 Chatbot 解析后调用工具）：
+用户侧（由 Chat 解析后调用工具）：
 
 | 命令 | 作用 |
 |---|---|
@@ -143,7 +143,7 @@
 - `action: list`：返回 watch 列表与状态。
 - `action: status`：`id` 或 `sessionId`，返回游标、统计、stale 原因与 pending 提问。
 
-只有 Chatbot 能调用；不提供任何改目标配置/权限的入口。派活由 ticket 承担（直管 Worker 或 co-managed 会话），`chatbot_read` 保留为一次性只读查看；watch 是长期状态。
+只有 Chat 能调用；不提供任何改目标配置/权限的入口。派活由 ticket 承担（直管 Worker 或 co-managed 会话），`chatbot_read` 保留为一次性只读查看；watch 是长期状态。
 
 ## 7. 去重与限流
 

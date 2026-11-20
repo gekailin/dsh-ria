@@ -39,11 +39,15 @@
 
 ### 1.1 定位与边界
 
-Sage 是**全局唯一**的认知维护者，独立于 Chatbot / Router / Advisor / Worker：
+Sage 是 Ria 的**慢脑**，也是**全局唯一**的认知维护者，独立于 Chat（快脑）/ Router / Advisor / Worker：
+
+- **Chat（会话 `Ria`）＝ Ria 的快脑**：直面用户、快速调度、派发与转述。
+- **Sage（会话 `Sage`）＝ Ria 的慢脑**：长期记忆与认知维护、冲突裁决、深度思考。
+- 两者关系：快脑负责响应与编排，慢脑负责沉淀与裁断。角色 id 为 `chat`（旧名 `chatbot`，读取时归一化）。
 
 | 角色 | 形态 | 只做什么 | 明确不做 |
 |---|---|---|---|
-| Sage | 独立顶层会话（标题 `Ria Sage`），长期存活 | 读认知、审提案、采纳/拒绝、维护 Cognitive 与 Chatbot 长期记忆、发起调研需求 | 不执行任务、不写代码、不派 Worker、不改 ticket、不对用户做最终答复 |
+| Sage | 独立顶层会话（标题 `Sage`），长期存活 | 读认知、审提案、采纳/拒绝、维护 Cognitive 与 Chat 长期记忆、发起调研需求 | 不执行任务、不写代码、不派 Worker、不改 ticket、不对用户做最终答复 |
 | Advisor | 无状态调用 | 读 brief + 认知快照，产出 WorkOrder / Answer / 认知提案 | 不长期记忆、不分类、不派发、不写认知档 |
 | Router | 控制面 | 分类、状态机、派发、审批、审计、单写者提交 | 不读对话、不写认知内容 |
 | Worker | 执行容器 | 按 WorkOrder 执行 | 不管理、不写认知（只提交提案素材） |
@@ -68,7 +72,7 @@ Sage 只暴露三个 scoped 工具，使用 standard preset（非 PTC）：
 
 ### 1.3 生命周期、恢复与 DSH 自动 compact
 
-**常驻**：启动时 `ensureSage`（与 `ensureChatbot` 同级），sessionId 持久化在 v2 状态；已有 session 直接复用，不重建。会话标题固定 **`Ria Sage`**；cwd 固定 **`stateDir` 根**（旧 `stateDir/sage` 只在迁移判定中保留；启动时归档一次并重建，已是 stateDir 则幂等复用），不落项目目录。
+**常驻**：启动时 `ensureSage`（与 `ensureChat` 同级），sessionId 持久化在 v2 状态；已有 session 直接复用，不重建。会话标题固定 **`Sage`**；cwd 固定 **`stateDir` 根**（旧 `stateDir/sage` 只在迁移判定中保留；启动时归档一次并重建，已是 stateDir 则幂等复用），不落项目目录。
 
 **上下文托管给 DSH**：Sage 不再自己判断「上下文快满了该轮换」，也不创建新会话、不做轮换。上下文超限由 **DSH 自动 compact（压缩）** 处理；对 Sage 来说，会话可以被压缩，但认知文件不会。
 
@@ -131,8 +135,8 @@ stateDir/
 │   │   └── <proposalId>.json      # 待 Sage 审阅的提案（含拒绝理由）
 │   └── snapshots/
 │       └── <ticketId>.json        # 可选：本次 Advisor 实际装载的快照与版本
-├── chatbot/                       # Sage 维护：Chatbot 的长期记忆（Chatbot 只读）
-│   ├── INDEX.md                   # 四个文件的摘要索引（注入 Chatbot 启动上下文）
+├── chatbot/                       # Sage 维护：Chat 的长期记忆（Chat 只读）
+│   ├── INDEX.md                   # 四个文件的摘要索引（注入 Chat 启动上下文）
 │   ├── preferences.md             # 用户偏好、风格、雷区
 │   ├── agreements.md              # 与用户的长期约定（时间/渠道/审批习惯等）
 │   └── decisions-digest.md        # 历史决策摘要：日期/结论/影响
@@ -153,7 +157,7 @@ stateDir/
 | `decisions.md` | 决策：date、id、status、conclusion、rationale、scope、sources、supersedes | append-only；新决策显式 supersede 旧决策 | 最近 10 条 ≤1.5k 字符 |
 | `proposals/<id>.json` | 提案原文、author、source、scope、证据、置信度、优先级、Sage 决定 | 四类来源均可提交（见 §2.6/§5）；Sage 只写决定 | 单条 ≤2k 字符；pending 上限 100 |
 | `cognition/INDEX` | 以上文件的清单、摘要、版本、更新时间 | Router 单写者维护，随落档刷新 | 全量 ≤2k 字符 |
-| `chatbot/INDEX.md` | Chatbot 四个记忆文件的摘要索引 | Sage 采纳后由 Router 落档；Chatbot 只读 | 全量 ≤1k 字符，注入启动上下文 |
+| `chatbot/INDEX.md` | Chat 四个记忆文件的摘要索引 | Sage 采纳后由 Router 落档；Chat 只读 | 全量 ≤1k 字符，注入启动上下文 |
 | `chatbot/preferences.md` | 用户稳定偏好、风格、雷区 | 只能经提案 → Sage 采纳 | ≤1k 字符 |
 | `chatbot/agreements.md` | 与用户的长期约定（时间、渠道、审批习惯） | 只能经提案 → Sage 采纳 | ≤1k 字符 |
 | `chatbot/decisions-digest.md` | 历史决策摘要：日期/结论/影响 | ticket 收口或复盘后由 Sage 提炼 | 最近 20 条 ≤2k 字符 |
@@ -206,31 +210,31 @@ stateDir/
 
 ### 2.6 全量记忆托管：Sage 维护 Ria 的全部记忆
 
-Sage 的范围不只是 Advisor 用的认知，还包括 **Chatbot 的长期记忆**。一句话：**记忆在文件里，不在上下文里**；Chatbot 短期靠自己的会话上下文，长期靠 Sage 维护的文件。
+Sage 的范围不只是 Advisor 用的认知，还包括 **Chat 的长期记忆**。一句话：**记忆在文件里，不在上下文里**；Chat 短期靠自己的会话上下文，长期靠 Sage 维护的文件。
 
 | 类别 | 文件 | 谁用 | 内容 |
 |---|---|---|---|
 | Advisor 认知 | `cognition/principles.md`、`projects/<key>.md`、`lessons.jsonl`、`decisions.md` | Advisor / Router | 原则、项目事实、经验、决策 |
-| Chatbot 记忆 | `chatbot/preferences.md`、`agreements.md`、`decisions-digest.md`、`chatbot/INDEX.md` | Chatbot | 用户偏好、长期事实、约定、历史决策摘要 |
+| Chat 记忆 | `chatbot/preferences.md`、`agreements.md`、`decisions-digest.md`、`chatbot/INDEX.md` | Chat | 用户偏好、长期事实、约定、历史决策摘要 |
 
 **形态**：短条目 + 来源（ticketId/sessionId）+ 更新时间 + 置信度；不写会话上下文、不抄 transcript、不写逐轮流水。每条都可追溯到提案与审阅记录。
 
-**谁写**：Chatbot 不直接改自己的长期记忆。它只能通过 `sage_propose` 提交提案（author=chatbot）；用户也可以直接提（author=user，优先级最高）。Sage 采纳后由 Router 单写者落档（§2.3）。
+**谁写**：Chat 不直接改自己的长期记忆。它只能通过 `sage_propose` 提交提案（author=chat）；用户也可以直接提（author=user，优先级最高）。Sage 采纳后由 Router 单写者落档（§2.3）。
 
 **何时更新**（事件驱动，不轮询）：
 
-- 用户纠正/补充偏好或约定时（Chatbot 当场提案，或用户直接说给 Sage）；
+- 用户纠正/补充偏好或约定时（Chat 当场提案，或用户直接说给 Sage）；
 - 重要决策完成时（ticket done / 复盘结论）；
 - Reflection Worker 的复盘票产出时；
 - Sage 处理提案、或 `/sage status` 时发现过期条目（只整理，不轮询）。
 
-**Chatbot 如何读取**：
+**Chat 如何读取**：
 
 1. 短期：自己的会话上下文（compact 由 DSH 负责，同 §1.3）；
 2. 启动注入：`chatbot/INDEX.md` + `preferences.md` 摘要（合计 ≤1.5k 字符）；
 3. 需要细节：用只读工具（如 `chatbot_memory_read`）按文件/条目读取；只读、不改档。
 
-**边界**：不改 Chatbot 的会话上下文与配置；不把用户偏好写成 principles（冲突时 principles 优先，并提示用户）；Chatbot 的临时观察不入档，只作提案素材。
+**边界**：不改 Chat 的会话上下文与配置；不把用户偏好写成 principles（冲突时 principles 优先，并提示用户）；Chat 的临时观察不入档，只作提案素材。
 
 ## 3. 无状态 Advisor
 
@@ -285,11 +289,11 @@ Advisor 在 WorkOrder 或后续报告里带 `cognition_proposals[]`（不是直�
 Router 仍是**第一阶段快速分类**，不是 Advisor 的一部分：
 
 ```text
-用户消息 → Chatbot → Request
+用户消息 → Chat → Request
   → Router 分类：work | reflection | control
       reflection  → reflection Worker
       work        → Advisor（brief + cognition snapshot）→ WorkOrder → Router 派发
-      （没有 answer 模式：纯问答由 Chatbot 直接答）
+      （没有 answer 模式：纯问答由 Chat 直接答）
 ```
 
 **为什么不合并且两阶段**：
@@ -317,7 +321,7 @@ Worker / reflection Worker 产出
 
 | 来源 | 入口 | 必填字段 | 优先级 |
 |---|---|---|---|
-| **用户** | 通过 Chatbot 转达（`sage_propose` author=user）；若开放直连 Sage，也可直接对 Sage 说 | author=user、scope、text；evidence 可选 | **最高** |
+| **用户** | 通过 Chat 转达（`sage_propose` author=user）；若开放直连 Sage，也可直接对 Sage 说 | author=user、scope、text；evidence 可选 | **最高** |
 | 无状态 Advisor | WorkOrder 的 `cognition_proposals[]` 字段（§3.4） | sourceTicketId、scope、kind、text、evidence[]、confidence | 常规 |
 | Worker | `worker_report` 的提案字段（只作候选，不直接入档） | sourceTicketId/sourceSessionId、scope、text、evidence[] | 常规 |
 | Reflection Worker | 复盘票产出的 lessons/提案（默认提炼者） | sourceTicketId、scope、text、evidence[]、confidence | 高于常规 |
@@ -345,7 +349,7 @@ Worker / reflection Worker 产出
 | risk approval | 认知写入是数据操作，不走执行审批；`sage_request` 派生的调研票仍走正常风险分级与 ticket 审批 | 认知提案不能被当成提权或绕过审批 |
 | 协管（co-management） | 协管事件需要跟踪时落 ticket；结论进入反馈闭环，不在协管模块里写认知 | 协管只提供事件与来源，不直接改认知 |
 | 旧 Global Advisor | 旧长期会话退役为只读归档；历史不迁移，可复用结论经 reflection 提炼进认知 | 退役不回滚已派发 WorkOrder；旧 session 不参与新票 |
-| Chatbot | 入口、通知、转述；只读自己的长期记忆文件（`chatbot/INDEX.md` + preferences 摘要），记忆变更只能提提案 | 不直接改长期记忆/认知，不改配置；用户仍通过 Chatbot 下达任务 |
+| Chat | 入口、通知、转述；只读自己的长期记忆文件（`chatbot/INDEX.md` + preferences 摘要），记忆变更只能提提案 | 不直接改长期记忆/认知，不改配置；用户仍通过 Chat 下达任务 |
 
 **旧 Advisor 退役**：
 
@@ -432,7 +436,7 @@ v2.json.cognition = { version, lastAppliedAt, pendingProposals, lastError }
 | **P0 现状** | 单 Global Advisor，现有链路 | 现有测试全绿 | — |
 | **P1 认知空壳 + 影子检索** | 建 `stateDir/cognition/`、空 principles/projects/decisions；Router 为每张票生成快照并记录，不改变 Advisor 输入 | 快照版本/命中可查；旧行为不变；无写认知 | 关闭 `cognitionEnabled`，仅留只读文件 |
 | **P2 无状态 Advisor（新票）** | 新票走 brief+snapshot；旧票仍用旧会话；Advisor 不保留跨票记忆 | 新票 WorkOrder 质量不降；检索失败显式 degraded；可一键回 legacy | `advisorMode=legacy`，新票回旧路径；已发 WorkOrder 不回滚 |
-| **P3 Sage + proposal 闭环** | Sage 会话、`sage_read/propose/request`、Router 单写者、lesson_review 投影、DSH compact + 文件化记忆（认知 + Chatbot 记忆） | 提案→采纳→下次快照生效；拒绝有理由；compact 后 Sage 能靠 INDEX 重建上下文；Sage 阻塞不影响派单 | `sageEnabled=false`，退回 P2 快照；提案保留 |
+| **P3 Sage + proposal 闭环** | Sage 会话、`sage_read/propose/request`、Router 单写者、lesson_review 投影、DSH compact + 文件化记忆（认知 + Chat 记忆） | 提案→采纳→下次快照生效；拒绝有理由；compact 后 Sage 能靠 INDEX 重建上下文；Sage 阻塞不影响派单 | `sageEnabled=false`，退回 P2 快照；提案保留 |
 | **P4 退役旧 Global Advisor** | 旧会话归档只读；新票全部无状态；旧历史提炼 | 无新票进入旧会话；旧会话可只读打开；回滚开关仍可用 | `advisorMode=legacy` 恢复旧会话；不删日志 |
 
 **迁移原则**：
@@ -482,14 +486,14 @@ v2.json.cognition = { version, lastAppliedAt, pendingProposals, lastError }
 | 项 | 旧 | 新 |
 |---|---|---|
 | 上下文管理 | Sage 自己做上下文 epoch 轮换（70%/40 轮触发、新建会话、epoch+1） | **DSH 自动 compact**：Sage 不轮换、不新建会话；重要结论及时落盘，靠 `cognition/INDEX` 与文件重建认知；常驻 principles 摘要 ≤800 字 |
-| 记忆范围 | 只维护 Advisor 用的共享认知 | **Ria 全量记忆**：Advisor 认知 + Chatbot 长期记忆（`chatbot/preferences.md`、`agreements.md`、`decisions-digest.md`、`INDEX.md`）；Chatbot 只读、只能提案 |
+| 记忆范围 | 只维护 Advisor 用的共享认知 | **Ria 全量记忆**：Advisor 认知 + Chat 长期记忆（`chatbot/preferences.md`、`agreements.md`、`decisions-digest.md`、`INDEX.md`）；Chat 只读、只能提案 |
 | 提案来源 | Worker / reflection / Advisor | 增加**用户**（优先级最高）与无状态 Advisor 的 WorkOrder 提案；明确四类入口、必填字段与优先级 |
-| 命名 | — | Sage 会话标题固定 **`Ria Sage`** |
+| 命名 | — | Sage 会话标题固定 **`Sage`** |
 | 状态字段 | `epoch` / `lastEpochAt` | `lastCompactAt?`；删除 `/sage epoch` 命令 |
 
 **未改**：Router 两阶段、单写者落档、risk approval 边界、Advisor 无状态与快照预算、分阶段迁移开关与回滚。
 
-**遗留待评审**：Chatbot 记忆文件的容量与过期策略；用户直连 Sage 是否开放。
+**遗留待评审**：Chat 记忆文件的容量与过期策略；用户直连 Sage 是否开放。
 
 ## 14. 实现口径（2026-11-19，简化交付）
 
@@ -499,7 +503,7 @@ v2.json.cognition = { version, lastAppliedAt, pendingProposals, lastError }
 - **Sage 独占写、原子写、INDEX 更新**；不做 TTL 自动清理、不做冲突检测引擎、不做版本回滚 UI；过期/冲突由 Sage 自己维护。
 - **Advisor 默认无 session**：`planTicketStateless` 单次 LLM 调用（最多 2 次尝试/120s）产出 plan/answer/block；输入 brief + cognition snapshot，degraded 显式；`advisor.plan` 记录 `sessionId:''`、latencyMs、usage、cognitionIds、brief/workOrder 摘要；失败先写 `advisor.plan.failed` 再由调用点落 blocked。`advisorMode=legacy` 才保留 `createAdvisorForTicket` 建会话与 `ticket_plan` 回滚路径。
 - **Sage cwd = stateDir 根**：旧 `stateDir/sage` 会话启动迁移时归档一次并写 `sage.migrated`，随后新建/绑定 cwd=stateDir 的 Sage；已是 stateDir 的 Sage 幂等复用；注入 INDEX + principles 摘要（≤800 字）。
-- **Chatbot 记忆**：作为 system 提示词 section 动态注入（`section.text(context)` 每个 model step 重新读取 `cognition/chatbot/`，经 `chatbotDigest()` 汇总，1.5k 字符预算）；不再使用 `onPreStep` host 消息、事件或版本去重。用户提案走 `chatbot_propose`。
+- **Chat 记忆**：作为 system 提示词 section 动态注入（`section.text(context)` 每个 model step 重新读取 `cognition/chatbot/`，经 `chatbotDigest()` 汇总，1.5k 字符预算）；不再使用 `onPreStep` host 消息、事件或版本去重。用户提案走 `chatbot_propose`。
 - **bootstrap**：`bootstrapCognition()` 从 DESIGN 五原则、architecture/limitations 摘要、memory.md、lessons 生成初始 principles/projects/chatbot 文件，`.bootstrapped` 幂等。
 - **Sage 工具**：`sage_read` / `sage_write` / `sage_request`；`sage_write` 遇 `resolveProposal` 标记提案已采纳。
 - **compact**：监听 Sage 的 `compaction/end` 重读 INDEX；不创建 epoch 会话。

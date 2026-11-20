@@ -17,7 +17,7 @@ Ria 入口标题右侧有一个“连接”chip。点开后默认打开上次使
 
 ## 直通模式（direct）
 
-微信 Claw 支持把当前聊天直通给一个普通独立会话：入站消息不再经过 Chatbot，直接以 `mode=steer` 发给目标会话；目标会话的正式文本回复带【直通·标题】前缀转回微信。只对微信 Claw 生效，其他通道没有这个钩子。
+微信 Claw 支持把当前聊天直通给一个普通独立会话：入站消息不再经过 Chat，直接以 `mode=steer` 发给目标会话；目标会话的正式文本回复带【直通·标题】前缀转回微信。只对微信 Claw 生效，其他通道没有这个钩子。
 
 - 归属：状态、命令解析、目标解析、入站转发全部在 v2 controller（`lib/v2/controller.mjs` 的 `directCommand` / `directInfo` / `enableDirect` / `directRelay` / `forwardDirectReply`）；微信 Claw 只在入站时调用注入的 `directRelay` 钩子（`lib/channels/wechat-claw.mjs`），`lib/index.js` 负责把 `v2.directRelay` 接进去，v1 没有直通。渠道端没有第二套实现。
 - 入口：模型侧 `chatbot_direct`，用户侧 `/直通 <标题或 sessionId>`、`/直通状态`、`/退出直通`；两者操作同一份内存状态，直通状态重启后清空。
@@ -25,10 +25,10 @@ Ria 入口标题右侧有一个“连接”chip。点开后默认打开上次使
 
 ### 直通期间的出站（谁说的、失败怎么办）
 
-- **Chatbot 的任务报告不会被直通屏蔽**：直通只改变前缀和入站路由。Ria/Chatbot 的 assistant 文本（Router notice、ticket 通知、审批通知等）照常经 Claw 转发；直通生效时给文本加 `【Ria】` 前缀，直通目标自己的回复仍带 `【直通·<标题>】`，两者可区分。
+- **Chat 的任务报告不会被直通屏蔽**：直通只改变前缀和入站路由。Ria/Chat 的 assistant 文本（Router notice、ticket 通知、审批通知等）照常经 Claw 转发；直通生效时给文本加 `【Ria】` 前缀，直通目标自己的回复仍带 `【直通·<标题>】`，两者可区分。
 - **直通消息失败有界重试**：`forwardDirectReply` / `notifyDirect` 走统一的内存队列，按 `sessionId:eventSeq`（无 seq 时按文本 hash）去重；失败后指数退避 1s / 3s / 9s 重试，最多 3 次重试且整个窗口 ≤2 分钟；超限删除条目并发一条「⚠️ 直通消息发送失败（已重试 N 次）：摘要」，同时写 `wechat-claw/assistant.log.jsonl`。
 - **不写持久 outbox、不重放**：直通是实时对话，不是工单回复；失败只在内存里重试。换目标、退出直通、通道恢复/登录、进程重启都会清空该队列，不会把旧直通消息补发出来。
-- **Chatbot 普通消息的补发收敛**：非直通的 Chatbot 文本仍进 durable outbox 兜底；恢复窗口最多补发最近 5 条，其余折叠成一条「另有 M 条较早的补发消息未送达，完整内容见 Ria 会话」，补发文本统一带 `【Ria·补发】` 前缀，避免“安静很久突然刷屏”。
+- **Chat 普通消息的补发收敛**：非直通的 Chat 文本仍进 durable outbox 兜底；恢复窗口最多补发最近 5 条，其余折叠成一条「另有 M 条较早的补发消息未送达，完整内容见 Ria 会话」，补发文本统一带 `【Ria·补发】` 前缀，避免“安静很久突然刷屏”。
 
 ## 暂停推送
 

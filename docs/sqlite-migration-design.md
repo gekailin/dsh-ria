@@ -9,7 +9,7 @@
 | 文件 | 内容 |
 |---|---|
 | `stateDir/ria.json` | Ria 会话、tickets、grants、settings、pending deliveries、dispatch notes |
-| `stateDir/v2.json` | Chatbot/Advisor/Worker 绑定、Request、WorkOrder、reports、manager inbox、ticket meta |
+| `stateDir/v2.json` | Chat/Advisor/Worker 绑定、Request、WorkOrder、reports、manager inbox、ticket meta |
 | `stateDir/outbox.json` | 副作用投递队列 |
 | `stateDir/tickets.log.jsonl` + `tickets-YYYY-MM.jsonl` | 归档工单（含 history 快照） |
 | `stateDir/router-events.jsonl` + 月文件 | Router 过程事件 |

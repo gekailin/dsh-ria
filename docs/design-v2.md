@@ -1,14 +1,14 @@
 # dsh-ria 整体设计 v2（草案）
 
-> 目标设计，不替代根 DESIGN.md；DESIGN.md 的 5 条原则不变。对外仍是一个阿汐，内部拆成 Chatbot / Advisor / Router / Worker。
+> 目标设计，不替代根 DESIGN.md；DESIGN.md 的 5 条原则不变。对外仍是一个阿汐，内部拆成 Chat / Advisor / Router / Worker。
 
-命名约定：角色名统一用 Chatbot、Advisor、Router、Worker；代码和 API 用 chatbot、advisor、router、worker；Session 只指执行容器。
+命名约定：角色名统一用 Chat、Advisor、Router、Worker；代码和 API 用 chat、advisor、router、worker（工具名沿用 `chatbot_*`，旧值 `chatbot` 读取时归一化为 `chat`）；Session 只指执行容器。
 
 ## 1. 核心
 
 阿汐不是某一个 session，而是这套系统对用户的统一人格：一个对外入口、一套决策体系、一个调度中枢、多个执行容器。
 
-- **对话、决策、调度、执行分开。** Chatbot 说话，Advisor 想事，Router 管流程，Worker 干活。
+- **对话、决策、调度、执行分开。** Chat 说话，Advisor 想事，Router 管流程，Worker 干活。
 - **ticket 是唯一耐久桥。** 需要跟踪的委托都落 ticket；聊天记录不能代替任务账本。
 - **Ria 是代管者，不是所有者。** 用户保留最终决定权、叫停权；独立 worker 仍由用户直接指挥。
 - **普通 worker 0 入侵。** 现有创建、派发、唤醒、审批、提示词和工具都不变；直管能力走独立分支。
@@ -17,16 +17,16 @@
 
 | 角色 | 形态 | 职责 | 不做什么 |
 |---|---|---|---|
-| Chatbot | 单例顶层会话 | 对用户说话、打标、入口 Request、通知；可新建普通会话（不能建角色会话） | 不派发、不改 ticket 状态、不执行任务、不挂干活工具 |
+| Chat | 单例顶层会话 | 对用户说话、打标、入口 Request、通知；可新建普通会话（不能建角色会话） | 不派发、不改 ticket 状态、不执行任务、不挂干活工具 |
 | Advisor | Global 单例；Project 每项目一个 | 澄清、拆解、定验收、产出 WorkOrder（plan of record） | 不做长调查、不写代码、不做最终验证；不直接对用户说话、不直接发 worker、不写 ticket 状态 |
 | Router | 确定性控制面，不是会话 | 事件、状态机、路由、租约、派发、审批、通知、审计、预算 | 不做对话、不用模型做决定 |
 | Worker | 顶层会话 | 执行 ticket | 不做管理、不派 subagent |
 
-- 对外只有一个阿汐；Chatbot 与 Global Advisor 各单例，Project Advisor 每项目一个，不引入第二个管理者。
-- Chatbot 只负责对话、入口和通知：不执行任务，不挂 shell、文件写入、代码执行、worker 派发/管理等干活工具；需要跟踪的工作落 Request，交给 Advisor/Router/Worker。
+- 对外只有一个阿汐；Chat 与 Global Advisor 各单例，Project Advisor 每项目一个，不引入第二个管理者。
+- Chat 只负责对话、入口和通知：不执行任务，不挂 shell、文件写入、代码执行、worker 派发/管理等干活工具；需要跟踪的工作落 Request，交给 Advisor/Router/Worker。
 - 每条真实用户消息都有归宿：被回答、变成 Request、并入已有工单、执行控制操作，或显式阻塞等用户；不静默丢消息。
 - Advisor 暂不设 Task Advisor；Project Advisor 不绑 cwd，Global Advisor 不绑项目。
-- **会话形态**：Chatbot 用 standard；Advisor（Global / Project）和直管 worker 用 PTC；Router 没有会话。独立 worker 不指定 preset，沿用 DSH 当前配置。PTC 只改变调用方式，不改变权限；Advisor 与直管 worker 各自注册 scoped 工具，均不继承 Ria 的 `ria_*` 管理工具。
+- **会话形态**：Chat 用 standard；Advisor（Global / Project）和直管 worker 用 PTC；Router 没有会话。独立 worker 不指定 preset，沿用 DSH 当前配置。PTC 只改变调用方式，不改变权限；Advisor 与直管 worker 各自注册 scoped 工具，均不继承 Ria 的 `ria_*` 管理工具。
 
 > 项目级 Advisor 方案已被 [Sage（大脑）+ 无状态 Advisor 设计](sage-advisor-design.md) 取代（2026-11-19）；旧 [project-advisor-design.md](project-advisor-design.md) 仅作历史。本文角色表描述当前实现，目标形态以 Sage 设计为准。
 
@@ -49,20 +49,20 @@ Advisor 的产物只有两种：
 
 ## 3. 主链路
 
-1. 用户对 Chatbot 说。
-2. Chatbot 能当场答就答；需要跟踪的先持久化 Request，再回执。
+1. 用户对 Chat 说。
+2. Chat 能当场答就答；需要跟踪的先持久化 Request，再回执。
 3. Router 消费 Request，建 intake ticket，按项目、主题和能力路由给 Global / Project Advisor。
-4. Advisor 澄清、拆解、定验收，产出 WorkOrder（plan of record，必经）；问题经 Chatbot 回用户，不直接找 worker。没有 WorkOrder 的工单不派发。
+4. Advisor 澄清、拆解、定验收，产出 WorkOrder（plan of record，必经）；问题经 Chat 回用户，不直接找 worker。没有 WorkOrder 的工单不派发。
 5. Advisor 请求派发；Router 校验权限、依赖、预算和会话，ensure session，选择独立或直管 worker。常规工单派 work Worker，复盘票（mode=reflection）派 reflection Worker。Router 是唯一派发入口。
 6. Worker 执行；独立 worker 收普通消息，直管 worker 按固定契约；Router 监听事件，不轮询。
-7. Worker 停下或报告；Router 更新 ticket；Chatbot 汇总给用户；需要拍板的事项进入“需要你”。
+7. Worker 停下或报告；Router 更新 ticket；Chat 汇总给用户；需要拍板的事项进入“需要你”。
 8. 完成、失败、取消都有结论；卡住必须写清在等谁、等什么。
 
 ## 4. 核心对象
 
 | 对象 | 定义 |
 |---|---|
-| Request | 入口请求；Chatbot 先落盘再 ack，Router 消费；不是工单本身 |
+| Request | 入口请求；Chat 先落盘再 ack，Router 消费；不是工单本身 |
 | Ticket | 耐久任务；代码、API、schema 用 ticket，对用户说“任务”；可属于 Project，也可为 Global；intake 阶段归属可未定；一票一执行者；依赖是 DAG；唯一桥 |
 | Topic | 工单分组；用于看板和路由亲和，不拥有 worker |
 | WorkOrder | Advisor 的加工结果（plan of record，必经），挂在 ticket 上；不是独立跟踪实体 |
@@ -71,7 +71,7 @@ Advisor 的产物只有两种：
 | Workspace | 目录、仓库、工具、权限、密钥；与 Project 默认 1:1，可多对多 |
 
 - ticket 生命周期：intake → open → working → blocked → done / failed / cancelled；forked 预留。终态必须有结论，卡住必须有 waitingOn 和原因。详细状态、命令、lease 和并发规则见 [ticket-flow.md](ticket-flow.md)。
-- **无 answer 模式**：纯问答由 Chatbot 直接答；需要核实（代码/文档/当前状态）或要动手的一律建 work 票。每张票都必须有 WorkOrder 并派 Worker，不存在“只答不派”的票；历史 `meta.mode='answer'` 的票按 work 读取（见下文「兼容：历史 ticket 的 meta.mode='answer'」）。
+- **无 answer 模式**：纯问答由 Chat 直接答；需要核实（代码/文档/当前状态）或要动手的一律建 work 票。每张票都必须有 WorkOrder 并派 Worker，不存在“只答不派”的票；历史 `meta.mode='answer'` 的票按 work 读取（见下文「兼容：历史 ticket 的 meta.mode='answer'」）。
 - 同一张票同一时间只有一个 executor；依赖未完成不派发；同一次就绪最多派发一次。
 - 所有需要跟踪的委托必须落 ticket；直接 session.send 只用于不跟踪的 ad-hoc。
 - 票的归属状态：unassigned / project / global。intake 默认 unassigned，projectId 为空；unassigned 不派发，派发前必须落定为 project 或 global。unassigned 和 global 都可能是空 projectId，必须用归属状态区分。
@@ -117,8 +117,8 @@ Advisor 的产物只有两种：
 
 - 两种类型不可混用：给 work 工单指定 reflection Worker（或反过来）会按指定 Worker 不可用处理，返回 `specified_worker_unavailable`（`cause='worker_kind_mismatch'`），工单转 `blocked(waitingOn=user)`，不自动换成另一种 Worker。显式选择只绕过 `allowAutoDispatch`，不绕过类型校验。
 - reflection Worker 只读：通过 read/grep/glob 读仓库、通过 session_list/session_events 读历史会话；不写代码、不改配置、不做最终收尾。会话只读工具只属于它，Advisor 和 work Worker 都没有。
-- **复盘票流转**：Chatbot 或用户提出复盘需求 → 内部 `requestTicket(mode=reflection)`（Sage/内部路径）建票 → Advisor 写 WorkOrder（读哪些会话、产出什么报告）→ `ticket_dispatch` 路由到 reflection Worker（当前没有就现场创建一个）→ Worker 用 session_* 与 read 取证，`worker_report(done)` 回传结论与证据 → Router 收口，Chatbot 转述。
-- **为什么不给 Worker 子代理能力**：委派工具族对直管 Worker 全部关闭（`subagent`、`subagent_fork`、`list_agents`、`send_message`、`interrupt_agent`，以及 agent-team 的 `spawn_teammate`/`wait_agent` 若挂载）。① **执行末端**：Worker 是责任链的末端，工单已由 Advisor 拆到可执行粒度，再向下派会让“谁在做这张票”失去单一答案。② **责任链**：Worker 只对 Ria 下结论、只领一张票；子代理没有工单、没有步骤边界指令通道、没有报告，失败无法归因，Ria 也无法纠偏。③ **绕过报告与自动注入**：现有协作靠 `worker_report` 的里程碑与步骤边界注入的 steer；子代理在本轮内部黑盒跑完，等于绕开这两个可观测点。④ **并发不可控**：一张票同一时间只允许一个执行者（lease/attempt 语义）；子代理会制造绕过 lease 的并发写与重复产物，Ria 也无法暂停/恢复它们。实现口径：`restrictWorker` 按可用名求交集后以 deny-list 下发整个委派工具族，未知名自动跳过；Advisor/Chatbot 的工具面不受影响。
+- **复盘票流转**：Chat 或用户提出复盘需求 → 内部 `requestTicket(mode=reflection)`（Sage/内部路径）建票 → Advisor 写 WorkOrder（读哪些会话、产出什么报告）→ `ticket_dispatch` 路由到 reflection Worker（当前没有就现场创建一个）→ Worker 用 session_* 与 read 取证，`worker_report(done)` 回传结论与证据 → Router 收口，Chat 转述。
+- **为什么不给 Worker 子代理能力**：委派工具族对直管 Worker 全部关闭（`subagent`、`subagent_fork`、`list_agents`、`send_message`、`interrupt_agent`，以及 agent-team 的 `spawn_teammate`/`wait_agent` 若挂载）。① **执行末端**：Worker 是责任链的末端，工单已由 Advisor 拆到可执行粒度，再向下派会让“谁在做这张票”失去单一答案。② **责任链**：Worker 只对 Ria 下结论、只领一张票；子代理没有工单、没有步骤边界指令通道、没有报告，失败无法归因，Ria 也无法纠偏。③ **绕过报告与自动注入**：现有协作靠 `worker_report` 的里程碑与步骤边界注入的 steer；子代理在本轮内部黑盒跑完，等于绕开这两个可观测点。④ **并发不可控**：一张票同一时间只允许一个执行者（lease/attempt 语义）；子代理会制造绕过 lease 的并发写与重复产物，Ria 也无法暂停/恢复它们。实现口径：`restrictWorker` 按可用名求交集后以 deny-list 下发整个委派工具族，未知名自动跳过；Advisor/Chat 的工具面不受影响。
 
 ### Worker preset 与模型配置
 
@@ -127,7 +127,7 @@ Advisor 的产物只有两种：
 | work | `ptc` | 可执行工具；创建时可用 `workerPreset` 覆盖 |
 | reflection | `ptc` + 只读限制 | preset 固定，工具面由 `workerType` 收窄 |
 | Advisor | `ptc` | 无状态，不涉及 Worker 配置 |
-| Chatbot / Sage | `standard` | 仅 `chatbot_*` / `sage_*` 工具 |
+| Chat / Sage | `standard` | 仅 `chatbot_*` / `sage_*` 工具 |
 
 - **白名单**：`ptc`、`standard`、`minimal`（可用 `options.workerPresets` 覆盖）；非法值返回 `invalid_worker_preset` 并列出允许值。
 - **新建生效**：`chatbot_request`（work）可带 `workerPreset`，写入 ticket meta；`ensureWorker` 新建会话时使用它，不填用默认 `ptc`。
@@ -150,9 +150,9 @@ Advisor 的产物只有两种：
 
 - Router 是确定性控制面：事件驱动，不读对话上下文，不维护自己的会话；状态、权限、租约、预算、重试、超时、通知、审计都归它。
 - 模型只在规则拿不到结构化标签时兜底：输出标签、分数、置信度；规则做决定。模型不能改状态、选 session、定预算、写知识。
-- Router 的模型配置只读 Chatbot session 当前配置：provider + model + reasoningEffort。Chatbot 没有可用配置时直接报错；不 fallback 到 Global Advisor，不使用部署默认模型，不降级纯规则。
+- Router 的模型配置只读 Chat session 当前配置：provider + model + reasoningEffort。Chat 没有可用配置时直接报错；不 fallback 到 Global Advisor，不使用部署默认模型，不降级纯规则。
 - Router 只读，不调用 selectModel，不写回默认模型；用 llm.stream 做 one-shot，不创建 session。
-- 通知与副作用的目标形态是走 outbox，至少一次、按幂等键投递；状态先落定，再送达。MVP 的 Chatbot 通知直接 prompt，尚未接入 outbox（见第 10 节）。
+- 通知与副作用的目标形态是走 outbox，至少一次、按幂等键投递；状态先落定，再送达。MVP 的 Chat 通知直接 prompt，尚未接入 outbox（见第 10 节）。
 
 ### 提权风险分级与逐条审批
 
@@ -200,11 +200,11 @@ v2 的提权不再依赖工具白名单或 `chatbot_grant`。每次 Worker 的�
 
 **`chatbot_request` 的 escalationPolicy**：工具可选 `escalationPolicy`（strict/auto-low/auto-low-medium）；只有 work 票写入 ticket meta，reflection 忽略；非法值返回 `invalid_escalation_policy`。部署类工单可显式声明 auto-low-medium。
 
-**`chatbot_request` 的 workerPreset 与 `chatbot_worker_config`**：work 票可选 `workerPreset`（白名单 ptc/standard/minimal，默认 ptc，仅新建 Worker 生效；reflection 传会返回 `worker_preset_not_supported`）；idle Worker 复用时沿用原 preset。`chatbot_worker_config`（仅 Chatbot）支持 `get`（seq/title/cwd/workerType/preset/model/status/allowAutoDispatch）与 `set`：`allowAutoDispatch` 切换立即生效；模型走 `sessionController.selectModel` 立即生效（下一轮）；preset 因 DSH 不支持运行中切换，未传 `recreate:true` 时返回 `worker_preset_requires_recreate`，recreate 停用旧绑定、同 cwd 新建、旧会话归档；变更写 `worker.config.changed`。
+**`chatbot_request` 的 workerPreset 与 `chatbot_worker_config`**：work 票可选 `workerPreset`（白名单 ptc/standard/minimal，默认 ptc，仅新建 Worker 生效；reflection 传会返回 `worker_preset_not_supported`）；idle Worker 复用时沿用原 preset。`chatbot_worker_config`（仅 Chat）支持 `get`（seq/title/cwd/workerType/preset/model/status/allowAutoDispatch）与 `set`：`allowAutoDispatch` 切换立即生效；模型走 `sessionController.selectModel` 立即生效（下一轮）；preset 因 DSH 不支持运行中切换，未传 `recreate:true` 时返回 `worker_preset_requires_recreate`，recreate 停用旧绑定、同 cwd 新建、旧会话归档；变更写 `worker.config.changed`。
 
-**`chatbot_models`**：仅 Chatbot 可调用的只读工具，用于在 `chatbot_worker_config set` 前确认准确模型 id。优先读取 DSH 模型注册表（`ctx.get('llm').listProviders/listModels`，source=`catalog`）；注册表不可用或全部 provider 拉取失败时回退内置 bundled catalog（`lib/v2/model-catalog.mjs`，source=`bundled-fallback`，带 `reason`，不整体报错）；`provider-api` 预留给未来直连 provider 的路径。参数：`provider`（精确过滤）、`query`（id/displayName 大小写不敏感子串）、`limit`（1–200，默认 50）；返回 `models[{provider,model,displayName,contextWindow?,maxOutput?,default?,source}]`、`count`（返回条数）、`total`（过滤后总数）、`source`、`cached`，空结果给 `message` 说明。进程内 5 分钟 TTL 内存缓存，无定时刷新/轮询。
+**`chatbot_models`**：仅 Chat 可调用的只读工具，用于在 `chatbot_worker_config set` 前确认准确模型 id。优先读取 DSH 模型注册表（`ctx.get('llm').listProviders/listModels`，source=`catalog`）；注册表不可用或全部 provider 拉取失败时回退内置 bundled catalog（`lib/v2/model-catalog.mjs`，source=`bundled-fallback`，带 `reason`，不整体报错）；`provider-api` 预留给未来直连 provider 的路径。参数：`provider`（精确过滤）、`query`（id/displayName 大小写不敏感子串）、`limit`（1–200，默认 50）；返回 `models[{provider,model,displayName,contextWindow?,maxOutput?,default?,source}]`、`count`（返回条数）、`total`（过滤后总数）、`source`、`cached`，空结果给 `message` 说明。进程内 5 分钟 TTL 内存缓存，无定时刷新/轮询。
 
-**默认附带用户截图**：`chatbot_request` 的 `attachImages` 默认 `true`。建票时从 Chatbot 当前用户消息提取图片附件（`~/.dsh/attachments/v1/objects/...`）；当前消息无图时按 `attachmentFallbackMessages`（默认 1，0 表示不回退）回退最近 N 条用户消息。最多 5 张，按 `sha256` 去重；单张 >10MB 仍收录但标 `oversized:true`。清单写入 ticket meta `attachments: [{path,mime,width,height,sha256,size?,oversized?}]`，并渲染进 WorkOrder/worker brief：绝对路径 + mime/尺寸/sha256，提示「需要时用 read 工具查看；超过 10MB 的图不建议读入」，不内联二进制/base64。附件缺失/不可读只记 `attachmentNotes` 并跳过，不使建票失败；Worker 对附件目录只需只读。`ticket.created` payload 带 `attachments.count` 与 `sha256` 列表（不含内容）。`attachImages:false` 时 meta 为空数组、事件 count=0。
+**默认附带用户截图**：`chatbot_request` 的 `attachImages` 默认 `true`。建票时从 Chat 当前用户消息提取图片附件（`~/.dsh/attachments/v1/objects/...`）；当前消息无图时按 `attachmentFallbackMessages`（默认 1，0 表示不回退）回退最近 N 条用户消息。最多 5 张，按 `sha256` 去重；单张 >10MB 仍收录但标 `oversized:true`。清单写入 ticket meta `attachments: [{path,mime,width,height,sha256,size?,oversized?}]`，并渲染进 WorkOrder/worker brief：绝对路径 + mime/尺寸/sha256，提示「需要时用 read 工具查看；超过 10MB 的图不建议读入」，不内联二进制/base64。附件缺失/不可读只记 `attachmentNotes` 并跳过，不使建票失败；Worker 对附件目录只需只读。`ticket.created` payload 带 `attachments.count` 与 `sha256` 列表（不含内容）。`attachImages:false` 时 meta 为空数组、事件 count=0。
 
 ### Router 事件日志
 
@@ -234,23 +234,23 @@ ticket history 是状态快照，`audit.jsonl` 是审批/授权决策审计；�
 
 1. **immediate（空闲）**：仅在宿主状态可确认、没有活跃 turn、running=false 且 queue 为空时，恢复回复和 steer 立即作为新回合输入投递；状态未知时保留 inbox，不假定空闲；异步运行状态采样后重读 pending，避免与 pre-step 双重消费。恢复的原派发 reservation 内可把 WorkOrder 与回复合并一次发送。
 2. **pre-step（忙时）**：边界是「当前工具调用返回之后、下一步模型调用开始之前」的 `agent/pre-step`，不调用 `agent.steer()`，不打断工具。读取该 Worker 名下 working 工单的共同 `pendingInbox`，每步最多 `STEER_PRE_STEP_BATCH_SIZE=3` 条，按票和入队顺序合并一条 host 消息：`source.kind=ria-task-host`、`source.form=steer`、`source.source=resume|steer|mixed`、`sources`、`ticketId/ticketIds` 和 `inboxId/inboxIds`。注入成功才标记这批 delivered；剩余积压留下一边界，不丢弃。
-3. **done-retry（回合兜底）**：`worker_report(done)` 迁移前或正常 `turn/end` 后仍有未读 inbox，则复用同一 helper 补一轮 prompt；每批最多 `STEER_MAX_DELIVERY_ATTEMPTS=2` 次，重试沿用同一 requestId/content。仍失败统一转 `blocked(waitingOn=user)`，保留未读条目，写 `steer.undelivered` 并通知 Chatbot；不能因 prompt 失败又归类成指定 Worker 选择失败。
+3. **done-retry（回合兜底）**：`worker_report(done)` 迁移前或正常 `turn/end` 后仍有未读 inbox，则复用同一 helper 补一轮 prompt；每批最多 `STEER_MAX_DELIVERY_ATTEMPTS=2` 次，重试沿用同一 requestId/content。仍失败统一转 `blocked(waitingOn=user)`，保留未读条目，写 `steer.undelivered` 并通知 Chat；不能因 prompt 失败又归类成指定 Worker 选择失败。
 
 **并发与回归**：`worker_checkpoint` 已移除，投递仅剩 immediate / pre-step / done-retry 三条路径，不保留轮询或兼容消费层。immediate/done-retry 在同一 Worker 的投递锁内执行，持有的 inbox ids 不会同时被 pre-step 注入；取消/终态不再注入新方向，failed 路径仍记录未读与通知。三种时机及成功/失败事件由 resume 与 steer 共用，`recordInboxDelivered` 只接受这三个 deliveryMode；其公共标送达逻辑仍供三条自动路径使用。旧工具名不再注册，调用由宿主自然返回工具不存在。
 
-**验证边界**：`test/v2-resume-inbox.mjs` 明确模拟忙时 queue→host next-turn（不是本轮输入），检查 resume 不走旁路及三时机、失败2次、通知与 steer 三模式；由既有 `test/v2-resume.mjs` 加入 `npm test`。mock 不是新 Worker 真机证据；真机验收由 Ria/Chatbot 新建小票并调用 resume/steer，确认模型输入与 deliveryMode，无需执行 Worker 越权管理会话。
+**验证边界**：`test/v2-resume-inbox.mjs` 明确模拟忙时 queue→host next-turn（不是本轮输入），检查 resume 不走旁路及三时机、失败2次、通知与 steer 三模式；由既有 `test/v2-resume.mjs` 加入 `npm test`。mock 不是新 Worker 真机证据；真机验收由 Ria/Chat 新建小票并调用 resume/steer，确认模型输入与 deliveryMode，无需执行 Worker 越权管理会话。
 
-**强制停止（`chatbot_stop_ticket`）语义**：仅 Chatbot 可调用，参数 `ticketId`、`reason`（都必填）。校验顺序：工单不存在 → `ticket_missing`；已 `cancelled` → 幂等成功（`idempotent:true`，不重复迁移、不重复写 `ticket.cancelled`）；已 `done` → `ok:false, code='ticket_done'` 且状态保持 done；其它终态 → `ticket_closed`。之后按顺序执行：
+**强制停止（`chatbot_stop_ticket`）语义**：仅 Chat 可调用，参数 `ticketId`、`reason`（都必填）。校验顺序：工单不存在 → `ticket_missing`；已 `cancelled` → 幂等成功（`idempotent:true`，不重复迁移、不重复写 `ticket.cancelled`）；已 `done` → `ok:false, code='ticket_done'` 且状态保持 done；其它终态 → `ticket_closed`。之后按顺序执行：
 
 1. `working|blocked|open|intake|forked → cancelled`，`resolution={kind:'cancelled', reason, by:'chatbot', source:'chatbot_stop_ticket', stoppedAt}`。若 checklist 还有未完成项，强制停止不被清单门禁拦住：自动写显式 `resolution.waiver`（说明未完成步骤不再执行）。
 2. 清空该 ticket 的 pending steer：采用「标记 discarded」而不是物理删除——写 `discardedAt/discardedReason/discardedBy`，`pendingInbox` 过滤掉它们，因此停止后不可能再注入；审计仍能看到当时排了什么。
 3. 向 Worker 发终止信号：若宿主提供 `sessionController.cancel({sessionId})`（DSH 用它实现用户停止，内部 `agent.cancel({kind:'user'}, {keepInbox:true})`），且该 Worker 正在运行，则视为硬中断（`hardAbort:true`），回执「已立即停止」。若接口不可用、调用失败或 Worker 当时并未运行，则降级为软停止：写入 `worker.stopRequest`，回执「已请求停止，当前步骤结束后生效」。硬中断后仍保留一个停止保护标记（`worker.stopRequest`），因为 DSH 的 cancel 会保留 pending inbox：任何残留/排队的 turn 在下一个 pre-step 仍会先收到终止说明而不会在已取消的票上继续工作；Worker 空闲且无排队时才不写标记。
-4. 写 `ticket.cancelled`（`actor:'chatbot'`，payload 含 reason、是否硬中断、清理条数等），并通知 Chatbot 转述用户。
+4. 写 `ticket.cancelled`（`actor:'chat'`，payload 含 reason、是否硬中断、清理条数等），并通知 Chat 转述用户。
 5. 软停止在 Worker 的下一个 pre-step 生效：先于 steer 检查，发现所属 ticket 已 `cancelled` 就注入一条 `[Manager stop]` host 消息，要求只输出终止说明、不再调用工具；该边界不注入任何 steer。若 Worker 仍继续调用工具，再下一个 pre-step 以 `kind:'reject'` 结束回合并清掉标记（事件 `worker.stop.enforced`）。工单被重新打开时，pre-step 会自动清除过期的停止标记。
 
 **幂等与并发**：重复 stop 同一 ticket 直接返回成功（`idempotent:true`），不重复写事件、不再调用 cancel；done 票拒绝且不产生任何副作用。停止先落 `cancelled` 再中断，worker-idle watcher 只处理 `working` 工单，因此不会把已取消的票再改成 blocked。
 
-**Chatbot 工具清单**（仅 `chatbot_*`；Advisor/Worker 不可见）：
+**Chat 工具清单**（仅 `chatbot_*`；Advisor/Worker 不可见）：
 
 | 工具 | 作用 |
 |---|---|
@@ -264,24 +264,24 @@ ticket history 是状态快照，`audit.jsonl` 是审批/授权决策审计；�
 | `chatbot_sessions` / `chatbot_read` | 查找普通顶层会话、读回复（只读；派活一律走 ticket） |
 | `chatbot_co_manage` | 把已存在的普通会话登记为 co-managed ticket 执行者（add/list/remove，含 cwd/title/allowAutoDispatch）；派单时投递 Advisor WorkOrder 并自动协管 |
 | `chatbot_direct` | 微信直通普通会话；入站保留多模态 content（内存态，不跨重启） |
-| `chatbot_send_image` | Chatbot-only：向当前微信 Claw 回复目标发送 1–5 张本地图片，返回逐张结果 |
+| `chatbot_send_image` | Chat-only：向当前微信 Claw 回复目标发送 1–5 张本地图片，返回逐张结果 |
 | `chatbot_grant` | 调试/应急权限调整；不是正常提权通道 |
 | `chatbot_watch` | 协管普通会话 |
 | `chatbot_propose` / `chatbot_new_session` | 记忆提案、新建普通会话 |
 
-**派活一律走 ticket**：Chatbot 没有「直接给某个会话发消息」的通道（`chatbot_talk` 已删除）。要让普通会话做事，先用 `chatbot_co_manage` 把它登记为 co-managed 执行者，再建票/派票；投递内容是 Advisor 生成的 WorkOrder，第一条为 `[WorkOrder #<ticketId>]`。全局票（projectCwd=null）与 cwd 之外的票永不派给它。`chatbot_read` 保留为只读查看；协管（`chatbot_watch`）只做转述/盯进展。
+**派活一律走 ticket**：Chat 没有「直接给某个会话发消息」的通道（`chatbot_talk` 已删除）。要让普通会话做事，先用 `chatbot_co_manage` 把它登记为 co-managed 执行者，再建票/派票；投递内容是 Advisor 生成的 WorkOrder，第一条为 `[WorkOrder #<ticketId>]`。全局票（projectCwd=null）与 cwd 之外的票永不派给它。`chatbot_read` 保留为只读查看；协管（`chatbot_watch`）只做转述/盯进展。
 
 ### 微信 Claw 图片输入与显式发送
 
 实现位于 `lib/v2/controller.mjs`；不新增宿主 API，不重写 Claw 上传协议。
 
 - **direct 多模态**：`directRelay` 仅用 `contentText` 识别直通命令。纯文本仍将原字符串交给 `promptSession`；含非文本 part 时保留原 content 数组（text、encoded image 或 durable image ref），由宿主检查附件和目标模型能力。`promptSession` 接受字符串或 content parts，不改变原文本的 mode/requestId。明确的图片 admission 拒绝才由 `promptWithImageFallback` 回退为纯文字，并在目标消息和直通提示中写「图片未能附带」；同一 requestId 避免重复投递，timeout/未知发送失败不盲目重试。
-- **co-managed 派单附件**：图片走 WorkOrder 的 `attachments`（与 Worker 同一条渲染路径），不再有 `chatbot_talk` 的可选 `images`/`attachments`。`prepareChatbotImages`/`readChatbotImage` 仍保留给 `chatbot_send_image`：校验普通文件、字节大小与 PNG/JPEG/WebP/GIF 文件头，拒绝相对路径、缺失/空/非图片文件。
-- **`chatbot_send_image`**：参数 `paths: string[]`（1–5 个本地图片绝对路径）、可选 `caption`（≤2000 字符）。同样限制单张10MB/总20MB，Chatbot caller 守卫拒绝其他角色；无登录/连接返回 `claw_not_connected`，无当前回复目标返回 `claw_no_peer`，暂停返回 `claw_paused`，都不发图。复用 `Outbound.enqueueImage → WechatClawService.sendImage → uploadClawImage → sendItems`：密文二进制上传后发送 `image_item.media.encrypt_query_param`，不是图片 base64/裸 URL 或 file_item。caption 在第一张有效图片前发送一次，结果独立返回；无效单图或发送失败不阻止后续有效图片，结果含 `results[{path,ok,messageId?,code?,error?}]`、sent/failed，部分成功为 `images_partial`。批次数量或总量超限时整批不发送。
+- **co-managed 派单附件**：图片走 WorkOrder 的 `attachments`（与 Worker 同一条渲染路径），不再有 `chatbot_talk` 的可选 `images`/`attachments`。`prepareChatImages`/`readChatImage` 仍保留给 `chatbot_send_image`：校验普通文件、字节大小与 PNG/JPEG/WebP/GIF 文件头，拒绝相对路径、缺失/空/非图片文件。
+- **`chatbot_send_image`**：参数 `paths: string[]`（1–5 个本地图片绝对路径）、可选 `caption`（≤2000 字符）。同样限制单张10MB/总20MB，Chat caller 守卫拒绝其他角色；无登录/连接返回 `claw_not_connected`，无当前回复目标返回 `claw_no_peer`，暂停返回 `claw_paused`，都不发图。复用 `Outbound.enqueueImage → WechatClawService.sendImage → uploadClawImage → sendItems`：密文二进制上传后发送 `image_item.media.encrypt_query_param`，不是图片 base64/裸 URL 或 file_item。caption 在第一张有效图片前发送一次，结果独立返回；无效单图或发送失败不阻止后续有效图片，结果含 `results[{path,ok,messageId?,code?,error?}]`、sent/failed，部分成功为 `images_partial`。批次数量或总量超限时整批不发送。
 
-**验证与生效**：`test/v2-chatbot-images.mjs` 使用 fixture + 受 fetch 护栏限制的 127.0.0.1 假 Claw/CDN，覆盖 direct 原 content/纯文字、工具权限/限额/无连接、逐张失败及 image_item/AES 协议断言，已加入 `npm test`；`test/v2-co-managed.mjs` 覆盖 co-managed 派单与 `[WorkOrder #ticketId]` 消息。测试不加载真实凭据、不发真实微信。**本轮未部署、未重启；新增工具需获用户批准后重启才出现在现有 Chatbot 工具面**，不得为了验收自行重启。
+**验证与生效**：`test/v2-chatbot-images.mjs` 使用 fixture + 受 fetch 护栏限制的 127.0.0.1 假 Claw/CDN，覆盖 direct 原 content/纯文字、工具权限/限额/无连接、逐张失败及 image_item/AES 协议断言，已加入 `npm test`；`test/v2-co-managed.mjs` 覆盖 co-managed 派单与 `[WorkOrder #ticketId]` 消息。测试不加载真实凭据、不发真实微信。**本轮未部署、未重启；新增工具需获用户批准后重启才出现在现有 Chat 工具面**，不得为了验收自行重启。
 
-**每条记录字段**：`ts`（epoch ms）、`event`、`ticketId`、`sessionId`、`actor`（chatbot/advisor/router/host）、`reason`、`payload`（对象或 null）。写失败只记 warn，不影响派发或审批。
+**每条记录字段**：`ts`（epoch ms）、`event`、`ticketId`、`sessionId`、`actor`（chat/advisor/router/host；历史值 chatbot 读取时归一化）、`reason`、`payload`（对象或 null）。写失败只记 warn，不影响派发或审批。
 
 **存储**：当前文件 `stateDir/router-events.jsonl`；跨月或当前文件超过 64MB 时，append 时把热文件轮转到 `router-events-YYYY-MM.jsonl`（YYYY-MM 取事件 ts 的 UTC 月）。启动时执行一次 `prune()`：保留最新 12 个月，删更早的月文件；没有定时器。`lib/router-events.mjs` 是唯一读写实现。
 
@@ -308,7 +308,7 @@ ticket history 是状态快照，`audit.jsonl` 是审批/授权决策审计；�
 1. 状态：`working → blocked`（状态机本身允许这条边，不需要先落 open），`waitingOn='environment'`，`failure={code, message, at}`；blockedReason 含 turn 号、kind 与错误摘要（`error.code: message` 或 `aborted(user)`，截断 300 字），ticket meta `phase='blocked'`。
 2. 释放 Worker：清 `currentTicketId`、`status='idle'`（`releaseWorkerForTicket`），下一张票可以复用它，而不是留下一个永远 busy 的绑定。
 3. 事件 `turn.failed`：payload 含 `ticketId`、`workerId`、`turnId`、`kind`、`detail`、`failureCode`、`blocked`、`at`；没有 working 票时也写（ticketId=null），只观测、不改状态。
-4. 通知：`notifyChatbot` 一条，含 ticketId、Worker、turn、kind 与错误摘要，并提示处理后用 `chatbot_resume` 继续。
+4. 通知：`notifyChat` 一条，含 ticketId、Worker、turn、kind 与错误摘要，并提示处理后用 `chatbot_resume` 继续。
 
 迟到的重复 turn/end 不会二次 block 或二次通知：此时工单已不在 working，只会再写一条 turn.failed。`completed` 路径完全不变（回归测试覆盖）。
 
@@ -329,7 +329,7 @@ ticket history 是状态快照，`audit.jsonl` 是审批/授权决策审计；�
 ## 7. 记忆与知识
 
 - 长期记忆只放稳定偏好和长期约定，不抄 ticket 状态、时间戳或逐轮流水；定期反思只读回看，产出建议，不自动改写记忆。
-- 知识层独立于 ticket：Global 知识跨项目，Project 知识项目内；条目不挂 ticketId。生命周期 proposed → active → deprecated / superseded；Worker 和 Chatbot 只能提议，Advisor 写 knowledge，Router 不写。
+- 知识层独立于 ticket：Global 知识跨项目，Project 知识项目内；条目不挂 ticketId。生命周期 proposed → active → deprecated / superseded；Worker 和 Chat 只能提议，Advisor 写 knowledge，Router 不写。
 - 持久化目标：控制面热状态（ticket、event、outbox、registry、knowledge 等）进 SQLite；memory 和 reflections 留文件；transcript 仍由 DSH 管理。单写者、事务、WAL、可备份。SQLite 的迁移范围、Schema、导入/回滚与分阶段方案见 [sqlite-migration-design.md](sqlite-migration-design.md)。
 
 ### 复盘用的只读会话工具
@@ -379,11 +379,11 @@ session_events { "sessionId": "session-abc", "types": ["approval/*", "turn/*"], 
 
 ## 8. 界面与观察
 
-- 一个看板 + 一个 Chatbot。看板的主语是“事”，不是 session；第一屏是“需要你”收件箱，只有这里弹通知；其余分为进行中、最近完成、异常/叫停。
+- 一个看板 + 一个 Chat。看板的主语是“事”，不是 session；第一屏是“需要你”收件箱，只有这里弹通知；其余分为进行中、最近完成、异常/叫停。
 - 看板是只读投影：动作写回现有路径，不在看板里另建一套状态；直管卡没有输入框，独立卡可以打开会话。
 - 独立 worker 可按授权只读观察目标、状态、消息元数据、产物和卡点；建议默认给用户，观察不等于指挥。
-- **用户直连 Advisor/Worker/Sage**：这三个角色只接受 Ria 注入的消息（`host_` / `ria-task-host`）。用户在 DSH 界面手输的非 `host_` 消息不会被执行、不会转发给 Chatbot、不改工单、不写记忆，只由 `onPreStep` 把本回合模型输入替换为固定指令：Advisor/Worker 回「请通过 Ria 下达任务。Advisor/Worker 只接受 Ria 派发的工单，直接对话不会被处理。」；Sage 回「请通过 Ria 与 Sage 交互。Sage 只接受 Ria/Sage 内部提案，直接对话不会被处理。」。例外：Advisor/Worker 的工单处于 `blocked(waitingOn=user)` 时放行；Sage 目前无此例外。开关 `settings.blockDirectUserMessages` 默认 `true`，关闭后三者均恢复透传；Chatbot 与普通独立会话不受影响。`steer` 中途插入只在 step 边界生效。
-- **直通（direct）归属**：状态、命令解析、目标解析、入站转发全部在 v2 controller（`directCommand` / `directInfo` / `enableDirect` / `directRelay` / `forwardDirectReply`，见 `lib/v2/controller.mjs`）；微信 Claw 只在入站时调用注入的 `directRelay` 钩子（`lib/channels/wechat-claw.mjs`），`lib/index.js` 负责把 `v2.directRelay` 接进去，v1 没有直通。`chatbot_direct` 工具与 `/直通`、`/直通状态`、`/退出直通` 是同一实现的模型入口与用户命令入口，不冗余，保留为唯一实现。后续若其他渠道也要直通，只复用 controller 的 `directRelay`/`directInfo`，不在渠道内复制状态与命令解析；把 `directCommand` 正则与提示文案抽成独立模块列为可选重构（不改变行为）。直通只改前缀与入站路由：Chatbot 的 assistant 文本仍经 Claw 转发（直通生效时加 `【Ria】`），直通回复带 `【直通·<标题>】`；直通发送失败在内存中有界重试（1s/3s/9s，≤3 次、≤2 分钟、按 `eventSeq` 去重），超限发可见失败提示，不写 outbox、不在恢复时重放；Chatbot 普通消息的恢复补发折叠为最近 5 条 + 一条 `【Ria·补发】` 汇总。
+- **用户直连 Advisor/Worker/Sage**：这三个角色只接受 Ria 注入的消息（`host_` / `ria-task-host`）。用户在 DSH 界面手输的非 `host_` 消息不会被执行、不会转发给 Chat、不改工单、不写记忆，只由 `onPreStep` 把本回合模型输入替换为固定指令：Advisor/Worker 回「请通过 Ria 下达任务。Advisor/Worker 只接受 Ria 派发的工单，直接对话不会被处理。」；Sage 回「请通过 Ria 与 Sage 交互。Sage 只接受 Ria/Sage 内部提案，直接对话不会被处理。」。例外：Advisor/Worker 的工单处于 `blocked(waitingOn=user)` 时放行；Sage 目前无此例外。开关 `settings.blockDirectUserMessages` 默认 `true`，关闭后三者均恢复透传；Chat 与普通独立会话不受影响。`steer` 中途插入只在 step 边界生效。
+- **直通（direct）归属**：状态、命令解析、目标解析、入站转发全部在 v2 controller（`directCommand` / `directInfo` / `enableDirect` / `directRelay` / `forwardDirectReply`，见 `lib/v2/controller.mjs`）；微信 Claw 只在入站时调用注入的 `directRelay` 钩子（`lib/channels/wechat-claw.mjs`），`lib/index.js` 负责把 `v2.directRelay` 接进去，v1 没有直通。`chatbot_direct` 工具与 `/直通`、`/直通状态`、`/退出直通` 是同一实现的模型入口与用户命令入口，不冗余，保留为唯一实现。后续若其他渠道也要直通，只复用 controller 的 `directRelay`/`directInfo`，不在渠道内复制状态与命令解析；把 `directCommand` 正则与提示文案抽成独立模块列为可选重构（不改变行为）。直通只改前缀与入站路由：Chat 的 assistant 文本仍经 Claw 转发（直通生效时加 `【Ria】`），直通回复带 `【直通·<标题>】`；直通发送失败在内存中有界重试（1s/3s/9s，≤3 次、≤2 分钟、按 `eventSeq` 去重），超限发可见失败提示，不写 outbox、不在恢复时重放；Chat 普通消息的恢复补发折叠为最近 5 条 + 一条 `【Ria·补发】` 汇总。
 
 ### 通道入站图片缓冲与合并
 
@@ -397,29 +397,36 @@ session_events { "sessionId": "session-abc", "types": ["approval/*", "turn/*"], 
 - **生命周期**：待投递图片及批次存于私有 `<stateDir>/<wechat|wechat-claw>/image-buffer.json`（目录 0700、文件 0600、tmp+fsync+rename），未 flush 图片保存路径/元数据而不重复存 base64；已创建待重试 batch 保存准确 content 以保证 requestId 语义。断线/停止/进程退出代码清理 timer 并保存队列，重新连接后按首图截止时间恢复，过期项及时 flush；不为此实际重启服务。进程内串行锁避免竞争，不声称跨不同 DSH 进程的全局 exactly-once。
 - **可观测**：`channel.image_buffered`（reason=`awaiting-text`）、`channel.image_flushed`（reason=`text-arrived|timeout|limit`）沿用 router-events；含顶层 `sessionId/reason` 与 payload `count/reason/sessionId/channel/peerId`，另带图片元数据（不含二进制/密钥）、flush 的 requestId。失败另写 `channel.image_flush_failed`，带 count/reason/sessionId/error；观测失败不阻断投递。
 
+### 角色定位：快脑与慢脑
+
+- **Chat（会话 `Ria`）＝ Ria 的快脑**：直面用户、快速调度、派发与转述；不再只是“聊天”，而是 Ria 对外的响应与编排面。
+- **Sage（会话 `Sage`）＝ Ria 的慢脑**：长期记忆与认知维护、冲突裁决、深度思考。
+- 两者关系：**快脑负责响应与编排，慢脑负责沉淀与裁断**。Chat 不写长期记忆（只能通过 `chatbot_propose` 提案），Sage 不直接面对用户、不派发、不改 ticket。
+- 角色 id 为 `chat`（由旧名 `chatbot` 改名）；读取侧把历史值 `chatbot` 归一化为 `chat`，写入只写 `chat`。为兼容旧数据与工具调用，工具名沿用 `chatbot_*`，存储键沿用 `chatbotSessionId`，认知库路径沿用 `cognition/chatbot/`。
+
 ### 角色会话命名
 
 | 角色 | 标题 | 规则 |
 |---|---|---|
-| Chatbot | `Ria` | 单例 |
+| Chat | `Ria` | 单例（快脑；标题保持 `Ria`，改名不影响会话标题） |
 | Advisor | `Ria Advisor` | 默认无 session；仅 `advisorMode=legacy` 回滚时创建会话 |
 | Worker | `Ria Worker <n>` | n 持久化递增，删除/回收不复用 |
 | Reflection Worker | `Ria Reflection Worker <n>` | 独立计数器，同上 |
-| Sage | `Ria Sage` | 单例 |
+| Sage | `Sage` | 单例 |
 
 - 计数存 `v2.json.meta.workerSeq/reflectionSeq`；创建前自增并立即保存，编号只增不减。
-- 启动时幂等执行 `renameRoleSessions()`：只处理 v2 绑定里的 chatbot/advisor/managed workers（含 reflection），通过 `sessionController.rename` 写会话标题事件，`session_list` 与看板随之更新；已是目标标题则跳过，失败只记 warn 不阻断启动。
+- 启动时幂等执行 `renameRoleSessions()`：只处理 v2 绑定里的 chat/advisor/managed workers（含 reflection），通过 `sessionController.rename` 写会话标题事件，`session_list` 与看板随之更新；已是目标标题则跳过，失败只记 warn 不阻断启动。
 - 用户自建的普通独立会话不在 v2 角色绑定里，**绝不重命名**；归档或不存在的角色会话跳过。
 - 旧会话缺少 `seq` 时在迁移中补齐并写回 meta；Sage 创建逻辑已落地，标题 helper 统一生成。
 
 ### Sage 与无状态 Advisor（实现补充）
 
-- **Sage**：单例标准会话，标题 `Ria Sage`，cwd **`stateDir` 根**；旧 `stateDir/sage` 会话在启动迁移时归档一次（`sage.migrated`），然后新建并绑定新会话；已是 stateDir 的 Sage 幂等复用。工具仅 `sage_read`/`sage_write`/`sage_request`，无 bash/write/edit/read/grep/glob/task/subagent/run_code。启动与 compaction 后读 INDEX，并注入 principles 摘要（≤800 字）。
-- **Sage 工具面限制方式**：三个工具由 `install()` 在 **agent 自身 scope** 注册（`lib/v2/controller.mjs`，`agent.ctx.tools.register`）；限制用 `restrictSage()` 下发 `restrict({ allow: [] })`。宿主 `dsh-tools` 的 `restrict()` 只校验/过滤 **inherited**（global + preset）工具，agent own scope 的注册天然豁免，所以空 allow-list 不需要任何名字即可把 standard preset 与 profile 全局工具全部屏蔽，恰好留下三个 `sage_*`（与 Chatbot 的 `restrict({ allow: [] })`、reflection Worker 同一机制）。**不能**再用 `restrict({ allow: ['sage_read','sage_write','sage_request'] })`：宿主 `restrict()` 只认 inherited 工具名（`restrictableNames`，`dsh-tools/lib/index.js:453-467`、`489-500`），scope-local 名会抛 `tools.restrict() names unknown global tool ...`；旧实现 `restrictToTools` 用 catch 吞掉该异常并返回 false，导致 Sage 实际继承 43–44 个工具（bash/write/edit/subagent/run_code 等）。现在失败不再吞：缺少 `tools.restrict`、调用失败、或限制后校验发现额外工具/无法校验，都会抛错；`install()` 会回滚本角色 scoped 工具并让 Sage 创建失败（fail-closed），不会留下无限制 Sage。限制在每次 `install()`（新建或恢复会话）时应用；**运行中的旧进程不会热更新，重启后生效**。
-- **Sage 工具面测试**：`test/v2-sage-tools.mjs` 断言 Sage visible 集合严格等于 `sage_read`/`sage_write`/`sage_request`，且不含 bash/write/edit/read/grep/glob/task/run_code/subagent 等；同时断言 Chatbot/Advisor/Worker 工具面与基线清单逐项一致，并验证缺失/失败的 restrict 会 fail-closed。`test/support/ria-fixture.mjs` 的 `restrict` mock 已按宿主语义校验 unknown/scope-local 名并抛错，防止同类回归再次被静默吞掉。
+- **Sage**：单例标准会话，标题 `Sage`，cwd **`stateDir` 根**；旧 `stateDir/sage` 会话在启动迁移时归档一次（`sage.migrated`），然后新建并绑定新会话；已是 stateDir 的 Sage 幂等复用。工具仅 `sage_read`/`sage_write`/`sage_request`，无 bash/write/edit/read/grep/glob/task/subagent/run_code。启动与 compaction 后读 INDEX，并注入 principles 摘要（≤800 字）。
+- **Sage 工具面限制方式**：三个工具由 `install()` 在 **agent 自身 scope** 注册（`lib/v2/controller.mjs`，`agent.ctx.tools.register`）；限制用 `restrictSage()` 下发 `restrict({ allow: [] })`。宿主 `dsh-tools` 的 `restrict()` 只校验/过滤 **inherited**（global + preset）工具，agent own scope 的注册天然豁免，所以空 allow-list 不需要任何名字即可把 standard preset 与 profile 全局工具全部屏蔽，恰好留下三个 `sage_*`（与 Chat 的 `restrict({ allow: [] })`、reflection Worker 同一机制）。**不能**再用 `restrict({ allow: ['sage_read','sage_write','sage_request'] })`：宿主 `restrict()` 只认 inherited 工具名（`restrictableNames`，`dsh-tools/lib/index.js:453-467`、`489-500`），scope-local 名会抛 `tools.restrict() names unknown global tool ...`；旧实现 `restrictToTools` 用 catch 吞掉该异常并返回 false，导致 Sage 实际继承 43–44 个工具（bash/write/edit/subagent/run_code 等）。现在失败不再吞：缺少 `tools.restrict`、调用失败、或限制后校验发现额外工具/无法校验，都会抛错；`install()` 会回滚本角色 scoped 工具并让 Sage 创建失败（fail-closed），不会留下无限制 Sage。限制在每次 `install()`（新建或恢复会话）时应用；**运行中的旧进程不会热更新，重启后生效**。
+- **Sage 工具面测试**：`test/v2-sage-tools.mjs` 断言 Sage visible 集合严格等于 `sage_read`/`sage_write`/`sage_request`，且不含 bash/write/edit/read/grep/glob/task/run_code/subagent 等；同时断言 Chat/Advisor/Worker 工具面与基线清单逐项一致，并验证缺失/失败的 restrict 会 fail-closed。`test/support/ria-fixture.mjs` 的 `restrict` mock 已按宿主语义校验 unknown/scope-local 名并抛错，防止同类回归再次被静默吞掉。
 - **认知库**：`stateDir/cognition/` 下 `principles.md`、`projects/<key>.md`、`chatbot/{preferences,agreements,decisions}.md`、自动生成的 `INDEX.md`、`proposals/`；仍复用 `stateDir/lessons.json`。所有写入 0600 + tmp+fsync+rename，Sage 独占写，写后更新 INDEX 与 router-events。
 - **无状态 Advisor**：默认不创建会话，由 `planTicketStateless` 单次 LLM 调用产出 `plan`/`block`；输入 = ticket brief + 认知快照；检索失败显式 degraded。LLM 最多 2 次尝试（120s/次），失败先写 `advisor.plan.failed` 再由调用点落 blocked，不静默。`advisor.plan` 审计字段含 `sessionId:''`、`latencyMs`、`attempts`、`usage`、`degraded`、`cognitionIds`、`briefSummary`、`workOrderSummary`；无 session 日志，router-events 是唯一取证入口。`advisorMode=stateless` 为生产默认，`legacy` 保留建会话/ticket_plan 回滚；`advisors` 绑定只在 legacy 使用。
-- **Chatbot 记忆（system 提示词动态注入）**：Chatbot 的 `systemPrompt.section`（`ria-v2-chatbot`，order 60）注册的 `text` 是 `section.text(context)` 函数；DSH 每次组装 prompt（每个 model step）都会调用它，函数内实时读取 `cognition/chatbot/{preferences,agreements,decisions}.md`，经 `chatbotDigest()`（返回 `{text, degraded, truncated}`）汇总后拼入系统提示词。摘要固定带「以下为长期记忆摘要，可能滞后；细节以 cognition 文件为准」；整个记忆块（标题 + 免责句 + 摘要 + 截断标注）上限 1500 字符，超限截断并在末尾标「…（已截断）」。文件缺失/读取失败时输出「长期记忆暂不可用…」占位，为空时输出「长期记忆暂无内容…」，都不阻断会话。该路径每轮实时生成，不需要事件、版本哈希或重启；`onPreStep` 不再注入 `chatbot-memory` host 消息，也不存在第二条注入路径。Chatbot 无写认知工具，用户提案走 `chatbot_propose`（priority=high）。
+- **Chat 记忆（system 提示词动态注入）**：Chat 的 `systemPrompt.section`（`ria-v2-chatbot`，order 60）注册的 `text` 是 `section.text(context)` 函数；DSH 每次组装 prompt（每个 model step）都会调用它，函数内实时读取 `cognition/chatbot/{preferences,agreements,decisions}.md`，经 `chatbotDigest()`（返回 `{text, degraded, truncated}`）汇总后拼入系统提示词。摘要固定带「以下为长期记忆摘要，可能滞后；细节以 cognition 文件为准」；整个记忆块（标题 + 免责句 + 摘要 + 截断标注）上限 1500 字符，超限截断并在末尾标「…（已截断）」。文件缺失/读取失败时输出「长期记忆暂不可用…」占位，为空时输出「长期记忆暂无内容…」，都不阻断会话。该路径每轮实时生成，不需要事件、版本哈希或重启；`onPreStep` 不再注入 `chatbot-memory` host 消息，也不存在第二条注入路径。Chat 无写认知工具，用户提案走 `chatbot_propose`（priority=high）。
 - **提案通道**：Advisor `ticket_plan.cognitionProposal`、Worker/Reflection `worker_report.lessons`、用户 `chatbot_propose` 都落 `proposals/`；Sage 采纳后写记忆，积压不阻塞派单。
 - **退役与 bootstrap**：启动时 `bootstrapCognition()` 一次性生成初始记忆（已有 `.bootstrapped` 则跳过）；`retireLegacyAdvisor()` 仅在 `advisorMode=stateless` 时清空 global 旧绑定并尝试归档，legacy 模式直接跳过，避免覆盖回滚开关。
 - **简化口径**：Sage 单例，不做写队列/优先级/冲突引擎/TTL；记忆冲突与过期由 Sage 人工维护。与 `docs/sage-advisor-design.md` 一致，后者补充了更完整的长期目标。
@@ -434,23 +441,23 @@ session_events { "sessionId": "session-abc", "types": ["approval/*", "turn/*"], 
 
 ### 阻塞通知范围
 
-独立会话的提问/审批默认**不再推送 Chatbot**：
+独立会话的提问/审批默认**不再推送 Chat**：
 
 - 只有用户显式 `chatbot_watch` 的会话，才由协管路径发 `【协管·<标题>】在等你回答…` / `【协管·<标题>】需要你决定的提权…`；通用 `noticeQuestion`/`noticeApproval` 继续跳过 watched，避免双份。
 - 未协管会话只写 `router-events.jsonl` 的 `notice.suppressed`（sessionId、kind=question/approval、question/toolName/reason、时间），不打扰用户。
-- Chatbot/Advisor/Worker 角色会话始终静默，不写 suppressed。
+- Chat/Advisor/Worker 角色会话始终静默，不写 suppressed。
 - **代价**：未协管会话卡住时不会主动提醒，只能靠打开会话或事后查 router-events 发现；需要推送就先 `chatbot_watch`。
 
 ## 9. 边界
 
 - 直管 ≠ 共享上下文或实时共思；双方只能通过消息、ticket 和 run record 协作。
 - 审批由 Host/Router 的风险策略逐条处理：低风险可按策略放行本次，高风险/未知一律转用户；不自动放宽长期权限。v2 已接入四档风险分级，见 §6「提权风险分级与逐条审批」。
-- 不把 subagent 当 worker；Router 不进入对话；Chatbot/Advisor 不是多个管理者；不改普通 worker 的配置和上下文。
+- 不把 subagent 当 worker；Router 不进入对话；Chat/Advisor 不是多个管理者；不改普通 worker 的配置和上下文。
 - 本文是目标设计，不表示全部已实现；根 DESIGN.md 未改，实现状态以代码和测试为准。
 
 ## 10. 当前实现（MVP）
 
-已实现：Chatbot（standard，仅 `chatbot_*`；可用 `chatbot_new_session` 新建普通会话，title≤80、cwd 必须在 stateDir/~/.dsh/系统目录之外、preset 仅 standard/ptc、同分钟最多 5 次，不能创建角色会话）、Global Advisor（PTC，只读核对 + `ticket_*`，不含会话只读工具）、managed Worker（PTC，两种 `workerType`：work 持 `worker_*` + 执行工具；reflection 只读仓库与会话日志，持 `worker_*` + `session_list`/`session_events`）；Worker 提权按四档风险逐条审批（`lib/v2/risk.mjs`，工单策略 > 全局设置 > 默认 auto-low），low 自动 allowed-once、medium 按策略、high/unknown 一律阻塞并通知，每次决策写 `audit.jsonl`；`chatbot_grant` 降级为调试/应急工具（set/list/reset），只有用户明确要求时才可用且写 `grant_kind` 审计；Chatbot 可用 `chatbot_watch`（add/remove/list/status）协管独立会话，与 direct 无耦合；Advisor/Worker 拦截用户直连消息（`settings.blockDirectUserMessages` 默认 true，`waitingOn=user` 例外），只回固定提示；纯降权永久生效，任何提权必须带 TTL；自动恢复只撤销提权字段，同一 grant 里的降权保留，显式 reset 才撤销全部字段；绑定 ticket 时随 done/cancelled 恢复，重启会 reconcile，审计写 `audit.jsonl`；ticket 的 intake → open → working → blocked/done/failed 主链路；没有 answer 模式，也没有 `ticket_answer`：所有票都必须有 WorkOrder 并派 Worker（历史 `meta.mode='answer'` 只读兼容为 work）；`chatbot_resume` 恢复 blocked 票，`chatbot_stop_ticket` 强制停止（cancelled + reason、清 pending inbox、DSH 可用时硬中断否则 pre-step 软停止）；startup 把中断的 working 票置为 blocked(environment)；微信 Claw 通过 Chatbot 复用入站与 assistant 转发；微信直通模式（`/直通 <会话名>`、`/直通状态`、`/退出直通`）把消息直接 steer 给普通独立会话，只转发正式文本；启动时向已连接通道发送一条重启通知。`chatbot_request` 可带 `workspace` 绝对路径：给定已有项目目录时 Worker 用该项目 cwd、产物放 `{$cwd}/ria-runs/<workerId>/`；不填则用全局 worker 根目录。状态文件为 `ria.json`（ticket）+ `v2.json`（绑定、Request、WorkOrder、报告、inbox）。
+已实现：Chat（standard，仅 `chatbot_*`；可用 `chatbot_new_session` 新建普通会话，title≤80、cwd 必须在 stateDir/~/.dsh/系统目录之外、preset 仅 standard/ptc、同分钟最多 5 次，不能创建角色会话）、Global Advisor（PTC，只读核对 + `ticket_*`，不含会话只读工具）、managed Worker（PTC，两种 `workerType`：work 持 `worker_*` + 执行工具；reflection 只读仓库与会话日志，持 `worker_*` + `session_list`/`session_events`）；Worker 提权按四档风险逐条审批（`lib/v2/risk.mjs`，工单策略 > 全局设置 > 默认 auto-low），low 自动 allowed-once、medium 按策略、high/unknown 一律阻塞并通知，每次决策写 `audit.jsonl`；`chatbot_grant` 降级为调试/应急工具（set/list/reset），只有用户明确要求时才可用且写 `grant_kind` 审计；Chat 可用 `chatbot_watch`（add/remove/list/status）协管独立会话，与 direct 无耦合；Advisor/Worker 拦截用户直连消息（`settings.blockDirectUserMessages` 默认 true，`waitingOn=user` 例外），只回固定提示；纯降权永久生效，任何提权必须带 TTL；自动恢复只撤销提权字段，同一 grant 里的降权保留，显式 reset 才撤销全部字段；绑定 ticket 时随 done/cancelled 恢复，重启会 reconcile，审计写 `audit.jsonl`；ticket 的 intake → open → working → blocked/done/failed 主链路；没有 answer 模式，也没有 `ticket_answer`：所有票都必须有 WorkOrder 并派 Worker（历史 `meta.mode='answer'` 只读兼容为 work）；`chatbot_resume` 恢复 blocked 票，`chatbot_stop_ticket` 强制停止（cancelled + reason、清 pending inbox、DSH 可用时硬中断否则 pre-step 软停止）；startup 把中断的 working 票置为 blocked(environment)；微信 Claw 通过 Chat 复用入站与 assistant 转发；微信直通模式（`/直通 <会话名>`、`/直通状态`、`/退出直通`）把消息直接 steer 给普通独立会话，只转发正式文本；启动时向已连接通道发送一条重启通知。`chatbot_request` 可带 `workspace` 绝对路径：给定已有项目目录时 Worker 用该项目 cwd、产物放 `{$cwd}/ria-runs/<workerId>/`；不填则用全局 worker 根目录。状态文件为 `ria.json`（ticket）+ `v2.json`（绑定、Request、WorkOrder、报告、inbox）。
 
 暂缓：Project 路由与 Project Advisor、知识层、SQLite 迁移、独立 worker 的创建与观察、Topic 亲和、看板动作的 v2 收口、旧 legacy ticket 的迁移。
 

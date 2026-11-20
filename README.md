@@ -5,9 +5,9 @@
 
 阿汐（Ria）是 DSH Web 插件 dsh-ria 里的常驻管家：您把事说清楚，她拆成一张张带验收标准的活儿，派给合适的 worker，盯到收尾，再把结果和卡点带回来。她不替 worker 写代码，也不要求您记命令——您只管对她说人话。
 
-> 当前默认是 v2 架构：Chatbot 面对您，Advisor 拆解，Router 记录状态，Worker 执行。旧版单会话 Ria 仍可通过 `{ v2: false }` 启动；v2 设计见 [docs/design-v2.md](docs/design-v2.md)。
+> 当前默认是 v2 架构：Chat 面对您，Advisor 拆解，Router 记录状态，Worker 执行。旧版单会话 Ria 仍可通过 `{ v2: false }` 启动；v2 设计见 [docs/design-v2.md](docs/design-v2.md)。
 >
-> v2 MVP 暂不接管 worker 审批：需要审批的操作走 DSH 原生审批界面；Chatbot 仅在用户明确要求时可用 `chatbot_grant` 调整任意顶层会话的 sandbox/approval：纯降权永久生效；同一 grant 同时含降权和提权时，TTL 到期、ticket 结束或重启只自动恢复提权字段，降权保留。下文“审批不用你一直盯着”描述的是旧版 `{ v2: false }` 的行为。
+> v2 MVP 暂不接管 worker 审批：需要审批的操作走 DSH 原生审批界面；Chat 仅在用户明确要求时可用 `chatbot_grant` 调整任意顶层会话的 sandbox/approval：纯降权永久生效；同一 grant 同时含降权和提权时，TTL 到期、ticket 结束或重启只自动恢复提权字段，降权保留。下文“审批不用你一直盯着”描述的是旧版 `{ v2: false }` 的行为。
 
 ## 经典用法
 

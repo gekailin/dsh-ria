@@ -2,7 +2,7 @@
 
 > 一页读懂当前系统：边界、对象、流程与可靠性。用户用法见 [README.md](../README.md)，历史设计与细节见 [docs/archive/design-history.md](archive/design-history.md)。
 >
-> **v2 提示：** 插件默认运行 v2（Chatbot / Advisor / Router / Worker）。本文描述的是 legacy manager（`{ v2: false }`）；v2 见 [design-v2.md](design-v2.md) 与 [ticket-flow.md](ticket-flow.md)。
+> **v2 提示：** 插件默认运行 v2（Chat / Advisor / Router / Worker）。本文描述的是 legacy manager（`{ v2: false }`）；v2 见 [design-v2.md](design-v2.md) 与 [ticket-flow.md](ticket-flow.md)。
 
 ## 目录
 

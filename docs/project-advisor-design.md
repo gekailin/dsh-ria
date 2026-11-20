@@ -113,7 +113,7 @@ key 作为 `v2.json.advisors` 的键；binding 内保存 `projectRoot`（realpat
 
 ## 4. 生命周期
 
-- **懒创建**：第一张该项目的「工作票」（work 或 reflection）到达时创建项目 Advisor；没有 answer 模式，纯问答由 Chatbot 直接答。
+- **懒创建**：第一张该项目的「工作票」（work 或 reflection）到达时创建项目 Advisor；没有 answer 模式，纯问答由 Chat 直接答。
 - **冷启动门槛（防洪）**：同一项目 24h 内只有 1 张短问答票 → 不创建项目 Advisor，先用 Global；一旦出现工作票立即创建。门槛按「项目 key + 时间窗」判定，只在路由事件里计算。
 - **休眠**：项目 30 天没有票 → binding 保留、经验保留，但会话不再保活（下次用票时重新 ensure）。休眠不是删除。
 - **回收**：只在启动 reconcile 与路由事件中判定；不引入定时器、不轮询。回收只回收会话（可配置是否删除），不删 binding、不删经验库；每次回收写审计。

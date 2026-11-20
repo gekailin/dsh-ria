@@ -5,7 +5,7 @@
 ## 0. 结论
 
 - **不新增状态。** 沿用现有 8 个状态：`intake` / `open` / `working` / `blocked` / `forked` / `done` / `failed` / `cancelled`。子阶段用 `waitingOn`、`lease`、`attempt` 表达，避免状态爆炸。
-- **Router 是唯一写者。** Chatbot、Advisor、Worker、用户都只提交命令或意图；只有 Router 在事务里改状态、写事件、写 outbox。
+- **Router 是唯一写者。** Chat、Advisor、Worker、用户都只提交命令或意图；只有 Router 在事务里改状态、写事件、写 outbox。
 - **一票一 executor，一票一活跃 lease。** 依赖是 DAG；派发幂等；同一就绪最多派发一次。
 - **默认直管 worker。** 直管 worker 走结构化报告，Router 可自动推进；独立 worker 只投普通消息，Router 只观察，不自动替它收尾。
 - **终态可重开，但不是自动重试。** `done` / `failed` / `cancelled` 是稳定终态；重开必须显式命令并记录原因。
@@ -104,7 +104,7 @@ cancelled -> open
 | `ticket.resume` | Router | `blocked -> open` | 条件已满足；决定回 advisor 还是 router |
 | `ticket.complete` | Worker 提议 / Router 落定 | `working -> done` | 证据、checklist、验收项；缺证据拒绝 |
 | `ticket.fail` | Worker / Router | `working -> failed` | failure.code + message；可重试的走 retry |
-| `ticket.cancel` | 用户 / Chatbot / Router | 任意非终态 -> `cancelled` | reason；释放 lease；尽力停止 worker |
+| `ticket.cancel` | 用户 / Chat / Router | 任意非终态 -> `cancelled` | reason；释放 lease；尽力停止 worker |
 | `ticket.retry` | Router | `failed -> open` | 未超过 maxAttempts；保留历史 attempt |
 | `ticket.reassign` | Router | `working/blocked -> open` | 释放 lease；旧 worker 停止；新 executor 重新派发 |
 | `ticket.reopen` | 用户 / Router | 终态 -> `open` | reason；revision+1；不自动重派 |
@@ -113,7 +113,7 @@ cancelled -> open
 
 权限原则：
 
-- Chatbot 只能提交 `create`、`cancel`，以及把用户回答作为 `ticket.resume` 的输入；不能直接改状态。
+- Chat 只能提交 `create`、`cancel`，以及把用户回答作为 `ticket.resume` 的输入；不能直接改状态。
 - Advisor 只能 `plan` 和请求 `block`，不能 dispatch，不能写 `done`。
 - Worker 只能 `confirm` / `report` / 提议 `complete` / `fail` / `block`；不能改归属、预算、依赖。
 - 用户保留取消、重开和叫停；直管 worker 的日常方向调整通过 Ria，不直接下指令。
@@ -122,7 +122,7 @@ cancelled -> open
 
 ### 4.1 请求进入
 
-1. Chatbot 先持久化 Request，再回执。
+1. Chat 先持久化 Request，再回执。
 2. Router 消费 Request，创建 `intake` ticket；`waitingOn=router`。
 3. 重复 Request、纯聊天、明显无关消息：`intake -> done`（resolution.kind=answered/duplicate）或 `cancelled`，不创建执行。
 
@@ -232,7 +232,7 @@ acquiredAt, heartbeatAt, expiresAt
 
 | waitingOn | 含义 | 恢复路径 |
 |---|---|---|
-| `user` | 等用户回答/拍板 | 用户经 Chatbot 回答 -> `resume -> open`；需重规划则 `waitingOn=advisor`，否则 `waitingOn=router` |
+| `user` | 等用户回答/拍板 | 用户经 Chat 回答 -> `resume -> open`；需重规划则 `waitingOn=advisor`，否则 `waitingOn=router` |
 | `environment` | 会话丢失、lease 过期、派发未确认、依赖数据损坏 | Ria/用户检查后 `resume -> open`；不自动重派 |
 
 `dependency` 和 `approval` 不走 `blocked`：前者是 `open + waitingOn=dependency`，上游 done 后自动转 router；后者是 `working + waitingOn=approval`，审批结束恢复 worker。

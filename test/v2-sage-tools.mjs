@@ -18,7 +18,7 @@ const SAGE_FORBIDDEN = [
   'schedule_create', 'skill', 'todo_write', 'workflow', 'working_directory',
 ]
 const CHATBOT_TOOLS = [
-  'chatbot_direct', 'chatbot_grant', 'chatbot_models', 'chatbot_new_session',
+  'chatbot_co_manage', 'chatbot_direct', 'chatbot_grant', 'chatbot_models', 'chatbot_new_session',
   'chatbot_propose', 'chatbot_read', 'chatbot_request', 'chatbot_resume',
   'chatbot_send_image', 'chatbot_sessions', 'chatbot_status', 'chatbot_steer', 'chatbot_stop_ticket',
   'chatbot_talk', 'chatbot_watch', 'chatbot_worker_config',

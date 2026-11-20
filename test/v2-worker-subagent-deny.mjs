@@ -3,7 +3,7 @@ import { createFixture } from './support/ria-fixture.mjs'
 
 const BASE_WORKER_TOOLS = ['bash', 'edit', 'read', 'run_code', 'worker_report', 'write']
 const ADVISOR_TOOLS = ['lesson_review', 'lesson_search', 'read', 'ticket_answer', 'ticket_block', 'ticket_dispatch', 'ticket_plan', 'ticket_read']
-const CHATBOT_TOOLS = ['chatbot_direct', 'chatbot_grant', 'chatbot_models', 'chatbot_new_session', 'chatbot_propose', 'chatbot_read', 'chatbot_request', 'chatbot_resume', 'chatbot_send_image', 'chatbot_sessions', 'chatbot_status', 'chatbot_steer', 'chatbot_stop_ticket', 'chatbot_talk', 'chatbot_watch', 'chatbot_worker_config']
+const CHATBOT_TOOLS = ['chatbot_co_manage', 'chatbot_direct', 'chatbot_grant', 'chatbot_models', 'chatbot_new_session', 'chatbot_propose', 'chatbot_read', 'chatbot_request', 'chatbot_resume', 'chatbot_send_image', 'chatbot_sessions', 'chatbot_status', 'chatbot_steer', 'chatbot_stop_ticket', 'chatbot_talk', 'chatbot_watch', 'chatbot_worker_config']
 const FULL_DENY = ['subagent', 'subagent_fork', 'list_agents', 'send_message', 'interrupt_agent']
 
 async function dispatchWorker(fixture) {

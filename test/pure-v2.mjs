@@ -32,11 +32,11 @@ try {
   assert.equal(store.advisor('global').cwd, '/tmp/ria-thinkers')
   assert.equal(store.data.tickets.ticket_legacy.phase, 'advisor')
 
-  // The first write migrates the field: advisors only, legacy key gone.
+  // The first write normalizes the field: advisors only, legacy key gone.
   store.setAdvisor('global', 'session-new')
-  const migrated = JSON.parse(readFileSync(join(dir, 'v2.json'), 'utf8'))
-  assert.equal(migrated.advisors.global.sessionId, 'session-new')
-  assert.equal('thinkers' in migrated, false)
+  const normalized = JSON.parse(readFileSync(join(dir, 'v2.json'), 'utf8'))
+  assert.equal(normalized.advisors.global.sessionId, 'session-new')
+  assert.equal('thinkers' in normalized, false)
 
   // A ticket written before the rename is loaded with the canonical role.
   const ria = new RiaStore(dir)
@@ -88,7 +88,7 @@ const roles = read('../lib/v2/roles.mjs')
 assert.equal(roles.includes('LEGACY_ROLE_CHAT'), false)
 assert.equal(roles.includes('normalizeRole'), false)
 const controller = read('../lib/v2/controller.mjs')
-for (const gone of ['ensureAdvisor', 'retireLegacyAdvisor', 'sage.migrated', 'advisorMode', 'chatbotSessionId']) {
+for (const gone of ['ensureAdvisor', 'retireLegacyAdvisor', 'advisorMode', 'chatbotSessionId']) {
   assert.equal(controller.includes(gone), false, gone + ' must be gone from the controller')
 }
 assert.equal(controller.includes("roleSessionTitle('chatbot')"), false)

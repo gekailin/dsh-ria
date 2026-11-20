@@ -9,7 +9,7 @@ import { SqliteTicketRuntime, resolveStorageMode } from '../lib/state/sqlite/run
 import { transaction as sqliteTransaction } from '../lib/state/sqlite/db.mjs'
 import { SqliteTicketAdapter } from '../lib/state/sqlite/adapter.mjs'
 import { openDatabase } from '../lib/state/sqlite/db.mjs'
-import { migrateTickets } from '../scripts/sqlite-migrate.mjs'
+import { seedSqliteFromState } from './support/sqlite-seed.mjs'
 import { writeExport } from '../scripts/sqlite-export.mjs'
 
 const day = 24 * 60 * 60 * 1000
@@ -32,7 +32,7 @@ const archived = ticket('t4', { status: 'done', closedAt: old, resolution: { sum
 writeFileSync(join(state, 'ria.json'), JSON.stringify({ schemaVersion: 5, version: 5, tickets: [...hot, ...closed], settings: { progressCards: false } }))
 writeFileSync(join(state, 'v2.json'), JSON.stringify({ tickets: { t1: { ticketId: 't1', phase: 'advisor', projectCwd: '/tmp/p' } } }))
 writeFileSync(join(state, 'tickets.log.jsonl'), JSON.stringify({ ticket: archived, closedAt: old }) + '\n')
-migrateTickets({ stateDir: state })
+seedSqliteFromState({ stateDir: state })
 
 const mirror = () => {
   let count = 0

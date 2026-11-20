@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openDatabase, transaction } from '../lib/state/sqlite/db.mjs'
 import { SqliteTicketAdapter } from '../lib/state/sqlite/adapter.mjs'
-import { migrateTickets } from '../scripts/sqlite-migrate.mjs'
+import { seedSqliteFromState } from './support/sqlite-seed.mjs'
 import { exportTickets } from '../scripts/sqlite-export.mjs'
 
 const stateDir = mkdtempSync(join(tmpdir(), 'ria-sqlite-schema-'))
@@ -24,9 +24,9 @@ try {
   writeFileSync(join(stateDir, 'tickets.log.jsonl'), JSON.stringify(archive) + '\n')
   writeFileSync(join(stateDir, 'tickets-2026-11.jsonl'), JSON.stringify(archive) + '\n')
   const before = readFileSync(join(stateDir, 'ria.json'), 'utf8')
-  const migrated = migrateTickets({ stateDir })
-  assert.equal(migrated.ok, true)
-  assert.deepEqual(migrated.counts, { tickets: 2, history: 2, hot: 1, archived: 1, meta: 1 })
+  const seeded = seedSqliteFromState({ stateDir })
+  assert.equal(seeded.ok, true)
+  assert.deepEqual(seeded.counts, { tickets: 2, history: 2, hot: 1, archived: 1, meta: 1 })
   const exported = exportTickets({ stateDir })
   assert.deepEqual(exported.ria.tickets, [ticket])
   assert.deepEqual(exported.v2.tickets[ticket.ticketId], meta)

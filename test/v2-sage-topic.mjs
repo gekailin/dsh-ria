@@ -30,7 +30,7 @@ try {
   assert.equal(store.topic(topicB.topicId).brief, '整理后')
   assert.equal(store.ticket(openTicket.ticketId).status, 'open', 'update never touches tickets')
 
-  // 3. merge migrates every link and archives the source.
+  // 3. merge moves every link and archives the source.
   const merged = await call({ action: 'merge', sourceTopicId: topicA.topicId, targetTopicId: topicB.topicId })
   assert.equal(merged.ok, true, JSON.stringify(merged))
   assert.equal(store.topic(topicA.topicId).mergedInto, topicB.topicId)

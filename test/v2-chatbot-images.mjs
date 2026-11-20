@@ -47,7 +47,6 @@ const originalGet = fixture.ctx.get.bind(fixture.ctx)
 fixture.ctx.get = name => name === 'attachments'
   ? { ...originalGet(name), imageHostPath: () => imagePath }
   : originalGet(name)
-const talk = args => fixture.callAs(chatbot, 'chatbot_talk', { sessionId: 'session-image-target', message: 'inspect this', ...args })
 const send = args => fixture.callAs(chatbot, 'chatbot_send_image', args)
 const directNotices = []
 controller.notifyDirect = message => directNotices.push(message)
@@ -57,8 +56,6 @@ try {
   // Tool surfaces and optional image parameters.
   assert.ok(fixture.visibleTools(chatbot).includes('chatbot_send_image'))
   const schemas = fixture.agentTools.get(chatbot)
-  assert.ok(schemas.get('chatbot_talk').parameters.properties.images)
-  assert.ok(schemas.get('chatbot_talk').parameters.properties.attachments)
   assert.equal(schemas.get('chatbot_send_image').parameters.properties.paths.maxItems, 5)
 
   // Direct: keep the old string branch for text; encoded and stored image
@@ -90,71 +87,8 @@ try {
   controller.direct = undefined
   controller.promptSession = originalPrompt
 
-  // Talk: local paths, stored refs, limits, visible model preflight/rejection
-  // fallback, and no blind retry after an unknown acceptance failure.
-  let result = await talk({ images: [imagePath, secondPath] })
-  assert.equal(result.ok, true, JSON.stringify(result))
-  assert.equal(result.imagesAttached, 2)
-  assert.equal(result.reply, 'image reviewed')
-  assert.deepEqual(attempts.at(-1).content.map(part => part.type), ['text', 'image', 'image'])
-  assert.deepEqual(Buffer.from(attempts.at(-1).content[1].data, 'base64'), PNG)
-  result = await talk({ attachments: [reference] })
-  assert.equal(result.ok, true, JSON.stringify(result))
-  assert.equal(result.imagesAttached, 1)
-  assert.deepEqual(Buffer.from(attempts.at(-1).content[1].data, 'base64'), PNG)
-  result = await talk({ images: [imagePath], attachments: [{ path: secondPath }] })
-  assert.equal(result.imagesAttached, 2)
-  for (const images of [[imagePath, imagePath, imagePath, imagePath, imagePath, imagePath], ['relative.png'], [join(fixture.stateDir, 'missing.png')], [badPath], [largePath], [directory], [imagePath + '\0']]) {
-    const before = attempts.length
-    result = await talk({ images })
-    assert.equal(result.ok, false, JSON.stringify(result))
-    assert.ok(result.message)
-    assert.equal(attempts.length, before)
-  }
-  result = await talk({ images: [imagePath, imagePath, imagePath], attachments: [{ path: secondPath }, { path: secondPath }, { path: secondPath }] })
-  assert.equal(result.code, 'images_limit')
-  result = await talk({ images: [exactPath, exactPath, exactPath] })
-  assert.equal(result.code, 'images_total_too_large')
-  assert.equal((await talk({ images: [reference] })).code, 'images_invalid')
-  assert.equal((await talk({ attachments: [{ attachmentId: 'bad-ref' }] })).code, 'image_reference_invalid')
-  assert.equal((await talk({ attachments: [{ ...reference, attachmentId: 'sha256:' + 'a'.repeat(64) }] })).code, 'image_reference_invalid')
-  assert.equal((await talk({ attachments: [{ path: imagePath, attachmentId: 'sha256:' + 'a'.repeat(64) }] })).code, 'image_reference_invalid')
-  result = await talk({ images: [imagePath, badPath] })
-  assert.equal(result.ok, false)
-  assert.ok(result.results.every(item => !('file' in item) && !('buffer' in item)))
-  result = await talk({ images: Array(5).fill(imagePath) })
-  assert.equal(result.imagesAttached, 5)
-  result = await talk({ images: [exactPath, exactPath] })
-  assert.equal(result.imagesAttached, 2)
-  rejectImages = true
-  const fallbackBefore = attempts.length
-  result = await talk({ images: [imagePath] })
-  assert.equal(result.ok, true, JSON.stringify(result))
-  assert.equal(result.imagesDegraded, true)
-  assert.equal(result.imagesAttached, 0)
-  assert.match(result.warning, /图片未能附带/)
-  assert.equal(result.imageWarnings[0].path, imagePath)
-  assert.equal(attempts.length, fallbackBefore + 2)
-  assert.equal(attempts.at(-1).requestId, attempts.at(-2).requestId)
-  assert.deepEqual(attempts.at(-1).content.map(part => part.type), ['text'])
-  rejectImages = false
-  const originalProbe = fixture.service.modelImageProblem.bind(fixture.service)
-  fixture.service.modelImageProblem = async () => 'target model does not support image input'
-  const probeBefore = attempts.length
-  result = await talk({ images: [imagePath] })
-  assert.equal(result.imagesDegraded, true)
-  assert.equal(attempts.length, probeBefore + 1)
-  assert.match(attempts.at(-1).content[0].text, /图片未能附带/)
-  fixture.service.modelImageProblem = originalProbe
-  failUnknown = true
-  const unknownBefore = attempts.length
-  result = await talk({ images: [imagePath] })
-  assert.equal(result.code, 'send_failed')
-  assert.equal(attempts.length, unknownBefore + 1)
-  failUnknown = false
-
   // No account is configured: this must not prompt/login or make an HTTP call.
-  result = await send({ paths: [imagePath] })
+  let result = await send({ paths: [imagePath] })
   assert.equal(result.code, 'claw_not_connected')
   const forbidden = await controller.chatbotSendImage({ paths: [imagePath] }, { agent: { id: 'session-not-chatbot' } })
   assert.equal(forbidden.code, 'forbidden')
@@ -241,7 +175,7 @@ try {
   claw.paused = false
   claw.peer = undefined
   assert.equal((await send({ paths: [imagePath] })).code, 'claw_no_peer')
-  console.log('v2 chatbot images/direct/talk/send_image mock ok')
+  console.log('v2 chatbot images/direct/send_image mock ok')
 } finally {
   if (originalFetch) globalThis.fetch = originalFetch
   if (server) await new Promise(resolve => server.close(resolve))

@@ -195,18 +195,8 @@ try {
       await settle()
       assert.equal(notices().filter(text => text.includes('已归档')).length, 1)
 
-      // Routing: explicit message uses a normal user prompt and notifies.
-      const routed = await fixture.service.v2.routeMessage({ sessionId: 'session-watch', message: 'route this task' })
-      assert.equal(routed.ok, true)
-      assert.match(routed.notice, /已转给/)
-      assert.ok(fixture.prompts.some(item => String(item.sessionId) === 'session-watch' && String(item.content[0].text) === 'route this task'))
-
-      // Unified routing pool also includes managed Workers.
-      const worker = await fixture.service.v2.ensureWorker('global')
-      const workerRoute = await fixture.service.v2.routeMessage({ sessionId: worker.sessionId, message: 'worker task' })
-      assert.equal(workerRoute.ok, true)
-      assert.match(workerRoute.notice, /已转给/)
-      assert.ok(fixture.prompts.some(item => String(item.sessionId) === String(worker.sessionId) && String(item.content[0].text) === 'worker task'))
+      // Work is dispatched through tickets now (see test/v2-co-managed.mjs):
+      // the old direct chat-to-session routing channel is gone on purpose.
 
       // Direct mode has no coupling to watch state/dedupe.
       assert.equal('direct' in fixture.service.v2.coManagement, false)

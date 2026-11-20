@@ -52,7 +52,9 @@ try {
   const ensured = await fixture.service.ensure()
   const chatbot = fixture.service.v2.v2.chatbotSessionId
   assert.equal(ensured.sessionId, chatbot)
-  assert.deepEqual(fixture.visibleTools(chatbot).sort(), ['chatbot_co_manage', 'chatbot_direct', 'chatbot_grant', 'chatbot_models', 'chatbot_new_session', 'chatbot_propose', 'chatbot_read', 'chatbot_request', 'chatbot_resume', 'chatbot_send_image', 'chatbot_sessions', 'chatbot_status', 'chatbot_steer', 'chatbot_stop_ticket', 'chatbot_talk', 'chatbot_watch', 'chatbot_worker_config'])
+  // Dispatch is ticket-only: the direct session talk channel is gone.
+  assert.equal(fixture.visibleTools(chatbot).includes('chatbot_talk'), false)
+  assert.deepEqual(fixture.visibleTools(chatbot).sort(), ['chatbot_co_manage', 'chatbot_direct', 'chatbot_grant', 'chatbot_models', 'chatbot_new_session', 'chatbot_propose', 'chatbot_read', 'chatbot_request', 'chatbot_resume', 'chatbot_send_image', 'chatbot_sessions', 'chatbot_status', 'chatbot_steer', 'chatbot_stop_ticket', 'chatbot_watch', 'chatbot_worker_config'])
   // WeChat Claw resolves its peer session through these two callbacks. In v2
   // they must point at the Chatbot, not at the retired legacy manager.
   assert.equal(fixture.service.wechatClaw.getRiaId(), chatbot)
@@ -69,16 +71,6 @@ try {
   assert.equal(listed.sessions[0].title, 'Alpha Session')
   assert.equal(listed.sessions[1].sessionId, 'session-dormant')
   assert.equal(listed.sessions[1].title, 'Alpha Dormant')
-  const selfTalk = await fixture.callAs(chatbot, 'chatbot_talk', { sessionId: chatbot, message: 'hello' })
-  assert.equal(selfTalk.code, 'session_not_independent')
-  const busyTalk = await fixture.callAs(chatbot, 'chatbot_talk', { sessionId: 'session-busy', message: 'hello' })
-  assert.equal(busyTalk.code, 'session_busy')
-  const talk = await fixture.callAs(chatbot, 'chatbot_talk', { sessionId: 'session-independent', message: 'status?' })
-  assert.equal(talk.ok, true)
-  assert.equal(talk.reply, 'Alpha here, all good.')
-  const sent = fixture.prompts.find(item => item.sessionId === 'session-independent' && item.content[0].text === 'status?')
-  assert.ok(sent)
-  assert.equal(sent.mode, 'queue')
   const read = await fixture.callAs(chatbot, 'chatbot_read', { sessionId: 'session-independent', afterSeq: 6 })
   assert.equal(read.ok, true)
   assert.deepEqual(read.messages.map(item => item.text), ['Alpha here, all good.'])
@@ -106,27 +98,6 @@ try {
     assert.deepEqual(readPending.pendingInput, ['approval'])
     assert.equal(readPending.queue, null)
     assert.equal(readPending.queueLength, 0)
-    const busyApproval = await fixture.callAs(chatbot, 'chatbot_talk', { sessionId: 'session-pending-approval', message: 'hello' })
-    assert.equal(busyApproval.code, 'session_busy')
-    assert.equal(busyApproval.running, true)
-    assert.deepEqual(busyApproval.pendingInput, ['approval'])
-    assert.match(busyApproval.message, /approval/)
-    const busyQuestion = await fixture.callAs(chatbot, 'chatbot_talk', { sessionId: 'session-pending-question', message: 'hello' })
-    assert.equal(busyQuestion.code, 'session_busy')
-    assert.deepEqual(busyQuestion.pendingInput, ['question'])
-    assert.match(busyQuestion.message, /question/)
-    const busyOther = await fixture.callAs(chatbot, 'chatbot_talk', { sessionId: 'session-pending-other', message: 'hello' })
-    assert.equal(busyOther.code, 'session_busy')
-    assert.deepEqual(busyOther.pendingInput, ['other'])
-    // input-required is a stop, not a timeout: the reply is pending and names
-    // the request kind instead of pretending the turn is still running.
-    const inputRequired = await fixture.callAs(chatbot, 'chatbot_talk', { sessionId: 'session-input-required', message: 'deploy now?' })
-    assert.equal(inputRequired.ok, true)
-    assert.equal(inputRequired.replied, false)
-    assert.equal(inputRequired.pending, true)
-    assert.equal(inputRequired.reason, 'input-required')
-    assert.deepEqual(inputRequired.pendingInput, ['question'])
-    assert.match(inputRequired.message, /waiting for a question answer/)
   }
 
   // Direct mode is a memory-only WeChat bypass: inbound text is steered into the
@@ -524,7 +495,7 @@ try {
   const chatbot = second.service.v2.v2.chatbotSessionId
   assert.ok(chatbot)
   assert.equal(second.service.store.riaSessionId, chatbot)
-  assert.deepEqual(second.visibleTools(chatbot).sort(), ['chatbot_co_manage', 'chatbot_direct', 'chatbot_grant', 'chatbot_models', 'chatbot_new_session', 'chatbot_propose', 'chatbot_read', 'chatbot_request', 'chatbot_resume', 'chatbot_send_image', 'chatbot_sessions', 'chatbot_status', 'chatbot_steer', 'chatbot_stop_ticket', 'chatbot_talk', 'chatbot_watch', 'chatbot_worker_config'])
+  assert.deepEqual(second.visibleTools(chatbot).sort(), ['chatbot_co_manage', 'chatbot_direct', 'chatbot_grant', 'chatbot_models', 'chatbot_new_session', 'chatbot_propose', 'chatbot_read', 'chatbot_request', 'chatbot_resume', 'chatbot_send_image', 'chatbot_sessions', 'chatbot_status', 'chatbot_steer', 'chatbot_stop_ticket', 'chatbot_watch', 'chatbot_worker_config'])
   await second.service.startup()
   const parked = second.service.store.ticket(workingTicketId)
   assert.equal(parked.status, 'blocked')

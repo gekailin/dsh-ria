@@ -21,7 +21,7 @@ const CHATBOT_TOOLS = [
   'chatbot_co_manage', 'chatbot_direct', 'chatbot_grant', 'chatbot_models', 'chatbot_new_session',
   'chatbot_propose', 'chatbot_read', 'chatbot_request', 'chatbot_resume',
   'chatbot_send_image', 'chatbot_sessions', 'chatbot_status', 'chatbot_steer', 'chatbot_stop_ticket',
-  'chatbot_talk', 'chatbot_watch', 'chatbot_worker_config',
+  'chatbot_watch', 'chatbot_worker_config',
 ]
 // Preset/global tools this fixture mounts. It deliberately mirrors the families
 // the deployed standard/ptc presets expose (shell, fs, search, delegation,

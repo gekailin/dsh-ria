@@ -6,7 +6,7 @@
 
 根 DESIGN.md 第 5 条要求阿汐能以无侵入方式协管常规会话：不改原上下文，派发任务、查询进展、获取结果。现在只有临时能力：
 
-- Chatbot 提示词里让模型用 `chatbot_sessions` 找会话、`chatbot_talk` 发消息、`chatbot_read` 读后续；
+- Chatbot 提示词里让模型用 `chatbot_sessions` 找会话、`chatbot_read` 读后续；给会话派活一律走 ticket（co-managed 执行者），不再有直接发消息的 talk 通道；
 - 没有「协管范围」的持久状态，跨轮次不记得用户在跟踪谁；
 - 没有事件监控：目标会话的回复、提问、提权审批都不会主动到达 Chatbot/用户；
 - 与直通（direct）**无耦合**：协管用独立状态/去重，不与 direct 共享或仲裁。
@@ -106,7 +106,7 @@
 
 路由目标池 = **协管会话 + 直管 Worker**，由 Ria 判断该给谁；不设 `smartRoute` 开关，不做模型式自主路由。
 
-- 用户对 Chatbot 说「让 X 去做 …」时，Ria 用普通用户消息发给目标：协管/普通独立会话走 `promptSession(mode='queue')`（`chatbot_talk` 路径），直管 Worker 同样以普通用户消息入队（`chatbot_talk` 统一入口，返回 `routed:true`）。
+- 用户对 Chatbot 说「让 X 去做 …」时，Ria 建 ticket 并派发：目标会话先用 `chatbot_co_manage` 登记为 co-managed 执行者，投递内容是 Advisor WorkOrder（首行 `[WorkOrder #<ticketId>]`）；直管 Worker 走同一套 ticket 派发。协管通道只用于转述/盯进展，不再承担派活。
 - **每次路由都通知用户「已转给 X」**；Chatbot 必须转述，不静默。
 - 路由不改变目标会话的权限、模型、工具或 ticket 归属。
 
@@ -121,7 +121,7 @@
 - 互不影响生命周期：开启/退出 direct 不改 watch；取消 watch 不改 direct。
 - 命令解析：`/直通` 系列仍走 direct 钩子；`/协管` 系列由 Chatbot 解析，direct 生效时需退出直通或在 Web 端操作。
 
-**抽象等同直管 Worker**：协管会话与直管 Worker 只差通信机制。权限/审批走同一套风险分级与 `audit.jsonl`；状态、事件、限流、失败重试复用同一套 controller 逻辑；`co-management.json` 只存 transport（sessionId、cursors、订阅选项），不另造状态机。
+**抽象等同直管 Worker**：协管会话与直管 Worker 只差通信机制（co-managed 会话通过 ticket 接收 WorkOrder）。权限/审批走同一套风险分级与 `audit.jsonl`；状态、事件、限流、失败重试复用同一套 controller 逻辑；`co-management.json` 只存 transport（sessionId、cursors、订阅选项），不另造状态机。
 
 **观测用户直连**：watched 会话的 `user/message` 也订阅；过滤 `host_` 注入后记录摘要与 `lastUserSeq`，以 `【协管·标题】用户直接对会话说：…` 通知 Chatbot，避免重复派活。
 
@@ -143,7 +143,7 @@
 - `action: list`：返回 watch 列表与状态。
 - `action: status`：`id` 或 `sessionId`，返回游标、统计、stale 原因与 pending 提问。
 
-只有 Chatbot 能调用；不提供任何改目标配置/权限的入口。`chatbot_talk` 同时承担统一路由（协管会话/直管 Worker），`chatbot_read` 保留为一次性读取；watch 是长期状态。
+只有 Chatbot 能调用；不提供任何改目标配置/权限的入口。派活由 ticket 承担（直管 Worker 或 co-managed 会话），`chatbot_read` 保留为一次性只读查看；watch 是长期状态。
 
 ## 7. 去重与限流
 

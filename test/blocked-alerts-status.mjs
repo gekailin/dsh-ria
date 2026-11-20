@@ -32,21 +32,20 @@ try {
   assert.ok(/\d{4}-\d{2}-\d{2}T/.test(notices[0]))
   assert.ok(notices[0].includes('g'.repeat(119) + '…'))
   assert.ok(!notices[0].includes('g'.repeat(120)), 'goal summary is clipped to 120 chars')
-  assert.equal(events.filter(event => event.event === 'ticket.blocked.notified').length, 1)
-  assert.equal(events.find(event => event.event === 'ticket.blocked.notified').ticketId, ticket.ticketId)
-  const firstMeta = controller.state.ticketMeta(ticket.ticketId)
-  assert.equal(typeof firstMeta.blockedNotifiedKey, 'string')
+  const delivered = events.filter(event => event.event === 'ticket.blocked.notified')
+  assert.equal(delivered.length, 1)
+  assert.equal(delivered[0].ticketId, ticket.ticketId)
+  assert.equal(delivered[0].payload.edge, 'blocked_user')
 
-  // Same revision/blockedReason: the handler must not notify again.
+  // A repeat callback for an already-blocked ticket is not a new edge.
   const current = store.ticket(ticket.ticketId)
-  controller.onTicketTransition(current, { from: 'open', to: 'blocked', reason: 'repeat hook' })
+  controller.onTicketTransition(current, { from: 'blocked', to: 'blocked', reason: 'repeat hook' })
   await flush()
-  assert.equal(notices.length, 1, 'same revision is deduped')
+  assert.equal(notices.length, 1, 'no new edge, no notice')
 
-  // Unblock clears the marker; a new block (new revision/reason) notifies again.
+  // Unblock then block again is a new edge and notifies exactly once.
   const reopened = store.transitionTicket(ticket.ticketId, 'open', { actor: 'user', waitingOn: 'ria', reason: 'answered' })
   assert.equal(reopened.ok, true)
-  assert.equal(controller.state.ticketMeta(ticket.ticketId).blockedNotifiedKey, null)
   const second = store.transitionTicket(ticket.ticketId, 'blocked', {
     actor: 'router', executor: 'session-worker-x', waitingOn: 'user',
     blockedReason: '第二个问题', attention: { kind: 'question', question: '继续吗？' }, reason: 'second block',
@@ -56,9 +55,9 @@ try {
   assert.equal(notices.length, 2, 'unblock then block notifies again')
   assert.ok(notices[1].includes('继续吗？'))
 
-  // Failure is logged, does not roll back the transition, and still dedupes.
+  // Delivery failure keeps the same tick; retry re-renders and delivers once.
   const failing = store.addTicket({ status: 'open', waitingOn: 'ria', executor: 'session-worker-y', goal: 'notify failure', acceptance: 'x' })
-  controller.notifyChat = async () => { throw new Error('chat transport down') }
+  controller.notifyChat = async () => false
   const failedBlock = store.transitionTicket(failing.ticketId, 'blocked', {
     actor: 'router', executor: 'session-worker-y', waitingOn: 'user', blockedReason: '等确认',
     attention: { kind: 'decision', question: '确认？' }, reason: 'notify failure',
@@ -66,10 +65,11 @@ try {
   assert.equal(failedBlock.ok, true)
   assert.equal(failedBlock.ticket.status, 'blocked')
   await flush()
-  assert.ok(logs.some(line => line.includes('could not notify Chat about blocked ticket ' + failing.ticketId)))
-  controller.onTicketTransition(store.ticket(failing.ticketId), { from: 'open', to: 'blocked' })
-  await flush()
-  assert.equal(logs.filter(line => line.includes('could not notify Chat about blocked ticket ' + failing.ticketId)).length, 1, 'failure still dedupes')
+  assert.equal(notices.length, 2, 'failed delivery did not add a notice')
+  controller.notifyChat = async message => { notices.push(message); return true }
+  await controller.drainPendingNotices()
+  assert.equal(notices.length, 3, 'same tick retried once after transport recovery')
+  assert.ok(notices[2].includes('确认？'))
 
   // ---- ria_chat_status: all non-terminal tickets + age/stale/zombie fields -----
   controller.notifyChat = async () => true // keep unrelated transitions quiet

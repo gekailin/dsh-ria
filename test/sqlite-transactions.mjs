@@ -144,5 +144,18 @@ try {
   repository.runSync('draft-only', api => { api.ticket('t2').progress.lastPhase = 'draft-only mutation' })
   assert.equal(external.get('t2').progress.lastPhase, 'draft-only mutation')
   assert.deepEqual(external.get('t2'), store.ticket('t2'))
+
+  // A dispatch-like recovery reset must be part of the transition transaction,
+  // not a post-commit mutation of the live object.
+  store.bumpRecovery('t2')
+  assert.equal(store.ticket('t2').recovery.count, 1)
+  assert.equal(external.get('t2').recovery.count, 1)
+  const working = store.transitionTicket('t2', 'working', {
+    executor: 'worker', attempt: { legacy: true }, recovery: { count: 0 },
+  })
+  assert.equal(working.ok, true)
+  assert.equal(working.ticket.recovery.count, 0)
+  assert.equal(external.get('t2').recovery.count, 0)
+  assert.deepEqual(external.get('t2'), store.ticket('t2'))
   console.log('sqlite transaction drafts, references and signature rollback ok')
 } finally { reader.close(); runtime.close(); rmSync(dir, { recursive: true, force: true }) }

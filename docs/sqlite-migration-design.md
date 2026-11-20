@@ -150,9 +150,10 @@
 
 ### 3.3 与 `writeAtomic` 的关系
 
-- `writeAtomic` 保留给非 DB 文件：memory、reflections、JSON 导出、备份、附件元数据等。
-- 控制面 JSON 在切换后只由导出器**原子写**，不再由业务代码写。
-- 双写/影子阶段：先 DB 事务提交，再原子导出 JSON；导出失败只告警并标记 lag，不回滚 DB。导出器必须幂等（按主键 upsert/全量重写）。
+- 统一原子发布工具：`lib/state/atomic-file.mjs#writeAtomic`。同目录临时文件 → 循环 `writeSync` 防短写 → `fsync` → `close` → `rename`；失败删除临时文件，rename 前旧目标保持完整。可注入 `io`/`beforeRename` 仅用于故障与代际测试。
+- 用于 `ria.json`、`v2.json`、SQLite 镜像 `tickets.log.jsonl`、迁移 manifest/备份正文、离线导出；SQLite 自身 WAL/事务与 append-only 审计日志不套用替换语义。
+- 控制面 JSON 在切换后只由导出器**原子写**，业务代码不直接写。
+- 先 DB 事务提交，再导出 JSON；导出失败**不**回滚 DB，但必须在 DB 持久 dirty 并保留最新非 ticket 域恢复载荷，供定时器/重启/离线导出重试。导出器按 DB 全量重建，幂等。
 - 不用 ORM；SQL 集中在存储层，业务层只调用仓储接口（tickets/reports/outbox/…）。本轮不定义代码接口，只定边界。
 
 ## 4. JSON → SQLite 迁移与回滚
@@ -306,19 +307,22 @@
 | C2 单写者 + 仓储 | 完成 | `lib/state/writer.mjs`（进程内 FIFO、每 job 一个事务、AsyncLocalStorage 重入抛 `writer_reentrant`、async job 抛 `async_transaction`、post-commit 效果在队列外执行）；`lib/state/tickets-repository.mjs`（保留 RiaStore 同步 API、`expectedRevision` 透传、compound 事务）；`onTicketsCommitted` 等通知移到 commit 之后 |
 | C3 迁移校验 | 完成 | `scripts/sqlite-migrate.mjs`：`state/backup/<ts>/` + manifest（bytes/sha256/importId/sourceSha256/counts）、计数逐项比对、分层抽样 20 票深比（ticket/meta/archivedAt/archiveRecords/history）、`PRAGMA integrity_check`、`PRAGMA foreign_key_check`、孤儿 history、`--verify-only`；先建 `<db>.tmp`，全过才 rename 发布；失败删 tmp 与 JSON 不动；同源重跑幂等（`import_id`/`source_sha256`），异源需 `--replace` |
 | C4 storage 开关 | 完成 | `lib/state/sqlite/runtime.mjs`：`storage` 默认 `json`，`DSH_RIA_STORAGE` 或 `ria.json.storage` 切到 `sqlite`，非法值 fail-closed；启动从 DB 水合 tickets；写路径在单写者事务内 upsert 变更行；JSON 变成 post-commit 去抖原子写的只读镜像；归档用 `archived_at`，`historyRecords`/`findArchivedTicket` 读 DB；`scripts/sqlite-export.mjs --apply` 一键重建 JSON 并置 `storage=json` |
-| C5 文档与测试链 | 完成 | 本节 + operations runbook；`package.json` 的 `npm test` 覆盖 `test/sqlite-{schema,writer,migrate,runtime}.mjs` |
+| C5 文档与测试链 | 完成 | 本节 + operations runbook；`package.json` 的 `npm test` 覆盖 `test/sqlite-{schema,writer,migrate,runtime,transactions,mirror}.mjs` 与 `test/atomic-file.mjs` |
 
 ### 9.1 相对设计草案的偏差（已确认）
 
 1. **meta 合并方式**：设计写“ticket meta 合并”，实现用 `tickets.meta` 一个 JSON 列同时承载 v2 meta、未建模字段、归档快照，不另建 meta 表。迁移与导出往返无损（C1 测试覆盖）。
 2. **读路径**：`storage=sqlite` 启动时把 tickets 从 DB 水合进内存，读走内存副本而非每条查询都开游标；**真源仍是 DB**（改 JSON 不影响读）。这是为了不重写状态机做的折中，写路径严格走 DB 事务。
-3. **归档**：DB 用 `archived_at` 表达归档；`tickets.log.jsonl` 不再由 sqlite 模式写，回滚时由导出器从 DB 重建。
+3. **归档**：DB `archived_at` 表达归档，归档快照写入 `tickets.meta.archiveRecords`；sqlite 模式下 `tickets.log.jsonl` 只由镜像导出器在 commit 后从 DB 原子重建，业务代码不追加，回滚/离线导出同源。
 4. **outbox 未与 ticket 同事务**：P1 不迁 outbox，保持现有 JSON 幂等与 reconcile（设计 §3.2 的“outbox 同事务”留给 P3）。
 5. **事件后置**：`router-events.jsonl` 仍由 RouterEventLog 在 commit 后写，P2 才进库。
 6. **单写者与模型调用**：事务内禁止 await 模型/session（writer 直接拒绝 async job），既有 await 点都在队列外。
+7. **内存发布**：事务内改私有 draft（ticket/meta/非 ticket 域），DB `COMMIT` 成功后才把 draft 深度发布到 live 对象并更新签名；失败/多行失败/COMMIT 失败都不污染外部持有的 ticket/history 引用。完整内容签名（非仅 revision+time）覆盖 `readyNotifiedAt`/`feedback` 等无 revision 变化写入。
+8. **ticket meta 权威**：`tickets.meta` 同时承载 v2 meta 与归档快照，DB 为唯一权威；启动只从 DB 水合 meta，JSON 里再新的 `updatedAt`/版本也不导入。写入分配单调 `metaRevision` 与 `updatedAt`，支持 `expectedRevision` 旧写拒绝。
+9. **镜像 generation**：每次事务在 `schema_meta.ticket_mirror` 持久 `generation/dirty/exportedGeneration/pendingRia/pendingV2`。导出快照固定一个 generation；rename 前与每文件后校验代际，旧导出被 `mirror_superseded` 拒绝；完整发布后才清 dirty。失败记录 `lastError/failures` 并保留 dirty，定时器/重启继续重试；async 导出为 single-flight，失败后续调度不中断。
 
 ### 9.2 P1 明确不做
 
-- 不迁 `reports`/`workOrders`/`workers`/`advisors`/`lessons`/`outbox`（继续 JSON，接受跨存储多步、无单事务）。
+- 不迁 `reports`/`workOrders`/`workers`/`advisors`/`lessons`/`outbox`（继续 JSON，接受跨存储多步、无单事务）；其中 v2.json 在 sqlite 模式下由 `ticket_mirror.pendingV2` 持久非 ticket 最新值后统一镜像，不单独形成第二权威。
 - 不迁 transcript/reflections/memory/attachments/profile。
 - 不自动 fallback：DB 缺失或损坏时 `storage=sqlite` 直接报错，回滚是显式运维动作。

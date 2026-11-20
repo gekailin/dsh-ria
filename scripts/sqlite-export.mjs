@@ -13,7 +13,7 @@ export function exportTickets({ stateDir, dbPath = join(stateDir, 'ria.sqlite') 
     const adapter = new SqliteTicketAdapter(db)
     const read = (name, fallback) => existsSync(join(stateDir, name)) ? JSON.parse(readFileSync(join(stateDir, name), 'utf8')) : fallback
     const ria = read('ria.json', { schemaVersion: 5, version: 5 })
-    const v2 = read('v2.json', {})
+    const state = read('state.json', {})
     // Offline only: disk is the source for non-ticket domains, never tickets
     // or metadata. One read transaction pins DB rows/history/meta/archives.
     db.exec('BEGIN')
@@ -24,13 +24,13 @@ export function exportTickets({ stateDir, dbPath = join(stateDir, 'ria.sqlite') 
       const dirty = mirror.dirty === true || (mirror.exportedGeneration ?? -1) < (mirror.generation ?? 0)
       return buildMirrorSnapshot({ records: adapter.records(), counts: adapter.counts(),
         ria: { ...ria, ...(dirty ? mirror.pendingRia : null) },
-        v2: { ...v2, ...(dirty ? mirror.pendingV2 : null) }, generation: mirror.generation || 0 })
+        state: { ...state, ...(dirty ? mirror.pendingState : null) }, generation: mirror.generation || 0 })
     } finally { db.exec('ROLLBACK') }
   } finally { db.close() }
 }
 
 /**
- * One-command rollback: rebuild ria.json / v2.json / tickets.log.jsonl from the
+ * One-command rollback: rebuild ria.json / state.json / tickets.log.jsonl from the
  * DB and set storage=json. The DB file is left in place for a later retry.
  */
 export function writeExport({ stateDir, dbPath = join(stateDir, 'ria.sqlite'), now = Date.now() }) {
@@ -42,7 +42,7 @@ export function writeExport({ stateDir, dbPath = join(stateDir, 'ria.sqlite'), n
     storage: 'json',
     rolledBackAt: now,
     counts: exported.counts,
-    files: ['ria.json', 'v2.json', TICKET_LOG],
+    files: ['ria.json', 'state.json', TICKET_LOG],
     next: 'Restart the service (or unset DSH_RIA_STORAGE) so storage=json takes effect; the DB file is kept for retry.',
   }
 }

@@ -26,7 +26,7 @@ try {
   const hot = [ticket('t1'), ticket('t2', { status: 'working', waitingOn: 'worker' })]
   const archived = ticket('t3', { status: 'done', closedAt: 200, resolution: { summary: 'done' } })
   writeFileSync(join(dir, 'ria.json'), JSON.stringify({ schemaVersion: 5, tickets: hot, settings: { keep: true } }))
-  writeFileSync(join(dir, 'v2.json'), JSON.stringify({ tickets: { t1: { ticketId: 't1', phase: 'advisor' } } }))
+  writeFileSync(join(dir, 'state.json'), JSON.stringify({ tickets: { t1: { ticketId: 't1', phase: 'advisor' } } }))
   writeFileSync(join(dir, 'tickets.log.jsonl'), JSON.stringify({ ticket: archived, closedAt: 200 }) + '\n')
   seedSqliteFromState({ stateDir: dir })
 

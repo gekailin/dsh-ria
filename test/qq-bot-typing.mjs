@@ -86,7 +86,7 @@ function inbound(scope = 'c2c', targetId = 'openid-1', messageId = 'qq-message-1
     await waitFor(() => requests.length === 1, 'typing start')
     assert.equal(requests[0].token, 'token-1')
     assert.equal(requests[0].method, 'POST')
-    assert.equal(requests[0].path, '/v2/users/openid-1/messages')
+    assert.equal(requests[0].path, '/state/users/openid-1/messages')
     assert.equal(requests[0].body.msg_type, 6)
     assert.deepEqual(requests[0].body.input_notify, { input_type: 1, input_second: 1 })
     assert.equal(requests[0].body.msg_id, 'qq-message-1')

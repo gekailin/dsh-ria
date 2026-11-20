@@ -19,7 +19,7 @@ const meta = { ticketId: ticket.ticketId, scope: 'global', phase: 'advisor', pro
 const archived = { ...ticket, ticketId: 'ticket_archive', status: 'done', closedAt: 200, resolution: { summary: 'done' } }
 try {
   writeFileSync(join(stateDir, 'ria.json'), JSON.stringify({ schemaVersion: 5, tickets: [ticket], settings: { keep: true }, grants: ['leave-json'] }))
-  writeFileSync(join(stateDir, 'v2.json'), JSON.stringify({ tickets: { [ticket.ticketId]: meta }, reports: ['leave-json'], workOrders: { keep: true } }))
+  writeFileSync(join(stateDir, 'state.json'), JSON.stringify({ tickets: { [ticket.ticketId]: meta }, reports: ['leave-json'], workOrders: { keep: true } }))
   const archive = { ticket: archived, ticketId: archived.ticketId, closedAt: archived.closedAt, schema: 1 }
   writeFileSync(join(stateDir, 'tickets.log.jsonl'), JSON.stringify(archive) + '\n')
   writeFileSync(join(stateDir, 'tickets-2026-11.jsonl'), JSON.stringify(archive) + '\n')
@@ -29,9 +29,9 @@ try {
   assert.deepEqual(seeded.counts, { tickets: 2, history: 2, hot: 1, archived: 1, meta: 1 })
   const exported = exportTickets({ stateDir })
   assert.deepEqual(exported.ria.tickets, [ticket])
-  assert.deepEqual(exported.v2.tickets[ticket.ticketId], meta)
+  assert.deepEqual(exported.state.tickets[ticket.ticketId], meta)
   assert.deepEqual(exported.ria.settings, { keep: true })
-  assert.deepEqual(exported.v2.reports, ['leave-json'])
+  assert.deepEqual(exported.state.reports, ['leave-json'])
   assert.deepEqual(exported.archives, [archive])
   assert.equal(readFileSync(join(stateDir, 'ria.json'), 'utf8'), before)
 

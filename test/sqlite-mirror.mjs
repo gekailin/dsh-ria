@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os'
 import { join, basename } from 'node:path'
 import { RiaStore } from '../lib/index.js'
-import { V2Store } from '../lib/store/store.mjs'
+import { StateStore } from '../lib/store/store.mjs'
 import { StateWriter } from '../lib/state/writer.mjs'
 import { TicketRepository } from '../lib/state/tickets-repository.mjs'
 import { openDatabase, transaction } from '../lib/state/sqlite/db.mjs'
@@ -54,7 +54,7 @@ function setup() {
   db.close()
   writeFileSync(join(dir, 'ria.json'), JSON.stringify({ schemaVersion: 5, version: 5,
     tickets: [{ ticketId: 'json-only', status: 'open', goal: 'stale' }], settings: { blockDirectUserMessages: true } }))
-  writeFileSync(join(dir, 'v2.json'), JSON.stringify({ tickets: {
+  writeFileSync(join(dir, 'state.json'), JSON.stringify({ tickets: {
     first: { scope: 'stale-json', attachments: ['stale'], metaRevision: 99999, updatedAt: 9999999999999 },
     absent: { scope: 'must-not-import' },
   }, reports: [], workers: {} }))
@@ -66,8 +66,8 @@ function setup() {
   let repository
   const writer = new StateWriter({ transaction: task => repository.transaction(task) })
   repository = new TicketRepository(store, writer, { transaction: task => transaction(runtime.db, task) })
-  const v2 = new V2Store(dir)
-  repository.attachV2(v2)
+  const state = new StateStore(dir)
+  repository.attachState(state)
   runtime.exportMirror = (snapshot, guard) => writeMirrorSnapshot({ stateDir: dir, snapshot, ...guard })
   runtime.scheduleMirror()
   const reader = openDatabase(dbPath, { readOnly: true })
@@ -79,7 +79,7 @@ function setup() {
     reader.close()
     rmSync(dir, { recursive: true, force: true })
   }
-  return { dir, runtime, store, v2, repository, clock, logs, external, reader, read, dbState, cleanup }
+  return { dir, runtime, store, state, repository, clock, logs, external, reader, read, dbState, cleanup }
 }
 
 // DB ticket meta replaces stale JSON even when its timestamp/version looks newer.
@@ -87,14 +87,14 @@ function setup() {
 {
   const f = setup()
   try {
-    const { runtime, store, v2, repository, external } = f
-    assert.equal(v2.ticketMeta('first').scope, 'global')
-    assert.deepEqual(v2.ticketMeta('first').attachments, ['db'])
-    assert.equal(v2.data.tickets.absent, undefined)
+    const { runtime, store, state, repository, external } = f
+    assert.equal(state.ticketMeta('first').scope, 'global')
+    assert.deepEqual(state.ticketMeta('first').attachments, ['db'])
+    assert.equal(state.data.tickets.absent, undefined)
     assert.equal(store.ticket('json-only'), undefined)
-    const liveMeta = v2.ticketMeta('first')
+    const liveMeta = state.ticketMeta('first')
     const liveAttachments = liveMeta.attachments
-    const live = v2.data
+    const live = state.data
     const before = structuredClone(live)
     const beforeTickets = structuredClone(store.data)
     const beforeMirror = f.dbState()
@@ -105,47 +105,47 @@ function setup() {
       assert.deepEqual(store.runtime.storeSlot.data, beforeTickets)
       throw new Error('meta SQL failed')
     }
-    assert.throws(() => v2.setTicketMeta('first', { scope: 'never-publish', attachments: ['dirty'] }), /meta SQL failed/)
+    assert.throws(() => state.setTicketMeta('first', { scope: 'never-publish', attachments: ['dirty'] }), /meta SQL failed/)
     runtime.adapter.save = save
-    assert.strictEqual(v2.ticketMeta('first'), liveMeta)
+    assert.strictEqual(state.ticketMeta('first'), liveMeta)
     assert.strictEqual(liveMeta.attachments, liveAttachments)
-    assert.deepEqual(v2.data, before)
+    assert.deepEqual(state.data, before)
     assert.deepEqual(external.record('first').meta, liveMeta)
     assert.deepEqual(f.dbState(), beforeMirror)
     assert.deepEqual([...runtime.metaPersisted], beforeSignatures)
 
     await assert.rejects(repository.run('compound-meta-rollback', () => {
       store.noteTicket('first', { reason: 'rollback all domains' })
-      v2.setTicketMeta('first', { projectId: 'not-committed' })
-      v2.addReport({ reportId: 'report-dirty', ticketId: 'first', summary: 'must roll back' })
-      v2.addWorker('worker-dirty')
+      state.setTicketMeta('first', { projectId: 'not-committed' })
+      state.addReport({ reportId: 'report-dirty', ticketId: 'first', summary: 'must roll back' })
+      state.addWorker('worker-dirty')
       throw new Error('compound aborted')
     }), /compound aborted/)
     assert.deepEqual(store.data, beforeTickets)
-    assert.deepEqual(v2.data, before)
+    assert.deepEqual(state.data, before)
     assert.deepEqual(f.dbState(), beforeMirror)
 
-    const next = v2.setTicketMeta('first', { scope: 'project', projectId: 'new', attachments: ['new'] }, { expectedRevision: 3 })
+    const next = state.setTicketMeta('first', { scope: 'project', projectId: 'new', attachments: ['new'] }, { expectedRevision: 3 })
     assert.strictEqual(next, liveMeta)
     assert.strictEqual(next.attachments, liveAttachments)
     assert.equal(next.metaRevision, 4)
     assert.ok(next.updatedAt > 123)
     assert.deepEqual(external.record('first').meta, next)
-    const committed = structuredClone(v2.data)
-    assert.throws(() => v2.setTicketMeta('first', { scope: 'stale-request' }, { expectedRevision: 3 }), { code: 'stale_revision' })
-    assert.deepEqual(v2.data, committed)
+    const committed = structuredClone(state.data)
+    assert.throws(() => state.setTicketMeta('first', { scope: 'stale-request' }, { expectedRevision: 3 }), { code: 'stale_revision' })
+    assert.deepEqual(state.data, committed)
 
-    repository.runSync('draft-meta', () => { v2.ticketMeta('first').projectId = 'latest draft' })
-    assert.equal(v2.ticketMeta('first').metaRevision, 5)
+    repository.runSync('draft-meta', () => { state.ticketMeta('first').projectId = 'latest draft' })
+    assert.equal(state.ticketMeta('first').metaRevision, 5)
     assert.equal(external.record('first').meta.projectId, 'latest draft')
     repository.runSync('new-ticket-and-meta', () => {
       const ticket = store.addTicket({ goal: 'new ticket' })
-      v2.setTicketMeta(ticket.ticketId, { scope: 'project', attachments: ['same-commit'] })
+      state.setTicketMeta(ticket.ticketId, { scope: 'project', attachments: ['same-commit'] })
     })
     assert.ok(external.records().some(record => record.meta?.attachments?.includes('same-commit')))
 
     assert.equal(runtime.flush(), true)
-    assert.deepEqual(f.read('v2.json').tickets.first, external.record('first').meta)
+    assert.deepEqual(f.read('state.json').tickets.first, external.record('first').meta)
     assert.deepEqual(f.read('ria.json').tickets, runtime.hotTickets())
     assert.equal(runtime.dirty, false)
     assert.equal(f.dbState().dirty, false)
@@ -157,11 +157,11 @@ function setup() {
 {
   const f = setup()
   try {
-    const { runtime, clock, v2, store } = f
+    const { runtime, clock, state, store } = f
     store.setSettings({ blockDirectUserMessages: false })
-    v2.addReport({ reportId: 'report-new', ticketId: 'first', summary: 'keep non-ticket fields' })
-    v2.setTicketMeta('first', { attachments: ['latest'] })
-    const previous = readFileSync(join(f.dir, 'v2.json'), 'utf8')
+    state.addReport({ reportId: 'report-new', ticketId: 'first', summary: 'keep non-ticket fields' })
+    state.setTicketMeta('first', { attachments: ['latest'] })
+    const previous = readFileSync(join(f.dir, 'state.json'), 'utf8')
     let calls = 0
     runtime.exportMirror = (snapshot, guard) => {
       if (++calls === 1) throw new Error('export once failed')
@@ -173,16 +173,16 @@ function setup() {
     assert.match(runtime.stats().lastError.message, /export once failed/)
     assert.equal(runtime.stats().failures, 1)
     assert.ok(f.logs.some(item => item.level === 'warn' && item.message.includes('remains dirty')))
-    assert.equal(readFileSync(join(f.dir, 'v2.json'), 'utf8'), previous)
-    assert.equal(f.dbState().pendingV2.reports.at(-1).reportId, 'report-new')
+    assert.equal(readFileSync(join(f.dir, 'state.json'), 'utf8'), previous)
+    assert.equal(f.dbState().pendingState.reports.at(-1).reportId, 'report-new')
     assert.equal(f.dbState().pendingRia.settings.blockDirectUserMessages, false)
     clock.tick()
     assert.equal(calls, 2)
     assert.equal(runtime.dirty, false)
     assert.equal(f.dbState().exportedGeneration, runtime.generation)
     assert.equal(runtime.stats().lastError, null)
-    assert.deepEqual(f.read('v2.json').tickets.first.attachments, ['latest'])
-    assert.equal(f.read('v2.json').reports.at(-1).reportId, 'report-new')
+    assert.deepEqual(f.read('state.json').tickets.first.attachments, ['latest'])
+    assert.equal(f.read('state.json').reports.at(-1).reportId, 'report-new')
     assert.equal(f.read('ria.json').settings.blockDirectUserMessages, false)
   } finally { await f.cleanup() }
 }
@@ -192,18 +192,18 @@ function setup() {
 {
   const f = setup()
   try {
-    const { runtime, v2, store } = f
+    const { runtime, state, store } = f
     runtime.flush()
-    const before = readFileSync(join(f.dir, 'v2.json'), 'utf8')
-    v2.setTicketMeta('first', { attachments: ['old-inflight'] })
+    const before = readFileSync(join(f.dir, 'state.json'), 'utf8')
+    state.setTicketMeta('first', { attachments: ['old-inflight'] })
     let changed = false
     runtime.exportMirror = (snapshot, guard) => writeMirrorSnapshot({ stateDir: f.dir, snapshot, ...guard,
       write(file, text, options) {
         writeAtomic(file, text, { ...options, beforeRename() {
           if (!changed) {
             changed = true
-            v2.setTicketMeta('first', { attachments: ['newer-write'] })
-            v2.addReport({ reportId: 'during-export', ticketId: 'first', summary: 'new report' })
+            state.setTicketMeta('first', { attachments: ['newer-write'] })
+            state.addReport({ reportId: 'during-export', ticketId: 'first', summary: 'new report' })
             store.noteTicket('first', { reason: 'during-export' })
           }
           options.beforeRename()
@@ -211,14 +211,14 @@ function setup() {
       },
     })
     assert.throws(() => runtime.flush(), { code: 'mirror_superseded' })
-    assert.equal(readFileSync(join(f.dir, 'v2.json'), 'utf8'), before)
+    assert.equal(readFileSync(join(f.dir, 'state.json'), 'utf8'), before)
     assert.equal(runtime.dirty, true)
     assert.equal(readdirSync(f.dir).some(name => name.endsWith('.tmp')), false)
     runtime.exportMirror = (snapshot, guard) => writeMirrorSnapshot({ stateDir: f.dir, snapshot, ...guard })
     assert.equal(runtime.flush(), true)
-    assert.deepEqual(f.read('v2.json').tickets.first, f.external.record('first').meta)
-    assert.deepEqual(f.read('v2.json').tickets.first.attachments, ['newer-write'])
-    assert.equal(f.read('v2.json').reports.at(-1).reportId, 'during-export')
+    assert.deepEqual(f.read('state.json').tickets.first, f.external.record('first').meta)
+    assert.deepEqual(f.read('state.json').tickets.first.attachments, ['newer-write'])
+    assert.equal(f.read('state.json').reports.at(-1).reportId, 'during-export')
     assert.deepEqual(f.read('ria.json').tickets, runtime.hotTickets())
   } finally { await f.cleanup() }
 }
@@ -237,7 +237,7 @@ function setup() {
     })
     const pending = f.runtime.flush()
     assert.strictEqual(f.runtime.flush(), pending)
-    f.v2.setTicketMeta('second', { projectId: 'concurrent' })
+    f.state.setTicketMeta('second', { projectId: 'concurrent' })
     release()
     await assert.rejects(pending, { code: 'mirror_superseded' })
     assert.equal(f.runtime.dirty, true)
@@ -245,7 +245,7 @@ function setup() {
     assert.equal(f.runtime.flushing, false)
     f.runtime.exportMirror = (snapshot, guard) => writeMirrorSnapshot({ stateDir: f.dir, snapshot, ...guard })
     assert.equal(f.runtime.flush(), true)
-    assert.equal(f.read('v2.json').tickets.second.projectId, 'concurrent')
+    assert.equal(f.read('state.json').tickets.second.projectId, 'concurrent')
   } finally { await f.cleanup() }
 }
 
@@ -255,12 +255,12 @@ function setup() {
 {
   const f = setup()
   try {
-    const { runtime, store, v2 } = f
+    const { runtime, store, state } = f
     const archived = store.archiveClosedTickets()
     assert.ok(archived.archived > 0)
     const record = f.external.records().find(item => item.archivedAt !== null)
     assert.ok(record.archiveRecords.length)
-    v2.setTicketMeta(record.ticket.ticketId, { projectId: 'archived-meta', attachments: ['archived-new'] })
+    state.setTicketMeta(record.ticket.ticketId, { projectId: 'archived-meta', attachments: ['archived-new'] })
     let failed = false
     runtime.exportMirror = (snapshot, guard) => writeMirrorSnapshot({ stateDir: f.dir, snapshot, ...guard,
       write(file, text, options) {
@@ -272,13 +272,13 @@ function setup() {
     assert.equal(runtime.dirty, true)
     const offline = exportTickets({ stateDir: f.dir })
     assert.ok(offline.archives.some(item => item.ticket.ticketId === record.ticket.ticketId))
-    assert.equal(offline.v2.tickets[record.ticket.ticketId].projectId, 'archived-meta')
+    assert.equal(offline.state.tickets[record.ticket.ticketId].projectId, 'archived-meta')
     runtime.exportMirror = (snapshot, guard) => writeMirrorSnapshot({ stateDir: f.dir, snapshot, ...guard })
     assert.equal(runtime.flush(), true)
     const archiveLines = readFileSync(join(f.dir, 'tickets.log.jsonl'), 'utf8').trim().split('\n').map(JSON.parse)
     assert.ok(archiveLines.some(item => item.ticket.ticketId === record.ticket.ticketId))
-    assert.deepEqual(f.read('v2.json').tickets[record.ticket.ticketId], f.external.record(record.ticket.ticketId).meta)
-    assert.equal(f.read('ria.json').ticketMirror.generation, f.read('v2.json').ticketMirror.generation)
+    assert.deepEqual(f.read('state.json').tickets[record.ticket.ticketId], f.external.record(record.ticket.ticketId).meta)
+    assert.equal(f.read('ria.json').ticketMirror.generation, f.read('state.json').ticketMirror.generation)
   } finally { await f.cleanup() }
 }
 
@@ -288,11 +288,11 @@ function setup() {
   const f = setup()
   let runtime2
   try {
-    const { runtime, store, v2 } = f
+    const { runtime, store, state } = f
     runtime.exportMirror = () => { throw new Error('crash before export') }
     store.setSettings({ blockDirectUserMessages: false })
-    v2.addReport({ reportId: 'report-reopen', ticketId: 'first', summary: 'reopen payload' })
-    v2.setTicketMeta('first', { attachments: ['pending-reopen'] })
+    state.addReport({ reportId: 'report-reopen', ticketId: 'first', summary: 'reopen payload' })
+    state.setTicketMeta('first', { attachments: ['pending-reopen'] })
     assert.throws(() => runtime.flush(), /crash before export/)
     await runtime.close()
 
@@ -302,8 +302,8 @@ function setup() {
     let repository2
     const writer2 = new StateWriter({ transaction: task => repository2.transaction(task) })
     repository2 = new TicketRepository(store2, writer2, { transaction: task => transaction(runtime2.db, task) })
-    const v2b = new V2Store(f.dir)
-    repository2.attachV2(v2b)
+    const v2b = new StateStore(f.dir)
+    repository2.attachState(v2b)
     assert.equal(runtime2.dirty, true)
     assert.equal(runtime2.stats().exportedGeneration < runtime2.generation, true)
     assert.equal(store2.data.settings.blockDirectUserMessages, false)
@@ -312,9 +312,9 @@ function setup() {
     runtime2.exportMirror = (snapshot, guard) => writeMirrorSnapshot({ stateDir: f.dir, snapshot, ...guard })
     assert.equal(runtime2.flush(), true)
     assert.equal(runtime2.dirty, false)
-    assert.equal(f.read('v2.json').reports.at(-1).reportId, 'report-reopen')
+    assert.equal(f.read('state.json').reports.at(-1).reportId, 'report-reopen')
     assert.equal(f.read('ria.json').settings.blockDirectUserMessages, false)
-    assert.deepEqual(f.read('v2.json').tickets.first, f.external.record('first').meta)
+    assert.deepEqual(f.read('state.json').tickets.first, f.external.record('first').meta)
   } finally {
     if (runtime2) await runtime2.close()
     f.reader.close()
@@ -327,7 +327,7 @@ function setup() {
 {
   const f = setup()
   try {
-    const { runtime, clock, v2 } = f
+    const { runtime, clock, state } = f
     runtime.flush()
     let calls = 0
     runtime.exportMirror = async (snapshot, guard) => {
@@ -335,7 +335,7 @@ function setup() {
       if (calls === 1) throw new Error('async rejected')
       return writeMirrorSnapshot({ stateDir: f.dir, snapshot, ...guard })
     }
-    v2.setTicketMeta('first', { attachments: ['async-retry'] })
+    state.setTicketMeta('first', { attachments: ['async-retry'] })
     clock.tick()
     const inflight = runtime.inFlight
     assert.ok(inflight)
@@ -346,7 +346,7 @@ function setup() {
     if (runtime.inFlight) await runtime.inFlight
     assert.equal(calls, 2)
     assert.equal(runtime.dirty, false)
-    assert.deepEqual(f.read('v2.json').tickets.first.attachments, ['async-retry'])
+    assert.deepEqual(f.read('state.json').tickets.first.attachments, ['async-retry'])
   } finally { await f.cleanup() }
 }
 
@@ -355,12 +355,12 @@ function setup() {
 {
   const f = setup()
   try {
-    const { runtime, repository, v2 } = f
+    const { runtime, repository, state } = f
     runtime.flush()
-    repository.runSync('delete-meta', () => { delete v2.data.tickets.second })
+    repository.runSync('delete-meta', () => { delete state.data.tickets.second })
     assert.equal(f.external.record('second').meta, null)
     assert.equal(runtime.flush(), true)
-    assert.equal(f.read('v2.json').tickets.second, undefined)
+    assert.equal(f.read('state.json').tickets.second, undefined)
     assert.equal(f.read('ria.json').tickets.find(item => item.ticketId === 'second').ticketId, 'second')
   } finally { await f.cleanup() }
 }
@@ -373,14 +373,14 @@ function setup() {
     assert.throws(() => f.repository.runSync('create-rollback', () => {
       const created = f.store.addTicket({ status: 'intake', waitingOn: 'ria', executor: null, goal: 'rollback' })
       id = created.ticketId
-      f.v2.setTicketMeta(id, { scope: 'global', workerId: 'w1', projectCwd: '/x' })
+      f.state.setTicketMeta(id, { scope: 'global', workerId: 'w1', projectCwd: '/x' })
       throw new Error('force rollback')
     }), /force rollback/)
     assert.equal(f.external.record(id), undefined, 'ticket and meta roll back together')
 
     const created = f.repository.runSync('create-with-meta', () => {
       const ticket = f.store.addTicket({ status: 'intake', waitingOn: 'ria', executor: null, goal: 'with meta' })
-      f.v2.setTicketMeta(ticket.ticketId, { scope: 'global', workerId: 'w2', projectCwd: '/repo' })
+      f.state.setTicketMeta(ticket.ticketId, { scope: 'global', workerId: 'w2', projectCwd: '/repo' })
       return ticket
     })
     const record = f.external.record(created.ticketId)

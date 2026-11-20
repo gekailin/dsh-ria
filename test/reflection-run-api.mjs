@@ -21,9 +21,9 @@ try {
     tickets: () => tickets,
     ticket: id => tickets.find(ticket => ticket.ticketId === id),
   }
-  // Mirror the real shape: RiaService.v2 is the V2Controller, and the
-  // metadata store is controller.v2. A flat stub previously hid the 503.
-  service.v2 = {
+  // Mirror the real shape: RiaService.state is the Controller, and the
+  // metadata store is controller.state. A flat stub previously hid the 503.
+  service.controller = {
     requestTicket: async () => {
       creates += 1
       if (!nextStatus.ok) return nextStatus
@@ -32,7 +32,7 @@ try {
       meta[ticket.ticketId] = { ticketId: ticket.ticketId, mode: 'reflection' }
       return { ok: true, ticketId: ticket.ticketId, status: 'open' }
     },
-    v2: {
+    state: {
       ticketMeta: id => meta[id] || { ticketId: id },
       setTicketMeta: (id, patch) => Object.assign(meta[id] || (meta[id] = { ticketId: id }), patch),
     },

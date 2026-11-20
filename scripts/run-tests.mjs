@@ -2,7 +2,7 @@
 // Auto-discover and run every test/*.mjs file.
 //
 // The old package.json command was a hand-maintained chain: a new test could be
-// written and silently never run (v2-resume-inbox.mjs was missing). This runner
+// written and silently never run (state-resume-inbox.mjs was missing). This runner
 // scans the directory, runs each file as its own Node process, and fails the
 // whole run if any test fails.
 

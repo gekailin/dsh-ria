@@ -635,29 +635,29 @@ export async function createFixture(options = {}) {
   const createAdvisorSession = async (scope = 'global') => {
     const sessionId = 'session-advisor-' + (++advisorSeq)
     const cwd = join(stateDir, 'advisors', String(advisorSeq))
-    service.v2.v2.setAdvisor(scope, sessionId, { cwd })
-    const created = await service.v2.createSession({ sessionId, cwd, agentPreset: 'ptc', title: roleSessionTitle('advisor') })
-    service.v2.install(created.agent, 'advisor')
+    service.controller.state.setAdvisor(scope, sessionId, { cwd })
+    const created = await service.controller.createSession({ sessionId, cwd, agentPreset: 'ptc', title: roleSessionTitle('advisor') })
+    service.controller.install(created.agent, 'advisor')
     return sessionId
   }
   const advisorSession = async (scope = 'global') => {
-    const existing = service.v2.v2.advisor(scope)
+    const existing = service.controller.state.advisor(scope)
     if (existing && existing.sessionId) return String(existing.sessionId)
     return await createAdvisorSession(scope)
   }
   if (options.advisorPlan !== 'stateless') {
-    service.v2.createAdvisorForTicket = async (ticket, meta = {}, request = null, extra = '') => {
+    service.controller.createAdvisorForTicket = async (ticket, meta = {}, request = null, extra = '') => {
       const ticketId = String(ticket.ticketId)
       const sessionId = await createAdvisorSession('ticket:' + ticketId)
-      service.v2.v2.setAdvisor('global', sessionId, { cwd: join(stateDir, 'advisors') })
-      service.v2.v2.setTicketMeta(ticketId, { advisorSessionId: sessionId })
+      service.controller.state.setAdvisor('global', sessionId, { cwd: join(stateDir, 'advisors') })
+      service.controller.state.setTicketMeta(ticketId, { advisorSessionId: sessionId })
       const lines = [ticketBrief(ticket, request, meta)]
       if (extra) lines.push('', extra)
       let snapshot = { snapshot: '', degraded: false, files: [] }
-      try { snapshot = service.v2.cognition.retrieve({ workspace: meta.projectCwd, goal: ticket.goal }) } catch { snapshot = { snapshot: '', degraded: true, files: [] } }
+      try { snapshot = service.controller.cognition.retrieve({ workspace: meta.projectCwd, goal: ticket.goal }) } catch { snapshot = { snapshot: '', degraded: true, files: [] } }
       lines.push('', '[认知快照]', snapshot.snapshot || '（无可用认知）')
       if (snapshot.degraded) lines.push('', '[认知状态] degraded：认知检索失败，只按最小原则执行；请在 WorkOrder 中显式标注 cognition_status: degraded。')
-      await service.v2.promptSession(sessionId, lines.join('\n'))
+      await service.controller.promptSession(sessionId, lines.join('\n'))
       return { sessionId, created: true, preset: 'ptc', degraded: Boolean(snapshot.degraded) }
     }
   }

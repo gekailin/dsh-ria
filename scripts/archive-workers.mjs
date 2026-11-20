@@ -95,7 +95,7 @@ if (sessionIds.length) {
   // Ria's own HTTP state projection lists every bound worker with its seq.
   const response = await fetch(base + '/plugins/dsh-ria/api/state', { headers: { cookie } }).catch(() => null)
   const state = response && response.ok ? await response.json() : null
-  const workers = (state && state.v2 && state.v2.workers) || []
+  const workers = (state && state.state && state.state.workers) || []
   for (const seq of seqs) {
     const row = workers.find(item => Number(item.seq) === seq)
     if (!row) {

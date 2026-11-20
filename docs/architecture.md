@@ -2,7 +2,7 @@
 
 > 一页读懂当前系统：边界、对象、流程与可靠性。用户用法见 [README.md](../README.md)。
 >
-> **v2 提示：** 插件默认运行 v2（Chat / Advisor / Router / Worker）。本文描述的是 legacy manager（`{ v2: false }`）；v2 以代码与测试为准。
+> **架构提示：** 插件只运行当前架构（Chat / Advisor / Router / Worker）。旧版单会话 manager 已移除，代码与测试为准。
 
 ## 目录
 

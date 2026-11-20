@@ -79,16 +79,16 @@ const assistant = text => ({ type: 'assistant/message', data: { message: { conte
 
 // ③ Direct target reply and Ria report both reach the channel, distinguishable.
 {
-  const fixture = await createFixture({ v2Default: true })
+  const fixture = await createFixture({ stateDefault: true })
   const calls = []
   fixture.service.wechatClaw.forwardAssistant = (text, event, options) => {
     calls.push({ text })
     if (options && typeof options.onSettled === 'function') options.onSettled({ reason: 'delivered' })
   }
   try {
-    const chatbot = fixture.service.v2.v2.chatSessionId
-    fixture.service.v2.setDirect({ sessionId: 'session-independent', title: 'Alpha' })
-    fixture.service.v2.onSessionEvent(
+    const chatbot = fixture.service.controller.state.chatSessionId
+    fixture.service.controller.setDirect({ sessionId: 'session-independent', title: 'Alpha' })
+    fixture.service.controller.onSessionEvent(
       { header: { id: 'session-independent' } },
       assistant('直通回复'),
     )
@@ -106,19 +106,19 @@ const assistant = text => ({ type: 'assistant/message', data: { message: { conte
 
 // ④ Bounded retry + visible failure + dedupe + no durable copy.
 {
-  const fixture = await createFixture({ v2Default: true })
-  const v2 = fixture.service.v2
-  v2.directBackoffMs = [5, 5, 5]
-  v2.directRetryWindowMs = 2000
+  const fixture = await createFixture({ stateDefault: true })
+  const state = fixture.service.controller
+  state.directBackoffMs = [5, 5, 5]
+  state.directRetryWindowMs = 2000
   const sends = []
   fixture.service.wechatClaw.forwardAssistant = (text, event, options) => {
     sends.push({ text, seq: event && event.seq })
     if (options && typeof options.onSettled === 'function') options.onSettled({ reason: 'send_failed', error: 'boom' })
   }
   try {
-    v2.setDirect({ sessionId: 'session-x', title: 'X' })
-    v2.forwardDirectReply('A', { seq: 11 })
-    v2.forwardDirectReply('A', { seq: 11 })
+    state.setDirect({ sessionId: 'session-x', title: 'X' })
+    state.forwardDirectReply('A', { seq: 11 })
+    state.forwardDirectReply('A', { seq: 11 })
     assert.equal(sends.filter(item => item.text === '【直通·X】\nA').length, 1, 'the same event is queued once')
 
     await waitFor(() => sends.some(item => item.text.includes('直通消息发送失败')), 'failure notice', 5000)
@@ -126,7 +126,7 @@ const assistant = text => ({ type: 'assistant/message', data: { message: { conte
     assert.equal(attempts, 4, 'initial send plus three bounded retries')
     const notice = sends.find(item => item.text.includes('直通消息发送失败'))
     assert.ok(notice.text.includes('已重试 3 次'), notice.text)
-    assert.equal(v2.directSendQueue.size, 0)
+    assert.equal(state.directSendQueue.size, 0)
     // Live direct chatter never enters the durable outbox.
     assert.equal(fixture.service.outbox.all().filter(entry => entry.kind === WECHAT_ASSISTANT_NOTE_KIND).length, 0)
 
@@ -136,8 +136,8 @@ const assistant = text => ({ type: 'assistant/message', data: { message: { conte
       delivered.push(text)
       if (options && typeof options.onSettled === 'function') options.onSettled({ reason: 'delivered' })
     }
-    v2.forwardDirectReply('B', { seq: 12 })
-    v2.forwardDirectReply('B', { seq: 12 })
+    state.forwardDirectReply('B', { seq: 12 })
+    state.forwardDirectReply('B', { seq: 12 })
     assert.equal(delivered.length, 1)
 
     // Reset cancels queued retries: no replay after a reconnect.
@@ -146,10 +146,10 @@ const assistant = text => ({ type: 'assistant/message', data: { message: { conte
       if (options && typeof options.onSettled === 'function') options.onSettled({ reason: 'send_failed' })
     }
     const before = sends.length
-    v2.forwardDirectReply('C', { seq: 13 })
-    assert.equal(v2.directSendQueue.size, 1)
-    v2.resetDirectSendQueue()
-    assert.equal(v2.directSendQueue.size, 0)
+    state.forwardDirectReply('C', { seq: 13 })
+    assert.equal(state.directSendQueue.size, 1)
+    state.resetDirectSendQueue()
+    assert.equal(state.directSendQueue.size, 0)
     await wait(60)
     assert.equal(sends.length, before + 1, 'reset stops further retries')
   } finally {
@@ -159,7 +159,7 @@ const assistant = text => ({ type: 'assistant/message', data: { message: { conte
 
 // ⑤ A long pause folds the assistant backlog to 5 + one summary.
 {
-  const fixture = await createFixture({ v2Default: true })
+  const fixture = await createFixture({ stateDefault: true })
   const service = fixture.service
   service.wechatClaw.peer = { userId: 'user-1', contextToken: 'context-1' }
   service.wechatClaw.lastInboundAt = Date.now()

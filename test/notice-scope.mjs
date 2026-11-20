@@ -13,8 +13,8 @@ const fixture = await createFixture({
 const settle = () => new Promise(resolve => setTimeout(resolve, 20))
 try {
   const controller = fixture.service.controller
-  const chatbot = fixture.service.controller.state.chatSessionId
-  const notices = () => fixture.prompts.filter(item => String(item.sessionId) === String(chatbot)).map(item => String(item.content[0].text))
+  const chat = fixture.service.controller.state.chatSessionId
+  const notices = () => fixture.prompts.filter(item => String(item.sessionId) === String(chat)).map(item => String(item.content[0].text))
   const events = () => {
     try {
       return readFileSync(join(fixture.stateDir, 'router-events.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
@@ -79,7 +79,7 @@ try {
   // Role sessions remain silent with no suppressed event.
   const advisor = await fixture.advisorSession()
   const worker = (await controller.ensureWorker('global')).sessionId
-  for (const id of [chatbot, advisor, worker]) {
+  for (const id of [chat, advisor, worker]) {
     before = notices().length
     const beforeEvents = events().length
     await fixture.emit(

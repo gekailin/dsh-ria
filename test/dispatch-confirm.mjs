@@ -5,14 +5,14 @@ const unconfirmed = service => service.outbox.all().filter(entry => entry.kind =
 
 async function setup() {
   const fixture = await createFixture({ state: true })
-  const chatbot = fixture.service.controller.state.chatSessionId
-  return { fixture, chatbot }
+  const chat = fixture.service.controller.state.chatSessionId
+  return { fixture, chat }
 }
 
-// Dispatch through the real state path (chatbot_request -> ticket_plan ->
+// Dispatch through the real state path (chat_request -> ticket_plan ->
 // ticket_dispatch) so the attempt record is exactly the one production writes.
-async function dispatch(fixture, chatbot, goal = 'ship the thing') {
-  const made = await fixture.callAs(chatbot, 'chatbot_request', { goal })
+async function dispatch(fixture, chat, goal = 'ship the thing') {
+  const made = await fixture.callAs(chat, 'chat_request', { goal })
   assert.equal(made.ok, true)
   const advisor = fixture.service.controller.state.advisor('global').sessionId
   const plan = await fixture.callAs(advisor, 'ticket_plan', { ticketId: made.ticketId, summary: 'do the work' })
@@ -34,9 +34,9 @@ function expire(fixture, ticketId) {
 // letting the legacy hook skip. An expired attempt that really started must
 // never be parked as dispatch_unconfirmed.
 {
-  const { fixture, chatbot } = await setup()
+  const { fixture, chat } = await setup()
   try {
-    const { ticketId, workerId } = await dispatch(fixture, chatbot)
+    const { ticketId, workerId } = await dispatch(fixture, chat)
     const ticket = expire(fixture, ticketId)
     assert.equal(ticket.attempt.confirmedAt, undefined)
     fixture.service.onSessionEvent(
@@ -57,9 +57,9 @@ function expire(fixture, ticketId) {
 // sweep runs. The reconcile scan also treats an existing progress record as
 // one-time evidence, covering a lost confirmation from an older build.
 {
-  const { fixture, chatbot } = await setup()
+  const { fixture, chat } = await setup()
   try {
-    const { ticketId, workerId } = await dispatch(fixture, chatbot)
+    const { ticketId, workerId } = await dispatch(fixture, chat)
     const reported = await fixture.callAs(workerId, 'worker_report', {
       ticketId,
       status: 'progress',
@@ -90,9 +90,9 @@ function expire(fixture, ticketId) {
 // no report, no progress -> blocked(environment) with a readable reason and the
 // durable local alert.
 {
-  const { fixture, chatbot } = await setup()
+  const { fixture, chat } = await setup()
   try {
-    const { ticketId } = await dispatch(fixture, chatbot)
+    const { ticketId } = await dispatch(fixture, chat)
     expire(fixture, ticketId)
     assert.equal(fixture.service.reconcileDispatchConfirmations('test'), 1)
     const ticket = fixture.service.store.ticket(ticketId)

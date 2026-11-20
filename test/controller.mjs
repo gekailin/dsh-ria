@@ -51,13 +51,13 @@ fixture.setRunning('session-busy', true)
 for (const id of ['session-pending-approval', 'session-pending-question', 'session-pending-other']) fixture.setRunning(id, true)
 try {
   const ensured = await fixture.service.ensure()
-  const chatbot = fixture.service.controller.state.chatSessionId
-  assert.equal(ensured.sessionId, chatbot)
+  const chat = fixture.service.controller.state.chatSessionId
+  assert.equal(ensured.sessionId, chat)
   // Dispatch is ticket-only: the direct session talk channel is gone.
-  assert.equal(fixture.visibleTools(chatbot).includes('chatbot_talk'), false)
-  // chatbot_request is work-only. A legacy `mode` argument is ignored rather
+  assert.equal(fixture.visibleTools(chat).includes('chat_talk'), false)
+  // chat_request is work-only. A legacy `mode` argument is ignored rather
   // than rejected, so older prompts keep working.
-  const modeIgnored = await fixture.callAs(chatbot, 'chatbot_request', { goal: 'legacy mode ignored', mode: 'answer' })
+  const modeIgnored = await fixture.callAs(chat, 'chat_request', { goal: 'legacy mode ignored', mode: 'answer' })
   assert.equal(modeIgnored.ok, true, JSON.stringify(modeIgnored))
   assert.equal(modeIgnored.mode, 'work')
   assert.equal(fixture.service.controller.state.ticketMeta(modeIgnored.ticketId).mode, 'work')
@@ -68,21 +68,21 @@ try {
   const historicalView = fixture.service.controller.ticketView(historical)
   assert.equal(historicalView.ticketId, modeIgnored.ticketId)
   assert.equal('mode' in historicalView, false)
-  const historicalStatus = await fixture.callAs(chatbot, 'chatbot_status', { ticketId: modeIgnored.ticketId })
+  const historicalStatus = await fixture.callAs(chat, 'chat_status', { ticketId: modeIgnored.ticketId })
   assert.equal(historicalStatus.found, true)
   assert.equal(historicalStatus.ticket.status, historical.status)
   const historicalBrief = ticketBrief(historical, { goal: historical.goal }, fixture.service.controller.state.ticketMeta(modeIgnored.ticketId))
   assert.match(historicalBrief, /模式: work/)
-  assert.deepEqual(fixture.visibleTools(chatbot).sort(), ['chatbot_co_manage', 'chatbot_direct', 'chatbot_grant', 'chatbot_models', 'chatbot_new_session', 'chatbot_propose', 'chatbot_read', 'chatbot_request', 'chatbot_resume', 'chatbot_send_image', 'chatbot_sessions', 'chatbot_status', 'chatbot_steer', 'chatbot_stop_ticket', 'chatbot_watch', 'chatbot_worker_config'])
+  assert.deepEqual(fixture.visibleTools(chat).sort(), ['chat_co_manage', 'chat_direct', 'chat_grant', 'chat_models', 'chat_new_session', 'chat_propose', 'chat_read', 'chat_request', 'chat_resume', 'chat_send_image', 'chat_sessions', 'chat_status', 'chat_steer', 'chat_stop_ticket', 'chat_watch', 'chat_worker_config'])
   // WeChat Claw resolves its peer session through these two callbacks. In state
-  // they must point at the Chatbot, not at the retired legacy manager.
-  assert.equal(fixture.service.wechatClaw.getRiaId(), chatbot)
-  assert.equal(await fixture.service.wechatClaw.ensureRia(), chatbot)
+  // they must point at the Chat, not at the retired legacy manager.
+  assert.equal(fixture.service.wechatClaw.getRiaId(), chat)
+  assert.equal(await fixture.service.wechatClaw.ensureRia(), chat)
   assert.equal(fixture.service.controller.status().lastError, null)
 
-  // Ordinary independent sessions can be listed and addressed by the Chatbot.
-  // Managed Workers and the Chatbot itself stay out of this channel.
-  const listed = await fixture.callAs(chatbot, 'chatbot_sessions', { query: 'Alpha' })
+  // Ordinary independent sessions can be listed and addressed by the Chat.
+  // Managed Workers and the Chat itself stay out of this channel.
+  const listed = await fixture.callAs(chat, 'chat_sessions', { query: 'Alpha' })
   if (!listed.ok) console.error('LISTED', listed)
   assert.equal(listed.ok, true)
   assert.equal(listed.sessions.length, 2)
@@ -90,15 +90,15 @@ try {
   assert.equal(listed.sessions[0].title, 'Alpha Session')
   assert.equal(listed.sessions[1].sessionId, 'session-dormant')
   assert.equal(listed.sessions[1].title, 'Alpha Dormant')
-  const read = await fixture.callAs(chatbot, 'chatbot_read', { sessionId: 'session-independent', afterSeq: 6 })
+  const read = await fixture.callAs(chat, 'chat_read', { sessionId: 'session-independent', afterSeq: 6 })
   assert.equal(read.ok, true)
   assert.deepEqual(read.messages.map(item => item.text), ['Alpha here, all good.'])
   assert.equal(read.cursor, 7)
 
-  // A session that stopped for a human is not "idle": the Chatbot needs the
+  // A session that stopped for a human is not "idle": the Chat needs the
   // pending input kind to tell the user what it is waiting for.
   {
-    const pending = await fixture.callAs(chatbot, 'chatbot_sessions', { query: 'Pending' })
+    const pending = await fixture.callAs(chat, 'chat_sessions', { query: 'Pending' })
     assert.equal(pending.ok, true)
     const byId = new Map(pending.sessions.map(item => [item.sessionId, item]))
     assert.deepEqual(byId.get('session-pending-approval').pendingInput, ['approval'])
@@ -107,11 +107,11 @@ try {
     assert.equal(byId.get('session-pending-question').running, true)
     assert.deepEqual(byId.get('session-pending-other').pendingInput, ['other'])
     assert.equal(byId.get('session-pending-other').running, true)
-    const idle = await fixture.callAs(chatbot, 'chatbot_sessions', { query: 'Idle Session' })
+    const idle = await fixture.callAs(chat, 'chat_sessions', { query: 'Idle Session' })
     assert.equal(idle.sessions.length, 1)
     assert.equal(idle.sessions[0].running, false)
     assert.deepEqual(idle.sessions[0].pendingInput, [])
-    const readPending = await fixture.callAs(chatbot, 'chatbot_read', { sessionId: 'session-pending-approval' })
+    const readPending = await fixture.callAs(chat, 'chat_read', { sessionId: 'session-pending-approval' })
     assert.equal(readPending.ok, true)
     assert.equal(readPending.running, true)
     assert.deepEqual(readPending.pendingInput, ['approval'])
@@ -121,8 +121,8 @@ try {
 
   // Direct mode is a memory-only WeChat bypass: inbound text is steered into the
   // chosen independent session, and that session's assistant text is forwarded
-  // back with a prefix. Commands are intercepted before Chatbot sees them.
-  const directOn = await fixture.callAs(chatbot, 'chatbot_direct', { action: 'on', sessionId: 'session-independent' })
+  // back with a prefix. Commands are intercepted before Chat sees them.
+  const directOn = await fixture.callAs(chat, 'chat_direct', { action: 'on', sessionId: 'session-independent' })
   assert.equal(directOn.ok, true)
   assert.equal(directOn.active, true)
   assert.equal(fixture.service.controller.status().direct.sessionId, 'session-independent')
@@ -163,7 +163,7 @@ try {
     assert.match(directForwarded.at(-1), /已进入直通模式：Alpha Session/)
     assert.match(directForwarded.at(-1), /切换目标：\/直通 <会话名>/)
     assert.equal(fixture.prompts.length, beforeCommand)
-    const directOff = await fixture.callAs(chatbot, 'chatbot_direct', { action: 'off' })
+    const directOff = await fixture.callAs(chat, 'chat_direct', { action: 'off' })
     assert.equal(directOff.active, false)
   } finally {
     fixture.service.wechatClaw.forwardAssistant = directForward
@@ -194,11 +194,11 @@ try {
     }
   }
 
-  // Inbound phone text reaches the Chatbot through the same prompt path, and a
-  // committed Chatbot reply is what Claw forwards back to the phone.
+  // Inbound phone text reaches the Chat through the same prompt path, and a
+  // committed Chat reply is what Claw forwards back to the phone.
   const beforeInbound = fixture.prompts.length
   await fixture.service.wechatClaw.deliverText('微信 Claw 联调消息')
-  const inbound = fixture.prompts.slice(beforeInbound).find(item => item.sessionId === chatbot)
+  const inbound = fixture.prompts.slice(beforeInbound).find(item => item.sessionId === chat)
   assert.ok(inbound)
   assert.match(inbound.content[0].text, /微信 Claw 联调消息/)
   const forwarded = []
@@ -206,7 +206,7 @@ try {
   fixture.service.wechatClaw.forwardAssistant = text => { forwarded.push(text) }
   try {
     fixture.service.wechatClaw.onSessionEvent(
-      { header: { id: chatbot } },
+      { header: { id: chat } },
       { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: '收到' }] } } },
     )
   } finally {
@@ -214,7 +214,7 @@ try {
   }
   assert.deepEqual(forwarded, ['收到'])
 
-  const created = await fixture.callAs(chatbot, 'chatbot_request', {
+  const created = await fixture.callAs(chat, 'chat_request', {
     goal: 'summarize the release notes',
     acceptance: 'one paragraph with links',
   })
@@ -231,7 +231,7 @@ try {
   assert.match(fixture.prompts.at(-1).content[0].text, /Ticket brief/)
 
   await assert.rejects(
-    fixture.callAs(chatbot, 'ticket_plan', { ticketId: created.ticketId, summary: 'nope' }),
+    fixture.callAs(chat, 'ticket_plan', { ticketId: created.ticketId, summary: 'nope' }),
     /tool not installed for .*: ticket_plan/,
   )
 
@@ -263,13 +263,13 @@ try {
   assert.match(workerMeta.cwd, /workers$/)
   assert.ok(workerMeta.artifactDir.includes('/workers/runs/'))
 
-  // The Chatbot can change any top-level session's permissions on an explicit
+  // The Chat can change any top-level session's permissions on an explicit
   // user request, not just managed Workers. A pure downgrade is permanent: no
   // TTL, and neither ticket close nor a restart undoes it.
-  const initialGrants = await fixture.callAs(chatbot, 'chatbot_grant', { action: 'list' })
+  const initialGrants = await fixture.callAs(chat, 'chat_grant', { action: 'list' })
   assert.equal(initialGrants.ok, true)
   assert.deepEqual(initialGrants.grants, [])
-  const independentGrant = await fixture.callAs(chatbot, 'chatbot_grant', {
+  const independentGrant = await fixture.callAs(chat, 'chat_grant', {
     action: 'set',
     sessionId: 'session-independent',
     sandboxMode: 'read-only',
@@ -280,10 +280,10 @@ try {
   assert.equal(independentGrant.grant.kind, 'permanent')
   assert.equal(independentGrant.grant.permanent, true)
   assert.equal(independentGrant.grant.expiresAt, null)
-  const resetIndependent = await fixture.callAs(chatbot, 'chatbot_grant', { action: 'reset', grantId: independentGrant.grant.grantId })
+  const resetIndependent = await fixture.callAs(chat, 'chat_grant', { action: 'reset', grantId: independentGrant.grant.grantId })
   assert.equal(resetIndependent.ok, true)
 
-  const granted = await fixture.callAs(chatbot, 'chatbot_grant', {
+  const granted = await fixture.callAs(chat, 'chat_grant', {
     action: 'set',
     sessionId: worker,
     ticketId: created.ticketId,
@@ -296,15 +296,15 @@ try {
   assert.equal(granted.grant.ticketId, created.ticketId)
   assert.equal(granted.grant.kind, 'permanent')
   assert.equal(granted.grant.expiresAt, null)
-  const listedGrants = await fixture.callAs(chatbot, 'chatbot_grant', { action: 'list' })
+  const listedGrants = await fixture.callAs(chat, 'chat_grant', { action: 'list' })
   assert.equal(listedGrants.count, 1)
-  const resetGrant = await fixture.callAs(chatbot, 'chatbot_grant', { action: 'reset', grantId: granted.grant.grantId })
+  const resetGrant = await fixture.callAs(chat, 'chat_grant', { action: 'reset', grantId: granted.grant.grantId })
   assert.equal(resetGrant.ok, true)
   assert.equal(resetGrant.restored, true)
-  const afterReset = await fixture.callAs(chatbot, 'chatbot_grant', { action: 'list' })
+  const afterReset = await fixture.callAs(chat, 'chat_grant', { action: 'list' })
   assert.deepEqual(afterReset.grants, [])
 
-  const steer = await fixture.callAs(chatbot, 'chatbot_steer', {
+  const steer = await fixture.callAs(chat, 'chat_steer', {
     ticketId: created.ticketId,
     message: 'keep it under 120 words',
   })
@@ -337,7 +337,7 @@ try {
   assert.equal(blockedReport.ok, true)
   assert.equal(fixture.service.store.ticket(created.ticketId).status, 'blocked')
 
-  const resumed = await fixture.callAs(chatbot, 'chatbot_resume', {
+  const resumed = await fixture.callAs(chat, 'chat_resume', {
     ticketId: created.ticketId,
     message: 'use Markdown',
   })
@@ -353,7 +353,7 @@ try {
 
   // A grant bound to a ticket must not outlive it. The next grant is still
   // active when the Worker reports done, so completion itself must restore it.
-  const doneGrant = await fixture.callAs(chatbot, 'chatbot_grant', {
+  const doneGrant = await fixture.callAs(chat, 'chat_grant', {
     action: 'set',
     sessionId: worker,
     ticketId: created.ticketId,
@@ -373,11 +373,11 @@ try {
   const closed = fixture.service.store.ticket(created.ticketId)
   assert.equal(closed.status, 'done')
   assert.equal(closed.resolution.summary, 'summary written')
-  assert.ok(fixture.prompts.some(item => item.sessionId === chatbot && /已完成/.test(item.content[0].text)))
-  const afterDoneGrants = await fixture.callAs(chatbot, 'chatbot_grant', { action: 'list' })
+  assert.ok(fixture.prompts.some(item => item.sessionId === chat && /已完成/.test(item.content[0].text)))
+  const afterDoneGrants = await fixture.callAs(chat, 'chat_grant', { action: 'list' })
   assert.deepEqual(afterDoneGrants.grants, [])
 
-  const status = await fixture.callAs(chatbot, 'chatbot_status', { ticketId: created.ticketId })
+  const status = await fixture.callAs(chat, 'chat_status', { ticketId: created.ticketId })
   assert.equal(status.ok, true)
   assert.equal(status.ticket.status, 'done')
 
@@ -416,13 +416,13 @@ try {
   // so its sandbox can actually edit the project instead of stateDir/workers.
   const workspace = mkdtempSync(join(tmpdir(), 'ria-state-workspace-'))
   try {
-    const refused = await fixture.callAs(chatbot, 'chatbot_request', {
+    const refused = await fixture.callAs(chat, 'chat_request', {
       goal: 'try to escape',
       workspace: fixture.stateDir,
     })
     assert.equal(refused.ok, false)
     assert.equal(refused.code, 'workspace_overlaps_state')
-    const project = await fixture.callAs(chatbot, 'chatbot_request', {
+    const project = await fixture.callAs(chat, 'chat_request', {
       goal: 'update the project README',
       acceptance: 'the README mentions the new endpoint',
       workspace,
@@ -448,7 +448,7 @@ try {
     rmSync(workspace, { recursive: true, force: true })
   }
 
-  const blockedTicket = await fixture.callAs(chatbot, 'chatbot_request', { goal: 'needs a decision' })
+  const blockedTicket = await fixture.callAs(chat, 'chat_request', { goal: 'needs a decision' })
   const blocked = await fixture.callAs(advisor, 'ticket_block', {
     ticketId: blockedTicket.ticketId,
     reason: 'choose a target format',
@@ -457,7 +457,7 @@ try {
   assert.equal(blocked.ok, true)
   assert.equal(fixture.service.store.ticket(blockedTicket.ticketId).status, 'blocked')
   assert.equal(fixture.service.store.ticket(blockedTicket.ticketId).attention.kind, 'question')
-  const resumedAdvisor = await fixture.callAs(chatbot, 'chatbot_resume', {
+  const resumedAdvisor = await fixture.callAs(chat, 'chat_resume', {
     ticketId: blockedTicket.ticketId,
     message: 'use Markdown',
   })
@@ -490,15 +490,15 @@ try {
   rmSync(independentCwd, { recursive: true, force: true })
 }
 
-// A restart must reuse the same Chatbot, restore role tools, and park work that
+// A restart must reuse the same Chat, restore role tools, and park work that
 // was running when the process stopped instead of silently redispatching it.
 const first = await createFixture({ state: true })
 const stateDir = first.stateDir
 let workingTicketId
 let workerId
 try {
-  const chatbot = first.service.controller.state.chatSessionId
-  const created = await first.callAs(chatbot, 'chatbot_request', { goal: 'long running task' })
+  const chat = first.service.controller.state.chatSessionId
+  const created = await first.callAs(chat, 'chat_request', { goal: 'long running task' })
   const advisor = first.service.controller.state.advisor('global').sessionId
   await first.callAs(advisor, 'ticket_plan', { ticketId: created.ticketId, summary: 'do the work' })
   const dispatched = await first.callAs(advisor, 'ticket_dispatch', { ticketId: created.ticketId })
@@ -511,10 +511,10 @@ try {
 
 const second = await createFixture({ state: true, stateDir })
 try {
-  const chatbot = second.service.controller.state.chatSessionId
-  assert.ok(chatbot)
-  assert.equal(second.service.store.riaSessionId, chatbot)
-  assert.deepEqual(second.visibleTools(chatbot).sort(), ['chatbot_co_manage', 'chatbot_direct', 'chatbot_grant', 'chatbot_models', 'chatbot_new_session', 'chatbot_propose', 'chatbot_read', 'chatbot_request', 'chatbot_resume', 'chatbot_send_image', 'chatbot_sessions', 'chatbot_status', 'chatbot_steer', 'chatbot_stop_ticket', 'chatbot_watch', 'chatbot_worker_config'])
+  const chat = second.service.controller.state.chatSessionId
+  assert.ok(chat)
+  assert.equal(second.service.store.riaSessionId, chat)
+  assert.deepEqual(second.visibleTools(chat).sort(), ['chat_co_manage', 'chat_direct', 'chat_grant', 'chat_models', 'chat_new_session', 'chat_propose', 'chat_read', 'chat_request', 'chat_resume', 'chat_send_image', 'chat_sessions', 'chat_status', 'chat_steer', 'chat_stop_ticket', 'chat_watch', 'chat_worker_config'])
   await second.service.startup()
   const parked = second.service.store.ticket(workingTicketId)
   assert.equal(parked.status, 'blocked')
@@ -522,7 +522,7 @@ try {
   assert.match(parked.blockedReason, /重启/)
   assert.equal(second.service.controller.state.worker(workerId).status, 'idle')
   const status = second.service.controller.status()
-  assert.equal(status.chatSessionId, chatbot)
+  assert.equal(status.chatSessionId, chat)
   assert.equal(status.lastError, null)
   assert.ok(status.tickets.some(item => item.ticketId === workingTicketId && item.status === 'blocked'))
   assert.ok(status.workers.some(item => item.sessionId === workerId && item.status === 'idle'))
@@ -531,7 +531,7 @@ try {
   rmSync(stateDir, { recursive: true, force: true })
 }
 
-// A failed Chatbot install must leave a durable explanation and must not leave
+// A failed Chat install must leave a durable explanation and must not leave
 // the channel-facing session id pointing at the half-installed session.
 const errorDir = mkdtempSync(join(tmpdir(), 'dsh-ria-state-error-'))
 try {

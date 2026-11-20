@@ -7,7 +7,7 @@ const fixture = await createFixture({ stateDefault: true })
 try {
   const controller = fixture.service.controller
   const store = fixture.service.store
-  const chatbot = controller.state.chatSessionId
+  const chat = controller.state.chatSessionId
   const notices = []
   const events = []
   const logs = []
@@ -71,7 +71,7 @@ try {
   await flush()
   assert.equal(logs.filter(line => line.includes('could not notify Chat about blocked ticket ' + failing.ticketId)).length, 1, 'failure still dedupes')
 
-  // ---- chatbot_status: all non-terminal tickets + age/stale/zombie fields -----
+  // ---- chat_status: all non-terminal tickets + age/stale/zombie fields -----
   controller.notifyChat = async () => true // keep unrelated transitions quiet
   const nowMs = Date.now()
   const make = (status, ageMinutes, extra = {}) => {
@@ -88,7 +88,7 @@ try {
   const exactly60 = make('open', 60)
   const fresh = make('open', 5)
 
-  const list = await fixture.callAs(chatbot, 'chatbot_status', {})
+  const list = await fixture.callAs(chat, 'chat_status', {})
   assert.equal(list.ok, true)
   const ids = new Set(list.tickets.map(item => item.ticketId))
   for (const item of [zombie, ghostWorking, healthy, exactly60, fresh]) assert.ok(ids.has(item.ticketId), 'listed ' + item.ticketId)
@@ -118,7 +118,7 @@ try {
   assert.ok(indexOf(exactly60.ticketId) < indexOf(fresh.ticketId))
 
   // Single-ticket lookup stays a bundle, not a list.
-  const single = await fixture.callAs(chatbot, 'chatbot_status', { ticketId: zombie.ticketId })
+  const single = await fixture.callAs(chat, 'chat_status', { ticketId: zombie.ticketId })
   assert.equal(single.ok, true)
   assert.equal(single.found, true)
   assert.equal(single.ticket.ticketId, zombie.ticketId)

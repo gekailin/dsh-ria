@@ -49,8 +49,8 @@ const fixture = await createFixture({
 })
 
 try {
-  const chatbot = fixture.service.controller.state.chatSessionId
-  const made = await fixture.callAs(chatbot, 'chatbot_request', { goal: 'review the retrospective tools' })
+  const chat = fixture.service.controller.state.chatSessionId
+  const made = await fixture.callAs(chat, 'chat_request', { goal: 'review the retrospective tools' })
   assert.equal(made.ok, true)
   const advisor = fixture.service.controller.state.advisor('global').sessionId
   // Create both Worker kinds before the read-only baseline: session creation
@@ -227,11 +227,11 @@ try {
   assert.equal(fixture.visibleTools(advisor).includes('session_list'), false)
   assert.equal(fixture.visibleTools(advisor).includes('session_events'), false)
   await assert.rejects(
-    () => fixture.callAs(chatbot, 'session_list', {}),
+    () => fixture.callAs(chat, 'session_list', {}),
     /tool not installed for .*: session_list/,
   )
   await assert.rejects(
-    () => fixture.callAs(chatbot, 'session_events', { sessionId: 'session-retro-alpha' }),
+    () => fixture.callAs(chat, 'session_events', { sessionId: 'session-retro-alpha' }),
     /tool not installed for .*: session_events/,
   )
   assert.equal(fixture.visibleTools(worker.sessionId).includes('session_list'), false)
@@ -239,9 +239,9 @@ try {
     () => fixture.callAs(worker.sessionId, 'session_list', {}),
     /tool not installed for .*: session_list/,
   )
-  const forbiddenList = await fixture.service.controller.sessionList({}, { agent: { id: chatbot } })
+  const forbiddenList = await fixture.service.controller.sessionList({}, { agent: { id: chat } })
   assert.equal(forbiddenList.code, 'forbidden')
-  const forbiddenEvents = await fixture.service.controller.sessionEvents({ sessionId: 'session-retro-alpha' }, { agent: { id: chatbot } })
+  const forbiddenEvents = await fixture.service.controller.sessionEvents({ sessionId: 'session-retro-alpha' }, { agent: { id: chat } })
   assert.equal(forbiddenEvents.code, 'forbidden')
   // The Advisor and work Workers are refused even when calling the implementation.
   for (const sessionId of [advisor, worker.sessionId]) {

@@ -17,11 +17,11 @@ const SAGE_FORBIDDEN = [
   'interrupt_agent', 'web_fetch', 'web_search', 'plugin_manager', 'present',
   'schedule_create', 'skill', 'todo_write', 'workflow', 'working_directory',
 ]
-const CHATBOT_TOOLS = [
-  'chatbot_co_manage', 'chatbot_direct', 'chatbot_grant', 'chatbot_models', 'chatbot_new_session',
-  'chatbot_propose', 'chatbot_read', 'chatbot_request', 'chatbot_resume',
-  'chatbot_send_image', 'chatbot_sessions', 'chatbot_status', 'chatbot_steer', 'chatbot_stop_ticket',
-  'chatbot_watch', 'chatbot_worker_config',
+const CHAT_TOOLS = [
+  'chat_co_manage', 'chat_direct', 'chat_grant', 'chat_models', 'chat_new_session',
+  'chat_propose', 'chat_read', 'chat_request', 'chat_resume',
+  'chat_send_image', 'chat_sessions', 'chat_status', 'chat_steer', 'chat_stop_ticket',
+  'chat_watch', 'chat_worker_config',
 ]
 // Preset/global tools this fixture mounts. It deliberately mirrors the families
 // the deployed standard/ptc presets expose (shell, fs, search, delegation,
@@ -42,14 +42,14 @@ const WORKER_DENY = ['subagent', 'subagent_fork', 'list_agents', 'send_message',
 const fixture = await createFixture({ stateDefault: true, extraGlobalTools: MOUNTED_GLOBALS })
 try {
   const controller = fixture.service.controller
-  const chatbot = (await controller.ensureChat()).sessionId
-  const created = await fixture.callAs(chatbot, 'chatbot_request', { goal: 'role tool surface baseline' })
+  const chat = (await controller.ensureChat()).sessionId
+  const created = await fixture.callAs(chat, 'chat_request', { goal: 'role tool surface baseline' })
   assert.equal(created.ok, true, JSON.stringify(created))
   const advisor = created.advisorResult.sessionId
 
   // Baseline for the roles this ticket must not change, captured before Sage
   // is installed. Sage's installation runs through the same install() path.
-  const chatbotBefore = fixture.visibleTools(chatbot).sort()
+  const chatBefore = fixture.visibleTools(chat).sort()
   const advisorBefore = fixture.visibleTools(advisor).sort()
 
   const sage = (await controller.ensureSage()).sessionId
@@ -74,10 +74,10 @@ try {
     /unknown global tool/,
   )
 
-  // 3. Chatbot and Advisor surfaces are unchanged by Sage's installation.
-  assert.deepEqual(fixture.visibleTools(chatbot).sort(), chatbotBefore)
+  // 3. Chat and Advisor surfaces are unchanged by Sage's installation.
+  assert.deepEqual(fixture.visibleTools(chat).sort(), chatBefore)
   assert.deepEqual(fixture.visibleTools(advisor).sort(), advisorBefore)
-  assert.deepEqual(chatbotBefore, CHATBOT_TOOLS)
+  assert.deepEqual(chatBefore, CHAT_TOOLS)
   assert.deepEqual(advisorBefore, ADVISOR_TOOLS)
 
   // 4. Worker baseline: untouched by this ticket. The Worker is created only

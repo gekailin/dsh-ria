@@ -29,7 +29,7 @@ const fixture = await createFixture({
   },
 })
 const controller = fixture.service.controller
-const chatbot = controller.state.chatSessionId
+const chat = controller.state.chatSessionId
 const claw = fixture.service.wechatClaw
 const imagePath = join(fixture.stateDir, 'shot.png')
 const secondPath = join(fixture.stateDir, 'shot-two.png')
@@ -47,16 +47,16 @@ const originalGet = fixture.ctx.get.bind(fixture.ctx)
 fixture.ctx.get = name => name === 'attachments'
   ? { ...originalGet(name), imageHostPath: () => imagePath }
   : originalGet(name)
-const send = args => fixture.callAs(chatbot, 'chatbot_send_image', args)
+const send = args => fixture.callAs(chat, 'chat_send_image', args)
 const directNotices = []
 controller.notifyDirect = message => directNotices.push(message)
 let server
 let originalFetch
 try {
   // Tool surfaces and optional image parameters.
-  assert.ok(fixture.visibleTools(chatbot).includes('chatbot_send_image'))
-  const schemas = fixture.agentTools.get(chatbot)
-  assert.equal(schemas.get('chatbot_send_image').parameters.properties.paths.maxItems, 5)
+  assert.ok(fixture.visibleTools(chat).includes('chat_send_image'))
+  const schemas = fixture.agentTools.get(chat)
+  assert.equal(schemas.get('chat_send_image').parameters.properties.paths.maxItems, 5)
 
   // Direct: keep the old string branch for text; encoded and stored image
   // parts preserve their identity/order through Claw.promptContent.
@@ -64,20 +64,20 @@ try {
   const originalPrompt = controller.promptSession.bind(controller)
   const helperInputs = []
   controller.promptSession = (...args) => { helperInputs.push(args[1]); return originalPrompt(...args) }
-  assert.equal(await controller.directRelay([{ type: 'text', text: 'plain direct' }], chatbot), true)
+  assert.equal(await controller.directRelay([{ type: 'text', text: 'plain direct' }], chat), true)
   assert.equal(helperInputs.at(-1), 'plain direct')
   const directContent = [{ type: 'text', text: 'see image' }, { type: 'image', mediaType: 'image/png', data: PNG.toString('base64'), name: 'shot.png' }]
-  await claw.promptContent(chatbot, directContent)
+  await claw.promptContent(chat, directContent)
   assert.strictEqual(helperInputs.at(-1), directContent)
   assert.strictEqual(attempts.at(-1).content, directContent)
   assert.equal(attempts.at(-1).mode, 'steer')
   const reference = { attachmentId: 'sha256:' + sha, mediaType: 'image/png', name: 'shot.png' }
   const storedContent = [{ type: 'text', text: 'stored image' }, { type: 'image', attachment: reference }]
-  await controller.directRelay(storedContent, chatbot)
+  await controller.directRelay(storedContent, chat)
   assert.deepEqual(attempts.at(-1).content, storedContent)
   rejectImages = true
   const directBefore = attempts.length
-  await controller.directRelay(directContent, chatbot)
+  await controller.directRelay(directContent, chat)
   assert.equal(attempts.length, directBefore + 2)
   assert.equal(attempts.at(-1).requestId, attempts.at(-2).requestId)
   assert.equal(attempts.at(-1).content.length, 1)
@@ -90,7 +90,7 @@ try {
   // No account is configured: this must not prompt/login or make an HTTP call.
   let result = await send({ paths: [imagePath] })
   assert.equal(result.code, 'claw_not_connected')
-  const forbidden = await controller.chatbotSendImage({ paths: [imagePath] }, { agent: { id: 'session-not-chatbot' } })
+  const forbidden = await controller.chatSendImage({ paths: [imagePath] }, { agent: { id: 'session-not-chat' } })
   assert.equal(forbidden.code, 'forbidden')
 
   // Mock the *real* Claw sendImage chain end-to-end with loopback endpoints.
@@ -175,7 +175,7 @@ try {
   claw.paused = false
   claw.peer = undefined
   assert.equal((await send({ paths: [imagePath] })).code, 'claw_no_peer')
-  console.log('state chatbot images/direct/send_image mock ok')
+  console.log('state chat images/direct/send_image mock ok')
 } finally {
   if (originalFetch) globalThis.fetch = originalFetch
   if (server) await new Promise(resolve => server.close(resolve))

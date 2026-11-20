@@ -1,4 +1,4 @@
-// Role identity: the Chat role is 'chat' and the historical 'chatbot' role id
+// Role identity: the Chat role is 'chat' and the historical 'chat' role id
 // is gone. Historical ticket rows still carry it (SQLite history is
 // append-only), so normalizeTicket maps the actor on read only.
 import assert from 'node:assert/strict'
@@ -45,10 +45,10 @@ const legacy = normalizeTicket({
   createdAt: 1,
   updatedAt: 2,
   history: [
-    { at: 1, from: 'open', to: 'working', actor: 'chatbot' },
+    { at: 1, from: 'open', to: 'working', actor: 'chat' },
     { at: 2, from: 'working', to: 'cancelled', actor: 'user' },
   ],
-  resolution: { kind: 'cancelled', reason: 'user asked', by: 'chatbot' },
+  resolution: { kind: 'cancelled', reason: 'user asked', by: 'chat' },
 })
 assert.equal(legacy.history[0].actor, 'chat')
 assert.equal(legacy.history[1].actor, 'user')

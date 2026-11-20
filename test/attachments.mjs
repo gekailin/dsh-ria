@@ -25,12 +25,12 @@ const shaOf = text => createHash('sha256').update(text).digest('hex')
 const fixture = await createFixture({ stateDefault: true, advisorPlan: 'stateless', llmReply: () => JSON.stringify({ action: 'plan', workOrder: { summary: 'inspect screenshot', steps: ['read image'] } }) })
 try {
   const controller = fixture.service.controller
-  const chatbot = fixture.service.controller.state.chatSessionId
+  const chat = fixture.service.controller.state.chatSessionId
   const sendUser = (content) => fixture.service.onSessionEvent(
-    { header: { id: chatbot } },
+    { header: { id: chat } },
     { type: 'user/message', seq: 1, time: Date.now(), data: { content, source: { kind: 'user', rpcId: 'user-with-image' } } },
   )
-  const request = (extra = {}) => fixture.callAs(chatbot, 'chatbot_request', { goal: 'inspect screenshot', ...extra })
+  const request = (extra = {}) => fixture.callAs(chat, 'chat_request', { goal: 'inspect screenshot', ...extra })
   const created = id => fixture.service.routerEvents.query({ ticketId: id }).events.find(item => item.event === 'ticket.created')
 
   const sha1 = shaOf('image-one')

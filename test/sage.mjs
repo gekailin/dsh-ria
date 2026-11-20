@@ -57,7 +57,7 @@ try {
   assert.equal(cognition.read('chat/preferences.md').includes('先给结论'), true)
 
   // User proposals are high priority and land in proposals/.
-  const proposed = await fixture.callAs(fixture.service.controller.state.chatSessionId, 'chatbot_propose', {
+  const proposed = await fixture.callAs(fixture.service.controller.state.chatSessionId, 'chat_propose', {
     text: '用户喜欢先给结论',
     evidence: ['conversation'],
   })
@@ -69,8 +69,8 @@ try {
 
   // Planned tickets: each ticket gets its own Advisor session and the second
   // prompt does not carry the first ticket's context.
-  const chatbot = fixture.service.controller.state.chatSessionId
-  const firstTicket = await fixture.callAs(chatbot, 'chatbot_request', { goal: 'alpha task', acceptance: 'alpha done' })
+  const chat = fixture.service.controller.state.chatSessionId
+  const firstTicket = await fixture.callAs(chat, 'chat_request', { goal: 'alpha task', acceptance: 'alpha done' })
   assert.equal(firstTicket.ok, true)
   const firstSession = controller.state.ticketMeta(firstTicket.ticketId).advisorSessionId
   const planned = await fixture.callAs(firstSession, 'ticket_plan', {
@@ -82,7 +82,7 @@ try {
   assert.equal(planned.ok, true, JSON.stringify(planned))
   assert.ok(planned.cognitionProposal && planned.cognitionProposal.author === 'advisor')
   assert.ok(cognition.listProposals().some(item => item.id === planned.cognitionProposal.id))
-  const secondTicket = await fixture.callAs(chatbot, 'chatbot_request', { goal: 'beta task', acceptance: 'beta done' })
+  const secondTicket = await fixture.callAs(chat, 'chat_request', { goal: 'beta task', acceptance: 'beta done' })
   assert.equal(secondTicket.ok, true)
   const secondSession = controller.state.ticketMeta(secondTicket.ticketId).advisorSessionId
   assert.notEqual(firstSession, secondSession)
@@ -93,24 +93,24 @@ try {
   // Retrieval failure is explicit in the Advisor prompt.
   const originalRetrieve = cognition.retrieve.bind(cognition)
   cognition.retrieve = () => ({ snapshot: '', degraded: true, files: [] })
-  const degradedTicket = await fixture.callAs(chatbot, 'chatbot_request', { goal: 'gamma task' })
+  const degradedTicket = await fixture.callAs(chat, 'chat_request', { goal: 'gamma task' })
   assert.equal(degradedTicket.ok, true)
   const degradedSession = controller.state.ticketMeta(degradedTicket.ticketId).advisorSessionId
   assert.ok(fixture.prompts.filter(item => String(item.sessionId) === String(degradedSession)).some(item => String(item.content[0].text).includes('cognition_status: degraded')))
   cognition.retrieve = originalRetrieve
 
-  // Chatbot memory is part of the dynamic system prompt, not a pre-step host
+  // Chat memory is part of the dynamic system prompt, not a pre-step host
   // message. Re-assembling sees a cognition write without any event.
-  const chatAgent = fixture.agentFor(chatbot)
+  const chatAgent = fixture.agentFor(chat)
   cognition.write('chat/preferences.md', '用户偏好：先给结论，再展开。', { reason: 'change' })
-  const chatPrompt = fixture.assembleSystemPrompt(chatbot, { scope: chatAgent })
+  const chatPrompt = fixture.assembleSystemPrompt(chat, { scope: chatAgent })
   assert.ok(chatPrompt.includes('以下为长期记忆摘要，可能滞后；细节以 cognition 文件为准'))
   assert.ok(chatPrompt.includes('用户偏好：先给结论，再展开。'))
   const decision = () => ({ kind: 'enter', messages: [] })
   const firstStep = await controller.onPreStep({ agent: chatAgent, turn: 1 }, async () => decision())
   assert.equal(firstStep.messages.length, 0)
   cognition.write('chat/preferences.md', '用户偏好：先给结论，再展开；必要时附证据。', { reason: 'change' })
-  const nextPrompt = fixture.assembleSystemPrompt(chatbot, { scope: chatAgent })
+  const nextPrompt = fixture.assembleSystemPrompt(chat, { scope: chatAgent })
   assert.ok(nextPrompt.includes('必要时附证据'))
   const thirdStep = await controller.onPreStep({ agent: chatAgent, turn: 3 }, async () => decision())
   assert.equal(thirdStep.messages.length, 0)

@@ -5,8 +5,8 @@ import { createFixture } from './support/ria-fixture.mjs'
 
 const fixture = await createFixture({ stateDefault: true })
 const settle = () => new Promise(resolve => setTimeout(resolve, 30))
-const chatbot = fixture.service.controller.state.chatSessionId
-const notices = () => fixture.prompts.filter(item => String(item.sessionId) === String(chatbot)).map(item => String(item.content[0].text))
+const chat = fixture.service.controller.state.chatSessionId
+const notices = () => fixture.prompts.filter(item => String(item.sessionId) === String(chat)).map(item => String(item.content[0].text))
 const auditLines = () => {
   const file = join(fixture.stateDir, 'audit.jsonl')
   if (!existsSync(file)) return []
@@ -15,7 +15,7 @@ const auditLines = () => {
 
 try {
   await fixture.service.ensure()
-  const made = await fixture.callAs(chatbot, 'chatbot_request', { goal: 'grant pending approval', acceptance: 'no cancelled' })
+  const made = await fixture.callAs(chat, 'chat_request', { goal: 'grant pending approval', acceptance: 'no cancelled' })
   const advisor = fixture.service.controller.state.advisor('global').sessionId
   await fixture.callAs(advisor, 'ticket_plan', { ticketId: made.ticketId, summary: 'wait on approval', steps: ['approval'] })
   const dispatched = await fixture.callAs(advisor, 'ticket_dispatch', { ticketId: made.ticketId })
@@ -47,7 +47,7 @@ try {
   assert.ok(fixture.service.controller.pendingApprovals.has('apr_grant_pending'))
 
   // The grant lands while the request is still pending.
-  const granted = await fixture.callAs(chatbot, 'chatbot_grant', {
+  const granted = await fixture.callAs(chat, 'chat_grant', {
     action: 'set',
     sessionId: worker,
     sandboxMode: 'danger-full-access',
@@ -123,9 +123,9 @@ try {
   }
 
   // No pending request: grant still works and must not claim it settled anything.
-  await fixture.callAs(chatbot, 'chatbot_grant', { action: 'reset', grantId: granted.grant.grantId })
+  await fixture.callAs(chat, 'chat_grant', { action: 'reset', grantId: granted.grant.grantId })
   const before = notices().length
-  const second = await fixture.callAs(chatbot, 'chatbot_grant', {
+  const second = await fixture.callAs(chat, 'chat_grant', {
     action: 'set',
     sessionId: worker,
     sandboxMode: 'read-only',
@@ -137,7 +137,7 @@ try {
   await settle()
   const added = notices().slice(before)
   assert.equal(added.some(text => text.includes('已放行此前挂起的请求')), false)
-  await fixture.callAs(chatbot, 'chatbot_grant', { action: 'reset', grantId: second.grant.grantId })
+  await fixture.callAs(chat, 'chat_grant', { action: 'reset', grantId: second.grant.grantId })
 
   // Stale records without a live settler are superseded, not kept blocking.
   const controller = fixture.service.controller
@@ -179,7 +179,7 @@ try {
   controller.state.setTicketMeta(complete.ticketId, { phase: 'blocked', workerId: worker })
   controller.state.addReport({ reportId: 'saved_done', ticketId: complete.ticketId, workerId: worker, status: 'done', summary: 'already completed', evidence: ['exit 0'], at: Date.now() })
   controller.pendingApprovals.set('apr_saved_done', { ticketId: complete.ticketId, sessionId: worker, toolName: 'bash', callId: 'saved-done-call', key: 'saved-done-key' })
-  const completingGrant = await fixture.callAs(chatbot, 'chatbot_grant', { action: 'set', ticketId: complete.ticketId,
+  const completingGrant = await fixture.callAs(chat, 'chat_grant', { action: 'set', ticketId: complete.ticketId,
     sandboxMode: 'danger-full-access', approvalPolicy: 'never', reason: 'finish recorded result' })
   assert.equal(completingGrant.ok, true, JSON.stringify(completingGrant))
   assert.equal(fixture.service.store.ticket(complete.ticketId).status, 'done')

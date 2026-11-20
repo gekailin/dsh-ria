@@ -3,16 +3,16 @@ import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { createFixture } from './support/ria-fixture.mjs'
 
-// Chatbot long-term memory is a dynamic system-prompt section: every assembly
+// Chat long-term memory is a dynamic system-prompt section: every assembly
 // re-reads cognition/chat/, so a write is visible on the next prompt with no
 // event, version hash, restart, or injected host message.
 const fixture = await createFixture({ stateDefault: true })
 try {
   const controller = fixture.service.controller
   const cognition = controller.cognition
-  const chatbot = controller.state.chatSessionId
-  const chatAgent = fixture.agentFor(chatbot)
-  const prompt = () => fixture.assembleSystemPrompt(chatbot, { scope: chatAgent })
+  const chat = controller.state.chatSessionId
+  const chatAgent = fixture.agentFor(chat)
+  const prompt = () => fixture.assembleSystemPrompt(chat, { scope: chatAgent })
 
   // 1. The system prompt carries the digest and the fixed disclaimer.
   cognition.write('chat/preferences.md', '用户偏好：先给结论，再展开。', { reason: 'test' })
@@ -59,7 +59,7 @@ try {
     async () => ({ kind: 'enter', messages: [] }),
   )
   assert.equal(step.messages.length, 0)
-  assert.equal(step.messages.some(item => item && item.source && item.source.form === 'chatbot-memory'), false)
+  assert.equal(step.messages.some(item => item && item.source && item.source.form === 'chat-memory'), false)
 
   // 6. The 1.5k budget covers the whole memory block including the marker.
   cognition.write('chat/preferences.md', 'X'.repeat(3000), { reason: 'test' })
@@ -69,7 +69,7 @@ try {
   assert.ok(block.includes('已截断'))
   assert.ok(block.includes('以下为长期记忆摘要，可能滞后；细节以 cognition 文件为准'))
 
-  console.log('state chatbot memory prompt ok')
+  console.log('state chat memory prompt ok')
 } finally {
   fixture.cleanup()
 }

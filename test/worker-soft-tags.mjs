@@ -14,12 +14,12 @@ const fixture = await createFixture({
 try {
   const controller = fixture.service.controller
   const store = controller.state
-  const chatbot = store.chatSessionId
+  const chat = store.chatSessionId
   const worker = await controller.ensureWorker('global', null, workspace)
   store.addWorker(worker.sessionId, { status: 'idle', currentTicketId: null, tags: ['frontend'], roleNote: '前端' })
   const topic = fixture.service.store.addTopic({ title: '前端主题', projectKey: projectKey(workspace) })
 
-  const request = await fixture.callAs(chatbot, 'chatbot_request', {
+  const request = await fixture.callAs(chat, 'chat_request', {
     goal: 'frontend polish', workspace, preferredTags: ['frontend', 'docs'], topicId: topic.topicId,
   })
   assert.equal(request.ok, true, JSON.stringify(request))

@@ -104,26 +104,26 @@ try {
       ],
     })
     try {
-      const chatbot = fixture.service.controller.state.chatSessionId
-      const added = await fixture.callAs(chatbot, 'chatbot_watch', { action: 'add', sessionId: 'session-watch' })
+      const chat = fixture.service.controller.state.chatSessionId
+      const added = await fixture.callAs(chat, 'chat_watch', { action: 'add', sessionId: 'session-watch' })
       assert.equal(added.ok, true, JSON.stringify(added))
       assert.equal(added.watch.sessionId, 'session-watch')
-      const listed = await fixture.callAs(chatbot, 'chatbot_watch', { action: 'list' })
+      const listed = await fixture.callAs(chat, 'chat_watch', { action: 'list' })
       assert.equal(listed.watches.length, 1)
-      const status = await fixture.callAs(chatbot, 'chatbot_watch', { action: 'status', sessionId: 'session-watch' })
+      const status = await fixture.callAs(chat, 'chat_watch', { action: 'status', sessionId: 'session-watch' })
       assert.equal(status.watch.titleSnapshot, 'Watched Session')
-      await assert.rejects(() => fixture.callAs('session-other', 'chatbot_watch', { action: 'list' }), /tool not installed|forbidden/)
+      await assert.rejects(() => fixture.callAs('session-other', 'chat_watch', { action: 'list' }), /tool not installed|forbidden/)
 
       // Commands.
-      const command = await fixture.service.controller.handleWatchCommand('/协管列表', chatbot)
+      const command = await fixture.service.controller.handleWatchCommand('/协管列表', chat)
       assert.equal(command.handled, true)
       assert.match(command.reply, /Watched Session/)
-      const statusCommand = await fixture.service.controller.handleWatchCommand('/协管状态 session-watch', chatbot)
+      const statusCommand = await fixture.service.controller.handleWatchCommand('/协管状态 session-watch', chat)
       assert.equal(statusCommand.ok, true)
-      const removeCommand = await fixture.service.controller.handleWatchCommand('/取消协管 session-watch', chatbot)
+      const removeCommand = await fixture.service.controller.handleWatchCommand('/取消协管 session-watch', chat)
       assert.equal(removeCommand.ok, true)
       assert.equal(fixture.service.controller.coManagement.watches().length, 0)
-      const addCommand = await fixture.service.controller.handleWatchCommand('/协管 Watched', chatbot)
+      const addCommand = await fixture.service.controller.handleWatchCommand('/协管 Watched', chat)
       assert.equal(addCommand.ok, true, JSON.stringify(addCommand))
 
       const watch = () => fixture.service.controller.coManagement.watch('session-watch')
@@ -133,7 +133,7 @@ try {
       )
       emitAssistant(10, 'first reply')
       await fixture.service.controller.coManagement.flush('session-watch')
-      const notices = () => fixture.prompts.filter(item => String(item.sessionId) === String(chatbot)).map(item => String(item.content[0].text))
+      const notices = () => fixture.prompts.filter(item => String(item.sessionId) === String(chat)).map(item => String(item.content[0].text))
       assert.ok(notices().some(text => text.includes('【协管·Watched Session】') && text.includes('first reply')))
       emitAssistant(10, 'duplicate reply')
       await fixture.service.controller.coManagement.flush('session-watch')

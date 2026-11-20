@@ -7,7 +7,7 @@ import { Outbound } from '../lib/wechat/outbound.mjs'
 import { WECHAT_ASSISTANT_NOTE_KIND } from '../lib/outbox.mjs'
 import { createFixture } from './support/ria-fixture.mjs'
 
-// Direct mode must not silence the Chatbot. It only labels its text 【Ria】;
+// Direct mode must not silence the Chat. It only labels its text 【Ria】;
 // direct replies are labelled 【直通·<标题>】. Live direct chatter retries in
 // memory (bounded, deduped) and is never replayed from the durable outbox.
 
@@ -40,7 +40,7 @@ function makeClaw({ stateDir, send, isDirectActive = () => false }) {
 
 const assistant = text => ({ type: 'assistant/message', data: { message: { content: [{ type: 'text', text }] } } })
 
-// ① Chatbot assistant text is still forwarded during direct mode, labelled.
+// ① Chat assistant text is still forwarded during direct mode, labelled.
 {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-ria-direct-prefix-'))
   const sent = []
@@ -54,7 +54,7 @@ const assistant = text => ({ type: 'assistant/message', data: { message: { conte
     direct = true
     claw.onSessionEvent({ header: { id: 'ria-session' } }, assistant('审批通知'))
     await waitFor(() => sent.length === 2, 'direct-mode delivery')
-    assert.ok(sent[1].includes('【Ria】'), 'Chatbot text is labelled 【Ria】 during direct mode')
+    assert.ok(sent[1].includes('【Ria】'), 'Chat text is labelled 【Ria】 during direct mode')
     assert.ok(sent[1].includes('审批通知'))
     assert.equal(claw.lastAssistantForward.reason, 'delivered')
   } finally {
@@ -86,7 +86,7 @@ const assistant = text => ({ type: 'assistant/message', data: { message: { conte
     if (options && typeof options.onSettled === 'function') options.onSettled({ reason: 'delivered' })
   }
   try {
-    const chatbot = fixture.service.controller.state.chatSessionId
+    const chat = fixture.service.controller.state.chatSessionId
     fixture.service.controller.setDirect({ sessionId: 'session-independent', title: 'Alpha' })
     fixture.service.controller.onSessionEvent(
       { header: { id: 'session-independent' } },
@@ -94,7 +94,7 @@ const assistant = text => ({ type: 'assistant/message', data: { message: { conte
     )
     assert.equal(calls.at(-1).text, '【直通·Alpha】\n直通回复')
 
-    fixture.service.wechatClaw.onSessionEvent({ header: { id: chatbot } }, assistant('ticket 已完成'))
+    fixture.service.wechatClaw.onSessionEvent({ header: { id: chat } }, assistant('ticket 已完成'))
     await waitFor(() => calls.some(item => item.text.includes('【Ria】')), 'ria report')
     const report = calls.find(item => item.text.includes('【Ria】'))
     assert.ok(report.text.includes('ticket 已完成'))

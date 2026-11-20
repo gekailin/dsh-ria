@@ -98,8 +98,8 @@ const probe = '/home/gkl/Desktop/ria-risk-probe.txt'
 
 const fixture = await createFixture({ stateDefault: true })
 const settle = () => new Promise(resolve => setTimeout(resolve, 20))
-const chatbot = fixture.service.controller.state.chatSessionId
-const notices = () => fixture.prompts.filter(item => String(item.sessionId) === String(chatbot)).map(item => String(item.content[0].text))
+const chat = fixture.service.controller.state.chatSessionId
+const notices = () => fixture.prompts.filter(item => String(item.sessionId) === String(chat)).map(item => String(item.content[0].text))
 const auditLines = () => {
   const file = join(fixture.stateDir, 'audit.jsonl')
   if (!existsSync(file)) return []
@@ -109,7 +109,7 @@ const transportAudits = () => auditLines().filter(item => item.event === 'approv
 
 try {
   await fixture.service.ensure()
-  const made = await fixture.callAs(chatbot, 'chatbot_request', { goal: 'run_code risk transport', acceptance: 'decisions' })
+  const made = await fixture.callAs(chat, 'chat_request', { goal: 'run_code risk transport', acceptance: 'decisions' })
   const advisor = fixture.service.controller.state.advisor('global').sessionId
   await fixture.callAs(advisor, 'ticket_plan', { ticketId: made.ticketId, summary: 'transport probes', steps: ['probe'] })
   const dispatched = await fixture.callAs(advisor, 'ticket_dispatch', { ticketId: made.ticketId })

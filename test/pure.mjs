@@ -1,5 +1,5 @@
 // Pure state guarantees: the legacy manager, the tasks.log compatibility path,
-// the Advisor mode switch and the cognition/chatbot directory are gone.
+// the Advisor mode switch and the cognition/chat directory are gone.
 import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -52,8 +52,8 @@ try {
   const fixture = await createFixture({ stateDefault: true, stateDir: dir, advisorPlan: 'stateless', llmReply: JSON.stringify({ action: 'plan', workOrder: { summary: 'legacy plan', steps: ['do it'] } }) })
   try {
     await fixture.service.ensure()
-    const chatbot = fixture.service.controller.state.chatSessionId
-    const planned = await fixture.callAs(chatbot, 'chatbot_request', { goal: 'legacy role ticket' })
+    const chat = fixture.service.controller.state.chatSessionId
+    const planned = await fixture.callAs(chat, 'chat_request', { goal: 'legacy role ticket' })
     assert.equal(planned.ok, true, JSON.stringify(planned))
     assert.equal(planned.stateless, true)
     fixture.service.store.save()

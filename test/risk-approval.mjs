@@ -153,8 +153,8 @@ const WORKSPACE = process.cwd()
 
 const fixture = await createFixture({ stateDefault: true })
 const settle = () => new Promise(resolve => setTimeout(resolve, 20))
-const chatbot = fixture.service.controller.state.chatSessionId
-const notices = () => fixture.prompts.filter(item => String(item.sessionId) === String(chatbot))
+const chat = fixture.service.controller.state.chatSessionId
+const notices = () => fixture.prompts.filter(item => String(item.sessionId) === String(chat))
 const bodyOf = prompt => String(prompt && prompt.content && prompt.content[0] ? prompt.content[0].text : '')
 const auditLines = () => {
   const file = join(fixture.stateDir, 'audit.jsonl')
@@ -165,7 +165,7 @@ const riskAudits = () => auditLines().filter(item => item.event === 'approval/de
 
 try {
   await fixture.service.ensure()
-  const request = await fixture.callAs(chatbot, 'chatbot_request', { goal: 'risk approval probe', acceptance: 'none' })
+  const request = await fixture.callAs(chat, 'chat_request', { goal: 'risk approval probe', acceptance: 'none' })
   const advisor = fixture.service.controller.state.advisor('global').sessionId
   await fixture.callAs(advisor, 'ticket_plan', { ticketId: request.ticketId, summary: 'probe risk', steps: ['probe'] })
   const dispatch = await fixture.callAs(advisor, 'ticket_dispatch', { ticketId: request.ticketId })
@@ -291,7 +291,7 @@ try {
   const denyAudit = riskAudits().find(item => item.decision === 'human-deny' && item.approvalId === 'apr_deny')
   assert.ok(denyAudit)
   assert.equal(denyAudit.level, 'high')
-  const resumed = await fixture.callAs(chatbot, 'chatbot_resume', { ticketId })
+  const resumed = await fixture.callAs(chat, 'chat_resume', { ticketId })
   assert.equal(resumed.ok, true, JSON.stringify(resumed))
 
   // Low auto-allow with the host's real event order: asked first, then request.
@@ -317,8 +317,8 @@ try {
   assert.ok(lowStateAudit)
   assert.equal(lowStateAudit.level, 'low')
 
-  // 3. chatbot_grant is debug/emergency only and leaves grant_kind in audit.
-  const granted = await fixture.callAs(chatbot, 'chatbot_grant', {
+  // 3. chat_grant is debug/emergency only and leaves grant_kind in audit.
+  const granted = await fixture.callAs(chat, 'chat_grant', {
     action: 'set',
     sessionId: worker,
     sandboxMode: 'read-only',
@@ -330,12 +330,12 @@ try {
   const grantAudit = auditLines().find(item => item.event === 'grant/set' && item.sessionId === worker)
   assert.ok(grantAudit)
   assert.equal(grantAudit.grant_kind, 'emergency')
-  await fixture.callAs(chatbot, 'chatbot_grant', { action: 'reset', grantId: granted.grant.grantId })
+  await fixture.callAs(chat, 'chat_grant', { action: 'reset', grantId: granted.grant.grantId })
 
   // 4. Prompt/docs positioning is part of the contract.
   assert.match(chatPrompt(), /调试\/应急/)
   assert.match(advisorPrompt(), /escalationPolicy/)
-  assert.match(advisorPrompt(), /chatbot_grant 仅调试\/应急/)
+  assert.match(advisorPrompt(), /chat_grant 仅调试\/应急/)
   assert.match(workerPrompt({}), /提权按风险逐条审批/)
   assert.equal(existsSync('/home/gkl/Desktop/ria-risk-probe.txt'), false)
 

@@ -12,11 +12,11 @@ const fixture = await createFixture({ stateDefault: true, advisorPlan: 'stateles
 try {
   const controller = fixture.service.controller
   await controller.bootstrapCognition()
-  const chatbot = fixture.service.controller.state.chatSessionId
+  const chat = fixture.service.controller.state.chatSessionId
   const advisorCreates = () => fixture.creates.filter(item => String(item.cwd || '').includes('/advisors'))
   const eventsFor = ticketId => fixture.service.routerEvents.query({ ticketId }).events
 
-  const first = await fixture.callAs(chatbot, 'chatbot_request', { goal: 'alpha goal' })
+  const first = await fixture.callAs(chat, 'chat_request', { goal: 'alpha goal' })
   assert.equal(first.ok, true, JSON.stringify(first))
   assert.equal(first.stateless, true)
   assert.equal(controller.state.advisor('global'), null)
@@ -40,8 +40,8 @@ try {
   // not call the model again.
   const beforeCalls = fixture.llmCalls.length
   const [a, b] = await Promise.all([
-    fixture.callAs(chatbot, 'chatbot_request', { goal: 'beta one' }),
-    fixture.callAs(chatbot, 'chatbot_request', { goal: 'beta two' }),
+    fixture.callAs(chat, 'chat_request', { goal: 'beta one' }),
+    fixture.callAs(chat, 'chat_request', { goal: 'beta two' }),
   ])
   assert.equal(a.ok && b.ok, true)
   assert.match(controller.state.workOrder(a.ticketId).summary, /beta one/)
@@ -55,7 +55,7 @@ try {
   // Degraded: retrieval failure is explicit in the event.
   const originalRetrieve = controller.cognition.retrieve.bind(controller.cognition)
   controller.cognition.retrieve = () => { throw new Error('retrieval down') }
-  const degraded = await fixture.callAs(chatbot, 'chatbot_request', { goal: 'degraded goal' })
+  const degraded = await fixture.callAs(chat, 'chat_request', { goal: 'degraded goal' })
   controller.cognition.retrieve = originalRetrieve
   assert.equal(degraded.ok, true, JSON.stringify(degraded))
   const degradedEvent = eventsFor(degraded.ticketId).find(item => item.event === 'advisor.plan')
@@ -63,13 +63,13 @@ try {
   assert.deepEqual(degradedEvent.payload.cognitionIds, [])
 
   // Block action. There is no answer action any more: every request is a work ticket.
-  const blocked = await fixture.callAs(chatbot, 'chatbot_request', { goal: 'BLOCK-ME' })
+  const blocked = await fixture.callAs(chat, 'chat_request', { goal: 'BLOCK-ME' })
   assert.equal(fixture.service.store.ticket(blocked.ticketId).status, 'blocked')
   assert.equal(fixture.service.store.ticket(blocked.ticketId).waitingOn, 'user')
   assert.equal(fixture.service.store.ticket(blocked.ticketId).attention.kind, 'question')
 
   // There is no Advisor session switch: every plan is one stateless LLM call.
-  const statelessAgain = await fixture.callAs(chatbot, 'chatbot_request', { goal: 'stateless again' })
+  const statelessAgain = await fixture.callAs(chat, 'chat_request', { goal: 'stateless again' })
   assert.equal(statelessAgain.ok, true)
   assert.equal(statelessAgain.stateless, true)
   assert.equal(controller.state.advisor('global'), null)
@@ -86,8 +86,8 @@ try {
   try {
     const controller = failing.service.controller
     await controller.bootstrapCognition()
-    const chatbot = failing.service.controller.state.chatSessionId
-    const result = await failing.callAs(chatbot, 'chatbot_request', { goal: 'fail plan' })
+    const chat = failing.service.controller.state.chatSessionId
+    const result = await failing.callAs(chat, 'chat_request', { goal: 'fail plan' })
     assert.equal(result.ok, false, JSON.stringify(result))
     assert.equal(result.code, 'advisor_unavailable')
     const ticket = failing.service.store.ticket(result.ticketId)

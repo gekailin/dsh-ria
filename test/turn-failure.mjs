@@ -16,13 +16,13 @@ const promptText = prompt => (Array.isArray(prompt && prompt.content) ? prompt.c
 
 async function setup() {
   const fixture = await createFixture({ state: true })
-  const chatbot = fixture.service.controller.state.chatSessionId
-  return { fixture, chatbot }
+  const chat = fixture.service.controller.state.chatSessionId
+  return { fixture, chat }
 }
 
 // Dispatch through the real path so attempt/worker bindings are production-shaped.
-async function dispatch(fixture, chatbot, goal) {
-  const made = await fixture.callAs(chatbot, 'chatbot_request', { goal })
+async function dispatch(fixture, chat, goal) {
+  const made = await fixture.callAs(chat, 'chat_request', { goal })
   assert.equal(made.ok, true, JSON.stringify(made))
   const advisor = fixture.service.controller.state.advisor('global').sessionId
   const plan = await fixture.callAs(advisor, 'ticket_plan', {
@@ -44,15 +44,15 @@ const turnEnd = (fixture, workerId, turn, reason) => fixture.service.onSessionEv
   { header: { id: workerId } },
   { type: 'turn/end', data: { turn, reason } },
 )
-const noticesAbout = (fixture, chatbot, ticketId) => fixture.prompts
-  .filter(prompt => String(prompt.sessionId) === chatbot && promptText(prompt).includes(ticketId))
+const noticesAbout = (fixture, chat, ticketId) => fixture.prompts
+  .filter(prompt => String(prompt.sessionId) === chat && promptText(prompt).includes(ticketId))
 
 // 1. reason.kind=error -> blocked(environment), turn_failed, worker released,
-//    turn.failed event, exactly one Chatbot notice.
+//    turn.failed event, exactly one Chat notice.
 {
-  const { fixture, chatbot } = await setup()
+  const { fixture, chat } = await setup()
   try {
-    const { ticketId, workerId } = await dispatch(fixture, chatbot, 'turn error case')
+    const { ticketId, workerId } = await dispatch(fixture, chat, 'turn error case')
     turnStart(fixture, workerId, 3)
     assert.equal(fixture.service.store.ticket(ticketId).status, 'working')
     turnEnd(fixture, workerId, 3, {
@@ -87,8 +87,8 @@ const noticesAbout = (fixture, chatbot, ticketId) => fixture.prompts
     assert.equal(failed.payload.failureCode, 'turn_failed')
 
     await flush()
-    const notices = noticesAbout(fixture, chatbot, ticketId)
-    assert.equal(notices.length, 1, 'the Chatbot is told exactly once')
+    const notices = noticesAbout(fixture, chat, ticketId)
+    assert.equal(notices.length, 1, 'the Chat is told exactly once')
     assert.match(promptText(notices[0]), /error/)
     assert.match(promptText(notices[0]), /200000ms/)
 
@@ -96,7 +96,7 @@ const noticesAbout = (fixture, chatbot, ticketId) => fixture.prompts
     turnEnd(fixture, workerId, 3, { kind: 'error', error: { message: 'late duplicate' } })
     await flush()
     assert.equal(fixture.service.store.ticket(ticketId).status, 'blocked')
-    assert.equal(noticesAbout(fixture, chatbot, ticketId).length, 1)
+    assert.equal(noticesAbout(fixture, chat, ticketId).length, 1)
   } finally {
     fixture.cleanup()
   }
@@ -104,9 +104,9 @@ const noticesAbout = (fixture, chatbot, ticketId) => fixture.prompts
 
 // 2. reason.kind=aborted -> blocked(environment), turn_aborted, same four effects.
 {
-  const { fixture, chatbot } = await setup()
+  const { fixture, chat } = await setup()
   try {
-    const { ticketId, workerId } = await dispatch(fixture, chatbot, 'turn aborted case')
+    const { ticketId, workerId } = await dispatch(fixture, chat, 'turn aborted case')
     turnStart(fixture, workerId, 7)
     turnEnd(fixture, workerId, 7, { kind: 'aborted', reason: { kind: 'user' } })
 
@@ -123,7 +123,7 @@ const noticesAbout = (fixture, chatbot, ticketId) => fixture.prompts
     assert.equal(failed.payload.kind, 'aborted')
     assert.equal(failed.payload.failureCode, 'turn_aborted')
     await flush()
-    assert.equal(noticesAbout(fixture, chatbot, ticketId).length, 1)
+    assert.equal(noticesAbout(fixture, chat, ticketId).length, 1)
   } finally {
     fixture.cleanup()
   }
@@ -132,9 +132,9 @@ const noticesAbout = (fixture, chatbot, ticketId) => fixture.prompts
 // 3. An unknown/other kind is still abnormal: turn_failed and the original
 //    kind is kept in the reason so the cause is not lost.
 {
-  const { fixture, chatbot } = await setup()
+  const { fixture, chat } = await setup()
   try {
-    const { ticketId, workerId } = await dispatch(fixture, chatbot, 'turn unknown case')
+    const { ticketId, workerId } = await dispatch(fixture, chat, 'turn unknown case')
     turnStart(fixture, workerId, 2)
     turnEnd(fixture, workerId, 2, { kind: 'max-tokens' })
 
@@ -153,9 +153,9 @@ const noticesAbout = (fixture, chatbot, ticketId) => fixture.prompts
 // 4. Regression: a completed turn keeps the pre-fix behaviour exactly:
 //    ticket working, worker still bound, no turn.failed, no notification.
 {
-  const { fixture, chatbot } = await setup()
+  const { fixture, chat } = await setup()
   try {
-    const { ticketId, workerId } = await dispatch(fixture, chatbot, 'turn completed case')
+    const { ticketId, workerId } = await dispatch(fixture, chat, 'turn completed case')
     turnStart(fixture, workerId, 1)
     turnEnd(fixture, workerId, 1, { kind: 'completed' })
 
@@ -170,7 +170,7 @@ const noticesAbout = (fixture, chatbot, ticketId) => fixture.prompts
     const events = fixture.service.routerEvents.query({ ticketId }).events
     assert.equal(events.some(item => item.event === 'turn.failed'), false)
     await flush()
-    assert.equal(noticesAbout(fixture, chatbot, ticketId).length, 0)
+    assert.equal(noticesAbout(fixture, chat, ticketId).length, 0)
   } finally {
     fixture.cleanup()
   }
@@ -247,16 +247,16 @@ const noticesAbout = (fixture, chatbot, ticketId) => fixture.prompts
   assert.equal(empty.stuckSuspect, true)
 }
 
-// 6. chatbot_status ticket view and chatbot_worker_config get agree for the same
+// 6. chat_status ticket view and chat_worker_config get agree for the same
 //    ticket, both criteria included; status/currentTicketId consistency holds.
 {
-  const { fixture, chatbot } = await setup()
+  const { fixture, chat } = await setup()
   try {
-    const { ticketId, workerId } = await dispatch(fixture, chatbot, 'health views case')
+    const { ticketId, workerId } = await dispatch(fixture, chat, 'health views case')
     turnStart(fixture, workerId, 4)
 
-    const viewOf = async () => (await fixture.callAs(chatbot, 'chatbot_status', { ticketId })).ticket
-    const workerOf = async () => (await fixture.callAs(chatbot, 'chatbot_worker_config', { action: 'get' })).workers
+    const viewOf = async () => (await fixture.callAs(chat, 'chat_status', { ticketId })).ticket
+    const workerOf = async () => (await fixture.callAs(chat, 'chat_worker_config', { action: 'get' })).workers
       .find(item => item.sessionId === workerId)
 
     const viewActive = await viewOf()

@@ -6,7 +6,7 @@ import { createFixture } from './support/ria-fixture.mjs'
 const fixture = await createFixture({ stateDefault: true })
 try {
   const controller = fixture.service.controller
-  const chatbot = fixture.service.controller.state.chatSessionId
+  const chat = fixture.service.controller.state.chatSessionId
   const worker = (await controller.ensureWorker('global')).sessionId
   controller.state.addWorker(worker, { status: 'idle', currentTicketId: null })
   const ticket = fixture.service.store.addTicket({ status: 'working', executor: worker, goal: 'steer test' })
@@ -19,14 +19,14 @@ try {
   }
 
   // Idle direct delivery marks the inbox entry delivered.
-  const queued = await fixture.callAs(chatbot, 'chatbot_steer', { ticketId: ticket.ticketId, message: 'check this' })
+  const queued = await fixture.callAs(chat, 'chat_steer', { ticketId: ticket.ticketId, message: 'check this' })
   assert.equal(queued.ok, true, JSON.stringify(queued))
   assert.equal(controller.state.pendingInbox(ticket.ticketId, worker).length, 0)
   assert.ok(events().some(item => item.event === 'steer.queued' && item.payload.summary === 'check this'))
   assert.ok(events().some(item => item.event === 'steer.delivered' && item.payload.deliveryMode === 'immediate' && item.payload.source === 'steer'))
 
   // A steer after the last step boundary is consumed by an extra prompt at done.
-  await fixture.callAs(chatbot, 'chatbot_steer', { ticketId: ticket.ticketId, message: 'late instruction' })
+  await fixture.callAs(chat, 'chat_steer', { ticketId: ticket.ticketId, message: 'late instruction' })
   const done = await fixture.callAs(worker, 'worker_report', { ticketId: ticket.ticketId, status: 'done', summary: 'finished', evidence: ['test'] })
   assert.equal(done.ok, true, JSON.stringify(done))
   assert.equal(fixture.service.store.ticket(ticket.ticketId).status, 'done')
@@ -37,7 +37,7 @@ try {
   controller.state.setTicketMeta(second.ticketId, { phase: 'working', workerId: worker })
   controller.state.setWorkOrder(second.ticketId, { ticketId: second.ticketId, summary: 'plan', steps: ['do it'] })
   fixture.setRunning(worker, true)
-  await fixture.callAs(chatbot, 'chatbot_steer', { ticketId: second.ticketId, message: 'never delivered' })
+  await fixture.callAs(chat, 'chat_steer', { ticketId: second.ticketId, message: 'never delivered' })
   fixture.setPromptFailure(new Error('worker unavailable'))
   const failedDone = await fixture.callAs(worker, 'worker_report', { ticketId: second.ticketId, status: 'done', summary: 'finished', evidence: ['test'] })
   assert.equal(failedDone.ok, false)

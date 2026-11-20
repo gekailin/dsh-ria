@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { createFixture } from './support/ria-fixture.mjs'
 
 // A Worker that stops for an approval must show up as blocked(waitingOn=approval)
-// on its ticket and get a Chatbot notice. Valid completed work supersedes old
+// on its ticket and get a Chat notice. Valid completed work supersedes old
 // approvals instead of being reported as an approval timeout.
 
 const independentCwd = mkdtempSync(join(tmpdir(), 'ria-independent-'))
@@ -17,8 +17,8 @@ const fixture = await createFixture({
 })
 
 const settle = () => new Promise(resolve => setTimeout(resolve, 20))
-const chatbot = fixture.service.controller.state.chatSessionId
-const notices = () => fixture.prompts.filter(item => String(item.sessionId) === String(chatbot))
+const chat = fixture.service.controller.state.chatSessionId
+const notices = () => fixture.prompts.filter(item => String(item.sessionId) === String(chat))
 const textOf = prompt => String(prompt && prompt.content && prompt.content[0] ? prompt.content[0].text : '')
 const asked = (worker, data) => fixture.service.onSessionEvent({ header: { id: worker } }, { type: 'approval/asked', time: Date.now(), data })
 const decided = (worker, data) => fixture.service.onSessionEvent({ header: { id: worker } }, { type: 'approval/decided', time: Date.now(), data })
@@ -26,7 +26,7 @@ const ticketOf = ticketId => fixture.service.store.ticket(ticketId)
 
 try {
   await fixture.service.ensure()
-  const request = await fixture.callAs(chatbot, 'chatbot_request', { goal: 'approval probe', acceptance: 'none' })
+  const request = await fixture.callAs(chat, 'chat_request', { goal: 'approval probe', acceptance: 'none' })
   const advisor = fixture.service.controller.state.advisor('global').sessionId
   await fixture.callAs(advisor, 'ticket_plan', { ticketId: request.ticketId, summary: 'do the probe', steps: ['probe'] })
   const dispatch = await fixture.callAs(advisor, 'ticket_dispatch', { ticketId: request.ticketId })
@@ -118,7 +118,7 @@ try {
   // cancelled (the budget-exhaustion shape) also stays blocked.
   // A manual resume is allowed while waiting on an approval.
   {
-    const resume = await fixture.callAs(chatbot, 'chatbot_resume', { ticketId })
+    const resume = await fixture.callAs(chat, 'chat_resume', { ticketId })
     assert.equal(resume.ok, true, JSON.stringify(resume))
     assert.equal(ticketOf(ticketId).status, 'working')
   }
@@ -135,7 +135,7 @@ try {
   // Resuming also clears the recorded denial/cancellation, so the timeout case
   // starts from a healthy working ticket.
   {
-    const resume = await fixture.callAs(chatbot, 'chatbot_resume', { ticketId })
+    const resume = await fixture.callAs(chat, 'chat_resume', { ticketId })
     assert.equal(resume.ok, true, JSON.stringify(resume))
     assert.equal(ticketOf(ticketId).status, 'working')
     assert.equal(ticketOf(ticketId).failure, null)

@@ -13,8 +13,8 @@ assert.equal(resolveEscalationPolicy({ ticket: { escalationPolicy: 'auto-low-med
 
 const fixture = await createFixture({ stateDefault: true })
 try {
-  const chatbot = fixture.service.controller.state.chatSessionId
-  const created = await fixture.callAs(chatbot, 'chatbot_request', {
+  const chat = fixture.service.controller.state.chatSessionId
+  const created = await fixture.callAs(chat, 'chat_request', {
     goal: 'deploy the plugin',
     escalationPolicy: 'auto-low-medium',
   })
@@ -26,11 +26,11 @@ try {
   const reflection = await fixture.service.controller.requestTicket({
     goal: 'retrospective',
     escalationPolicy: 'auto-low-medium',
-  }, { agent: { id: chatbot } }, { mode: 'reflection' })
+  }, { agent: { id: chat } }, { mode: 'reflection' })
   assert.equal(reflection.ok, true, JSON.stringify(reflection))
   assert.equal(fixture.service.controller.state.ticketMeta(reflection.ticketId).escalationPolicy, undefined)
 
-  const invalid = await fixture.callAs(chatbot, 'chatbot_request', {
+  const invalid = await fixture.callAs(chat, 'chat_request', {
     goal: 'bad policy',
     escalationPolicy: 'nope',
   })

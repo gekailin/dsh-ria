@@ -3,12 +3,12 @@ import { createFixture } from './support/ria-fixture.mjs'
 
 async function setup() {
   const fixture = await createFixture({ state: true })
-  const chatbot = fixture.service.controller.state.chatSessionId
-  return { fixture, chatbot }
+  const chat = fixture.service.controller.state.chatSessionId
+  return { fixture, chat }
 }
 
-async function planAndDispatch(fixture, chatbot, goal = 'do the work') {
-  const made = await fixture.callAs(chatbot, 'chatbot_request', { goal })
+async function planAndDispatch(fixture, chat, goal = 'do the work') {
+  const made = await fixture.callAs(chat, 'chat_request', { goal })
   assert.equal(made.ok, true)
   const advisor = fixture.service.controller.state.advisor('global').sessionId
   const plan = await fixture.callAs(advisor, 'ticket_plan', { ticketId: made.ticketId, summary: 'execute the work order' })
@@ -25,9 +25,9 @@ function promptTo(fixture, sessionId, after) {
 // 1. Normal blocked resume: the Worker is idle, so resume must dispatch it
 // again in the same call, with the user's answer travelling on that dispatch.
 {
-  const { fixture, chatbot } = await setup()
+  const { fixture, chat } = await setup()
   try {
-    const { ticketId, workerId } = await planAndDispatch(fixture, chatbot)
+    const { ticketId, workerId } = await planAndDispatch(fixture, chat)
     const blocked = await fixture.callAs(workerId, 'worker_report', {
       ticketId,
       status: 'blocked',
@@ -37,7 +37,7 @@ function promptTo(fixture, sessionId, after) {
     assert.equal(blocked.ok, true)
     assert.equal(fixture.service.store.ticket(ticketId).status, 'blocked')
     const before = fixture.prompts.length
-    const resumed = await fixture.callAs(chatbot, 'chatbot_resume', { ticketId, message: 'use Markdown' })
+    const resumed = await fixture.callAs(chat, 'chat_resume', { ticketId, message: 'use Markdown' })
     assert.equal(resumed.ok, true)
     assert.equal(resumed.status, 'working')
     assert.equal(resumed.workerSessionId, workerId)
@@ -65,9 +65,9 @@ function promptTo(fixture, sessionId, after) {
 // no dispatch followed. Resume must be idempotent there, and steer must point
 // back at resume instead of being a dead end.
 {
-  const { fixture, chatbot } = await setup()
+  const { fixture, chat } = await setup()
   try {
-    const { ticketId, workerId } = await planAndDispatch(fixture, chatbot)
+    const { ticketId, workerId } = await planAndDispatch(fixture, chat)
     fixture.service.controller.state.addWorker(workerId, { status: 'idle', currentTicketId: null })
     const parked = fixture.service.store.transitionTicket(ticketId, 'blocked', {
       actor: 'host',
@@ -87,13 +87,13 @@ function promptTo(fixture, sessionId, after) {
     assert.equal(reopened.ok, true)
     fixture.service.controller.state.setTicketMeta(ticketId, { phase: 'planned', workerId })
 
-    const steer = await fixture.callAs(chatbot, 'chatbot_steer', { ticketId, message: 'still there?' })
+    const steer = await fixture.callAs(chat, 'chat_steer', { ticketId, message: 'still there?' })
     assert.equal(steer.ok, false)
     assert.equal(steer.code, 'ticket_not_working')
-    assert.match(steer.hint, /chatbot_resume/)
+    assert.match(steer.hint, /chat_resume/)
 
     const before = fixture.prompts.length
-    const resumed = await fixture.callAs(chatbot, 'chatbot_resume', { ticketId, message: 'continue' })
+    const resumed = await fixture.callAs(chat, 'chat_resume', { ticketId, message: 'continue' })
     assert.equal(resumed.ok, true)
     assert.equal(resumed.redispatch, true)
     assert.equal(resumed.status, 'working')
@@ -113,9 +113,9 @@ function promptTo(fixture, sessionId, after) {
 // so resume must not fail with worker_busy. It restores the ticket to working,
 // queues the user's reply, and reports success.
 {
-  const { fixture, chatbot } = await setup()
+  const { fixture, chat } = await setup()
   try {
-    const { ticketId, workerId } = await planAndDispatch(fixture, chatbot)
+    const { ticketId, workerId } = await planAndDispatch(fixture, chat)
     const parked = fixture.service.store.transitionTicket(ticketId, 'blocked', {
       actor: 'host',
       executor: workerId,
@@ -132,7 +132,7 @@ function promptTo(fixture, sessionId, after) {
     fixture.setRunning(workerId, true)
 
     const before = fixture.prompts.length
-    const resumed = await fixture.callAs(chatbot, 'chatbot_resume', { ticketId, message: 'continue please' })
+    const resumed = await fixture.callAs(chat, 'chat_resume', { ticketId, message: 'continue please' })
     assert.equal(resumed.ok, true)
     assert.equal(resumed.status, 'working')
     assert.equal(resumed.rearmed, true)
@@ -164,9 +164,9 @@ function promptTo(fixture, sessionId, after) {
 
 // 4. A missing bound Worker stops for the user; replacement creation is forbidden.
 {
-  const { fixture, chatbot } = await setup()
+  const { fixture, chat } = await setup()
   try {
-    const { ticketId, workerId } = await planAndDispatch(fixture, chatbot)
+    const { ticketId, workerId } = await planAndDispatch(fixture, chat)
     const blocked = await fixture.callAs(workerId, 'worker_report', {
       ticketId,
       status: 'blocked',
@@ -180,7 +180,7 @@ function promptTo(fixture, sessionId, after) {
       if (!request.workspaceId) throw new Error('worker create failed for test')
       return await originalCreate(request)
     }
-    const resumed = await fixture.callAs(chatbot, 'chatbot_resume', { ticketId, message: 'retry' })
+    const resumed = await fixture.callAs(chat, 'chat_resume', { ticketId, message: 'retry' })
     assert.equal(resumed.ok, false)
     assert.equal(resumed.code, 'resume_worker_unavailable')
     assert.equal(resumed.ticketId, ticketId)
@@ -198,16 +198,16 @@ function promptTo(fixture, sessionId, after) {
 
 // 5. Executor is authoritative even if stale metadata names a newer idle worker.
 {
-  const { fixture, chatbot } = await setup()
+  const { fixture, chat } = await setup()
   try {
-    const { ticketId, workerId } = await planAndDispatch(fixture, chatbot)
+    const { ticketId, workerId } = await planAndDispatch(fixture, chat)
     await fixture.callAs(workerId, 'worker_report', { ticketId, status: 'blocked', summary: 'decision', question: 'continue?' })
     fixture.service.controller.turnStartedAt.set(workerId, Date.now())
     const other = await fixture.service.controller.ensureWorker('global')
     fixture.service.controller.turnStartedAt.delete(workerId)
     assert.notEqual(other.sessionId, workerId)
     fixture.service.controller.state.setTicketMeta(ticketId, { workerId: other.sessionId })
-    const resumed = await fixture.callAs(chatbot, 'chatbot_resume', { ticketId })
+    const resumed = await fixture.callAs(chat, 'chat_resume', { ticketId })
     assert.equal(resumed.ok, true, JSON.stringify(resumed))
     assert.equal(resumed.workerSessionId, workerId)
     assert.equal(fixture.service.store.ticket(ticketId).executor, workerId)
@@ -217,9 +217,9 @@ function promptTo(fixture, sessionId, after) {
 
 // 6. Unavailable/archived bound workers never fall back; user decides instead.
 for (const unavailable of ['archived', 'missing', 'unresolvable']) {
-  const { fixture, chatbot } = await setup()
+  const { fixture, chat } = await setup()
   try {
-    const { ticketId, workerId } = await planAndDispatch(fixture, chatbot)
+    const { ticketId, workerId } = await planAndDispatch(fixture, chat)
     await fixture.callAs(workerId, 'worker_report', { ticketId, status: 'blocked', summary: 'decision', question: 'continue?' })
     if (unavailable === 'archived') fixture.archivedSessions.push(workerId)
     else if (unavailable === 'missing') fixture.service.controller.state.removeWorker(workerId)
@@ -229,7 +229,7 @@ for (const unavailable of ['archived', 'missing', 'unresolvable']) {
     }
     const beforeCreates = fixture.creates.length
     const beforeNotices = fixture.prompts.length
-    const resumed = await fixture.callAs(chatbot, 'chatbot_resume', { ticketId })
+    const resumed = await fixture.callAs(chat, 'chat_resume', { ticketId })
     assert.equal(resumed.ok, false, JSON.stringify(resumed))
     assert.equal(resumed.code, 'resume_worker_unavailable')
     assert.equal(resumed.workerSessionId, workerId)
@@ -237,19 +237,19 @@ for (const unavailable of ['archived', 'missing', 'unresolvable']) {
     assert.equal(fixture.service.store.ticket(ticketId).waitingOn, 'user')
     assert.equal(fixture.creates.length, beforeCreates, 'no replacement worker may be created')
     assert.match(resumed.message, /指定 worker.*不可用.*需要你决定/)
-    assert.ok(fixture.prompts.slice(beforeNotices).some(item => item.sessionId === chatbot && item.content[0].text.includes('指定 worker')))
+    assert.ok(fixture.prompts.slice(beforeNotices).some(item => item.sessionId === chat && item.content[0].text.includes('指定 worker')))
     assert.ok(fixture.service.routerEvents.query({ ticketId }).events.some(item => item.event === 'resume.worker_unavailable'))
   } finally { fixture.cleanup() }
 }
 
 // 7. A turn finishing after its blocked report remains on that same worker.
 {
-  const { fixture, chatbot } = await setup()
+  const { fixture, chat } = await setup()
   try {
-    const { ticketId, workerId } = await planAndDispatch(fixture, chatbot)
+    const { ticketId, workerId } = await planAndDispatch(fixture, chat)
     fixture.service.controller.turnStartedAt.set(workerId, Date.now())
     await fixture.callAs(workerId, 'worker_report', { ticketId, status: 'blocked', summary: 'decision', question: 'continue?' })
-    const resumed = await fixture.callAs(chatbot, 'chatbot_resume', { ticketId, message: 'continue' })
+    const resumed = await fixture.callAs(chat, 'chat_resume', { ticketId, message: 'continue' })
     assert.equal(resumed.ok, true, JSON.stringify(resumed))
     assert.equal(resumed.workerSessionId, workerId)
     assert.equal(resumed.rearmed, true)
@@ -259,13 +259,13 @@ for (const unavailable of ['archived', 'missing', 'unresolvable']) {
 
 // 8. An unbound planned ticket still selects a worker automatically.
 {
-  const { fixture, chatbot } = await setup()
+  const { fixture, chat } = await setup()
   try {
-    const made = await fixture.callAs(chatbot, 'chatbot_request', { goal: 'unbound planned ticket' })
+    const made = await fixture.callAs(chat, 'chat_request', { goal: 'unbound planned ticket' })
     const advisor = fixture.service.controller.state.advisor('global').sessionId
     await fixture.callAs(advisor, 'ticket_plan', { ticketId: made.ticketId, summary: 'work' })
     fixture.service.store.transitionTicket(made.ticketId, 'blocked', { actor: 'router', executor: 'advisor', waitingOn: 'user', blockedReason: 'choose' })
-    const resumed = await fixture.callAs(chatbot, 'chatbot_resume', { ticketId: made.ticketId })
+    const resumed = await fixture.callAs(chat, 'chat_resume', { ticketId: made.ticketId })
     assert.equal(resumed.ok, true, JSON.stringify(resumed))
     assert.ok(resumed.workerSessionId)
     assert.equal(fixture.service.store.ticket(made.ticketId).executor, resumed.workerSessionId)
@@ -274,7 +274,7 @@ for (const unavailable of ['archived', 'missing', 'unresolvable']) {
 
 // 9. Explicit worker reassignment automatically reapplies the ticket grant before dispatch.
 {
-  const { fixture, chatbot } = await setup()
+  const { fixture, chat } = await setup()
   try {
     const permissions = new Map()
     const sessionIds = new Map()
@@ -299,8 +299,8 @@ for (const unavailable of ['archived', 'missing', 'unresolvable']) {
     fixture.ctx.approval.overrideOf = session => permissions.get(sessionIds.get(session)).approval
     fixture.ctx.approval.setPolicy = (agent, value) => { permissions.get(String(agent.id)).approval = value }
 
-    const { ticketId, workerId, advisor } = await planAndDispatch(fixture, chatbot)
-    const granted = await fixture.callAs(chatbot, 'chatbot_grant', { action: 'set', ticketId,
+    const { ticketId, workerId, advisor } = await planAndDispatch(fixture, chat)
+    const granted = await fixture.callAs(chat, 'chat_grant', { action: 'set', ticketId,
       sandboxMode: 'danger-full-access', approvalPolicy: 'never', reason: 'explicit ticket grant', ttlSeconds: 60 })
     assert.equal(granted.ok, true, JSON.stringify(granted))
     assert.equal(granted.grant.ticketId, ticketId)
@@ -319,7 +319,7 @@ for (const unavailable of ['archived', 'missing', 'unresolvable']) {
     assert.equal(permissions.get(replacement.sessionId).sandbox, 'danger-full-access')
     assert.equal(permissions.get(replacement.sessionId).approval, 'never')
     assert.ok(grant.scopeKey.startsWith('ticket:'))
-    await fixture.callAs(chatbot, 'chatbot_grant', { action: 'reset', grantId: grant.grantId })
+    await fixture.callAs(chat, 'chat_grant', { action: 'reset', grantId: grant.grantId })
     assert.equal(permissions.get(replacement.sessionId).sandbox, 'workspace-write')
     assert.equal(permissions.get(replacement.sessionId).approval, 'ask')
   } finally { fixture.cleanup() }

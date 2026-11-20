@@ -20,7 +20,7 @@ const fixture = await createFixture({
 })
 try {
   const controller = fixture.service.controller
-  const chatbot = fixture.service.controller.state.chatSessionId
+  const chat = fixture.service.controller.state.chatSessionId
   const advisor = await fixture.advisorSession()
   const worker = (await controller.ensureWorker('global')).sessionId
   const reflection = (await controller.ensureReflectionWorker('global')).sessionId
@@ -38,7 +38,7 @@ try {
     assert.equal(result.messages[0].source.kind, 'ria-task-host')
     assert.ok(result.messages[0].content[0].text.includes(fixed))
     assert.equal(result.messages[0].content[0].text.includes('run this direct command'), false)
-    assert.equal(fixture.prompts.length, before, 'interception must not notify Chatbot')
+    assert.equal(fixture.prompts.length, before, 'interception must not notify Chat')
   }
 
   assert.equal(fixture.service.store.settings().blockDirectUserMessages, true)
@@ -103,10 +103,10 @@ try {
   }
   fixture.service.store.setSettings({ blockDirectUserMessages: true })
 
-  // Chatbot and ordinary independent sessions are untouched.
+  // Chat and ordinary independent sessions are untouched.
   {
-    const chatbotInput = [direct('user-to-chatbot')]
-    assert.equal((await preStep(chatbot, chatbotInput)).messages, chatbotInput)
+    const chatInput = [direct('user-to-chat')]
+    assert.equal((await preStep(chat, chatInput)).messages, chatInput)
     const independentInput = [direct('user-to-independent')]
     assert.equal((await preStep('session-independent', independentInput)).messages, independentInput)
   }

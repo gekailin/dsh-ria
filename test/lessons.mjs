@@ -11,7 +11,7 @@ import { createFixture } from './support/ria-fixture.mjs'
 
 const repo = '/home/gkl/Desktop/vibe_proj/dsh-ria'
 
-async function planned(fixture, chatbot, request, advisor) {
+async function planned(fixture, chat, request, advisor) {
   const plan = await fixture.callAs(advisor, 'ticket_plan', {
     ticketId: request.ticketId,
     summary: 'do the ticket',
@@ -26,10 +26,10 @@ async function planned(fixture, chatbot, request, advisor) {
 {
   const fixture = await createFixture({ stateDefault: true })
   try {
-    const chatbot = fixture.service.controller.state.chatSessionId
-    const request = await fixture.callAs(chatbot, 'chatbot_request', { goal: '改 state 角色名', mode: 'work' })
+    const chat = fixture.service.controller.state.chatSessionId
+    const request = await fixture.callAs(chat, 'chat_request', { goal: '改 state 角色名', mode: 'work' })
     const advisor = fixture.service.controller.state.advisor('global').sessionId
-    await planned(fixture, chatbot, request, advisor)
+    await planned(fixture, chat, request, advisor)
     const dispatch = await fixture.callAs(advisor, 'ticket_dispatch', { ticketId: request.ticketId })
     assert.equal(dispatch.ok, true)
     const worker = dispatch.workerSessionId
@@ -97,7 +97,7 @@ async function planned(fixture, chatbot, request, advisor) {
 {
   const fixture = await createFixture({ stateDefault: true, extraGlobalTools: ['grep', 'glob'] })
   try {
-    const chatbot = fixture.service.controller.state.chatSessionId
+    const chat = fixture.service.controller.state.chatSessionId
     const lessons = fixture.service.controller.lessons
     const seeded = lessons.accept({
       scenario: 'state 改角色名要同步 ria.json 旧字段兼容',
@@ -117,7 +117,7 @@ async function planned(fixture, chatbot, request, advisor) {
     })
 
     // Advisor search hits the rename lesson, not the unrelated one.
-    const request = await fixture.callAs(chatbot, 'chatbot_request', {
+    const request = await fixture.callAs(chat, 'chat_request', {
       goal: '把 state 角色名从 thinker 改成 advisor，兼容旧数据',
       workspace: repo,
       mode: 'work',
@@ -133,7 +133,7 @@ async function planned(fixture, chatbot, request, advisor) {
     assert.ok(search.scanned < 2, 'scanned should follow postings, got ' + search.scanned)
 
     // Pin it explicitly in the WorkOrder, then dispatch.
-    await planned(fixture, chatbot, { ...request, lessons: [lessonId] }, advisor)
+    await planned(fixture, chat, { ...request, lessons: [lessonId] }, advisor)
     const plan = fixture.service.controller.state.workOrder(request.ticketId)
     assert.equal(plan.lessons[0].id, lessonId)
     const dispatch = await fixture.callAs(advisor, 'ticket_dispatch', { ticketId: request.ticketId })
@@ -152,12 +152,12 @@ async function planned(fixture, chatbot, request, advisor) {
     }
 
     // Auto-match path: no pinned ids, the ticket goal alone finds the lesson.
-    const autoRequest = await fixture.callAs(chatbot, 'chatbot_request', {
+    const autoRequest = await fixture.callAs(chat, 'chat_request', {
       goal: '改 state 角色名并兼容 ria.json 旧字段',
       workspace: repo,
       mode: 'work',
     })
-    await planned(fixture, chatbot, autoRequest, advisor)
+    await planned(fixture, chat, autoRequest, advisor)
     const autoDispatch = await fixture.callAs(advisor, 'ticket_dispatch', { ticketId: autoRequest.ticketId })
     assert.equal(autoDispatch.ok, true, JSON.stringify(autoDispatch))
     assert.ok(autoDispatch.lessons.includes(lessonId), JSON.stringify(autoDispatch.lessons))
@@ -166,8 +166,8 @@ async function planned(fixture, chatbot, request, advisor) {
     assert.match(autoBrief, new RegExp(lessonId))
 
     // Nothing relevant: no section, no error, explicit empty list.
-    const unrelatedRequest = await fixture.callAs(chatbot, 'chatbot_request', { goal: '写一个纯文本总结', acceptance: 'x', mode: 'work' })
-    await planned(fixture, chatbot, unrelatedRequest, advisor)
+    const unrelatedRequest = await fixture.callAs(chat, 'chat_request', { goal: '写一个纯文本总结', acceptance: 'x', mode: 'work' })
+    await planned(fixture, chat, unrelatedRequest, advisor)
     const unrelatedDispatch = await fixture.callAs(advisor, 'ticket_dispatch', { ticketId: unrelatedRequest.ticketId })
     assert.equal(unrelatedDispatch.ok, true, JSON.stringify(unrelatedDispatch))
     assert.deepEqual(unrelatedDispatch.lessons, [])

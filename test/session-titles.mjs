@@ -31,7 +31,7 @@ try {
     return await originalRename(request)
   }
 
-  const chatbot = (await controller.ensureChat()).sessionId
+  const chat = (await controller.ensureChat()).sessionId
   const advisor = await fixture.advisorSession()
   const worker1 = (await controller.ensureWorker('global')).sessionId
   // New Workers are created idle and are reusable for the next ticket, so
@@ -40,7 +40,7 @@ try {
   const worker2 = (await controller.ensureWorker('global')).sessionId
   const reflection1 = (await controller.ensureReflectionWorker('global')).sessionId
 
-  assert.equal(await titleOf(chatbot), 'Ria')
+  assert.equal(await titleOf(chat), 'Ria')
   assert.equal(await titleOf(advisor), 'Ria Advisor')
   assert.equal(await titleOf(worker1), 'Ria Worker 1')
   assert.equal(await titleOf(worker2), 'Ria Worker 2')
@@ -54,7 +54,7 @@ try {
   // Old bindings without seq are assigned persistent numbers and renamed once.
   controller.state.addWorker('session-legacy-worker', { workerType: 'work', status: 'idle' })
   controller.state.addWorker('session-legacy-reflection', { workerType: 'reflection', status: 'idle' })
-  await sc.rename({ sessionId: chatbot, title: 'Chatbot' })
+  await sc.rename({ sessionId: chat, title: 'Chat' })
   await sc.rename({ sessionId: advisor, title: 'Advisor' })
   await sc.rename({ sessionId: worker1, title: 'Worker 1' })
   await sc.rename({ sessionId: worker3, title: 'Worker 3' })
@@ -62,7 +62,7 @@ try {
   const before = renameCalls
   const first = await controller.renameRoleSessions()
   assert.ok(first.renamed.length >= 7, JSON.stringify(first))
-  assert.equal(await titleOf(chatbot), 'Ria')
+  assert.equal(await titleOf(chat), 'Ria')
   assert.equal(await titleOf(advisor), 'Ria Advisor')
   assert.equal(await titleOf(worker1), 'Ria Worker 1')
   assert.equal(await titleOf(worker3), 'Ria Worker 3')
@@ -87,7 +87,7 @@ try {
   assert.ok(titles.includes('Ria Advisor'))
   assert.ok(titles.includes('Ria Worker 1'))
   assert.ok(titles.includes('Ria Reflection Worker 1'))
-  assert.equal(titles.includes('Chatbot'), false)
+  assert.equal(titles.includes('Chat'), false)
   assert.equal(titles.includes('Advisor'), false)
   assert.equal(titles.includes('Worker 1'), false)
   assert.equal(titles.includes('Reflection Worker'), false)

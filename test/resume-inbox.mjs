@@ -10,7 +10,7 @@ const observedModes = new Set()
 const run = async (name, body) => {
   const fixture = await createFixture({ state: true })
   const controller = fixture.service.controller
-  const chatbot = controller.state.chatSessionId
+  const chat = controller.state.chatSessionId
   const host = { running: false, nextTurn: [], inputs: [], attempts: [] }
   const worker = (await controller.ensureWorker('global')).sessionId
   controller.state.addWorker(worker, { status: 'idle', currentTicketId: null })
@@ -39,13 +39,13 @@ const run = async (name, body) => {
     })
     assert.equal(moved.ok, true)
   }
-  const resume = message => fixture.callAs(chatbot, 'chatbot_resume', { ticketId, message })
-  const steer = message => fixture.callAs(chatbot, 'chatbot_steer', { ticketId, message })
+  const resume = message => fixture.callAs(chat, 'chat_resume', { ticketId, message })
+  const steer = message => fixture.callAs(chat, 'chat_steer', { ticketId, message })
   const step = async () => fixture.emit('agent/pre-step', { agent: fixture.agentFor(worker), turn: 1, step: 2 },
     async () => ({ kind: 'enter', messages: [] }))
   const events = () => fixture.service.routerEvents.query({ ticketId }).events
   const inbox = () => controller.state.pendingInbox(ticketId, worker)
-  const context = { fixture, controller, chatbot, worker, ticketId, host, running, park, resume, steer, step, events, inbox }
+  const context = { fixture, controller, chat, worker, ticketId, host, running, park, resume, steer, step, events, inbox }
   try {
     await body(context)
     const delivered = events().filter(event => event.event === 'steer.delivered')
@@ -161,7 +161,7 @@ await run('done-retry exhaustion blocks and notifies, without losing resume', as
   assert.equal(h.fixture.service.store.ticket(h.ticketId).waitingOn, 'user')
   assert.equal(h.inbox().length, 1)
   assert.ok(h.events().some(event => event.event === 'steer.undelivered' && event.payload.attempts === 2 && event.payload.source === 'resume'))
-  assert.ok(h.fixture.prompts.some(prompt => prompt.sessionId === h.chatbot && prompt.content[0].text.includes('指令没送到')))
+  assert.ok(h.fixture.prompts.some(prompt => prompt.sessionId === h.chat && prompt.content[0].text.includes('指令没送到')))
 })
 
 await run('idle resume exhaustion uses the same blocked/undelivered mechanism', async h => {
@@ -182,7 +182,7 @@ await run('idle resume exhaustion uses the same blocked/undelivered mechanism', 
   assert.equal(h.fixture.service.store.ticket(h.ticketId).waitingOn, 'user')
   assert.equal(h.inbox().length, 1)
   assert.ok(h.events().some(event => event.event === 'steer.undelivered' && event.payload.source === 'resume'))
-  assert.ok(h.fixture.prompts.some(prompt => prompt.sessionId === h.chatbot && prompt.content[0].text.includes('指令没送到')))
+  assert.ok(h.fixture.prompts.some(prompt => prompt.sessionId === h.chat && prompt.content[0].text.includes('指令没送到')))
 })
 
 await run('in-flight immediate admission is not injected again at pre-step', async h => {
@@ -234,7 +234,7 @@ await run('cancellation while a delivery fails stops retry and keeps it discarde
   h.fixture.ctx.sessionController.prompt = async (request, signal) => {
     if (request.sessionId === h.worker) {
       attempts++
-      const stopped = await h.fixture.callAs(h.chatbot, 'chatbot_stop_ticket', { ticketId: h.ticketId, reason: 'cancel pending delivery' })
+      const stopped = await h.fixture.callAs(h.chat, 'chat_stop_ticket', { ticketId: h.ticketId, reason: 'cancel pending delivery' })
       assert.equal(stopped.ok, true)
       throw new Error('cancel won admission')
     }

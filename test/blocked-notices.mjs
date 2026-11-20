@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { createFixture } from './support/ria-fixture.mjs'
 
 // Blocking notices now cover watched sessions only. Unwatched ordinary sessions
-// are traced with notice.suppressed instead of paging the Chatbot.
+// are traced with notice.suppressed instead of paging the Chat.
 
 const fixture = await createFixture({
   stateDefault: true,
@@ -14,8 +14,8 @@ const fixture = await createFixture({
   ],
 })
 const settle = () => new Promise(resolve => setTimeout(resolve, 20))
-const chatbot = fixture.service.controller.state.chatSessionId
-const notices = () => fixture.prompts.filter(item => String(item.sessionId) === String(chatbot)).map(item => String(item.content[0].text))
+const chat = fixture.service.controller.state.chatSessionId
+const notices = () => fixture.prompts.filter(item => String(item.sessionId) === String(chat)).map(item => String(item.content[0].text))
 const events = () => {
   try {
     return readFileSync(join(fixture.stateDir, 'router-events.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
@@ -50,7 +50,7 @@ try {
   await settle()
   assert.equal(notices().length, beforeQuestion + 1)
 
-  // Unwatched ordinary session: no Chatbot notice, but one suppressed event.
+  // Unwatched ordinary session: no Chat notice, but one suppressed event.
   const quiet = notices().length
   await fixture.emit('approval/request', approval('session-unwatched'), async () => 'rejected')
   await fixture.emit('user-questions/request', question('session-unwatched'), async () => ({ answers: [] }))
@@ -63,7 +63,7 @@ try {
   // Role sessions are silent and do not create suppressed events.
   const advisor = await fixture.advisorSession()
   const worker = (await fixture.service.controller.ensureWorker('global')).sessionId
-  for (const id of [chatbot, advisor, worker]) {
+  for (const id of [chat, advisor, worker]) {
     const beforeNotice = notices().length
     const beforeEvent = events().length
     await fixture.emit('user-questions/request', question(id, 'role-q'), async () => ({ answers: [] }))

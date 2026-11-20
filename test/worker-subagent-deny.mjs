@@ -3,27 +3,27 @@ import { createFixture } from './support/ria-fixture.mjs'
 
 const BASE_WORKER_TOOLS = ['bash', 'edit', 'read', 'run_code', 'worker_report', 'write']
 const ADVISOR_TOOLS = ['lesson_review', 'lesson_search', 'read', 'ticket_block', 'ticket_dispatch', 'ticket_plan', 'ticket_read']
-const CHATBOT_TOOLS = ['chatbot_co_manage', 'chatbot_direct', 'chatbot_grant', 'chatbot_models', 'chatbot_new_session', 'chatbot_propose', 'chatbot_read', 'chatbot_request', 'chatbot_resume', 'chatbot_send_image', 'chatbot_sessions', 'chatbot_status', 'chatbot_steer', 'chatbot_stop_ticket', 'chatbot_watch', 'chatbot_worker_config']
+const CHAT_TOOLS = ['chat_co_manage', 'chat_direct', 'chat_grant', 'chat_models', 'chat_new_session', 'chat_propose', 'chat_read', 'chat_request', 'chat_resume', 'chat_send_image', 'chat_sessions', 'chat_status', 'chat_steer', 'chat_stop_ticket', 'chat_watch', 'chat_worker_config']
 const FULL_DENY = ['subagent', 'subagent_fork', 'list_agents', 'send_message', 'interrupt_agent']
 
 async function dispatchWorker(fixture) {
-  const chatbot = fixture.service.controller.state.chatSessionId
-  const made = await fixture.callAs(chatbot, 'chatbot_request', { goal: 'delegation deny test' })
+  const chat = fixture.service.controller.state.chatSessionId
+  const made = await fixture.callAs(chat, 'chat_request', { goal: 'delegation deny test' })
   assert.equal(made.ok, true)
   const advisor = fixture.service.controller.state.advisor('global').sessionId
   const plan = await fixture.callAs(advisor, 'ticket_plan', { ticketId: made.ticketId, summary: 'do the work' })
   assert.equal(plan.ok, true)
   const sent = await fixture.callAs(advisor, 'ticket_dispatch', { ticketId: made.ticketId })
   assert.equal(sent.ok, true)
-  return { chatbot, advisor, worker: sent.workerSessionId }
+  return { chat, advisor, worker: sent.workerSessionId }
 }
 
 // 1. Every delegation tool the profile mounts is denied on the Worker. The
-// Advisor and Chatbot surfaces in the same fixture stay untouched.
+// Advisor and Chat surfaces in the same fixture stay untouched.
 {
   const fixture = await createFixture({ stateDefault: true, extraGlobalTools: FULL_DENY })
   try {
-    const { chatbot, advisor, worker } = await dispatchWorker(fixture)
+    const { chat, advisor, worker } = await dispatchWorker(fixture)
     const workerTools = fixture.visibleTools(worker).sort()
     assert.deepEqual(workerTools, BASE_WORKER_TOOLS)
     for (const name of FULL_DENY) assert.equal(workerTools.includes(name), false, name + ' must not be visible to a Worker')
@@ -31,7 +31,7 @@ async function dispatchWorker(fixture) {
     assert.deepEqual(restriction, { deny: FULL_DENY })
     // Role isolation: only the Worker lost the delegation family.
     assert.deepEqual(fixture.visibleTools(advisor).sort(), ADVISOR_TOOLS)
-    assert.deepEqual(fixture.visibleTools(chatbot).sort(), CHATBOT_TOOLS)
+    assert.deepEqual(fixture.visibleTools(chat).sort(), CHAT_TOOLS)
   } finally {
     fixture.cleanup()
   }

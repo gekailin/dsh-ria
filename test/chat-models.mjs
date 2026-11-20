@@ -4,8 +4,8 @@ import { MODEL_CATALOG_TTL_MS } from '../lib/core/model-catalog.mjs'
 
 async function setup(options = {}) {
   const fixture = await createFixture({ state: true, ...options })
-  const chatbot = fixture.service.controller.state.chatSessionId
-  return { fixture, chatbot }
+  const chat = fixture.service.controller.state.chatSessionId
+  return { fixture, chat }
 }
 
 function byKey(models, provider, model) {
@@ -15,9 +15,9 @@ function byKey(models, provider, model) {
 // 1. Normal catalog: fields, default marker, count/source, and the 5-minute
 // process-local cache (second call does not hit the registry; expiry does).
 {
-  const { fixture, chatbot } = await setup()
+  const { fixture, chat } = await setup()
   try {
-    const first = await fixture.callAs(chatbot, 'chatbot_models', {})
+    const first = await fixture.callAs(chat, 'chat_models', {})
     assert.equal(first.ok, true)
     assert.equal(first.source, 'catalog')
     assert.equal(first.count, 5)
@@ -39,12 +39,12 @@ function byKey(models, provider, model) {
     assert.equal(text.displayName, 'Text Only Model')
     assert.equal(text.contextWindow, undefined)
 
-    const second = await fixture.callAs(chatbot, 'chatbot_models', {})
+    const second = await fixture.callAs(chat, 'chat_models', {})
     assert.equal(second.cached, true)
     assert.equal(second.count, 5)
     assert.equal(fixture.modelCalls.listModels, 2) // one per provider on the first call only
     fixture.service.controller.modelCatalogCache.at = Date.now() - MODEL_CATALOG_TTL_MS - 1
-    const third = await fixture.callAs(chatbot, 'chatbot_models', {})
+    const third = await fixture.callAs(chat, 'chat_models', {})
     assert.equal(third.cached, false)
     assert.equal(fixture.modelCalls.listModels, 4)
   } finally {
@@ -54,14 +54,14 @@ function byKey(models, provider, model) {
 
 // 2. provider filter is exact.
 {
-  const { fixture, chatbot } = await setup()
+  const { fixture, chat } = await setup()
   try {
-    const result = await fixture.callAs(chatbot, 'chatbot_models', { provider: 'provider-text' })
+    const result = await fixture.callAs(chat, 'chat_models', { provider: 'provider-text' })
     assert.equal(result.ok, true)
     assert.equal(result.count, 2)
     assert.equal(result.total, 2)
     assert.deepEqual(result.models.map(item => item.provider), ['provider-text', 'provider-text'])
-    const missing = await fixture.callAs(chatbot, 'chatbot_models', { provider: 'provider-nope' })
+    const missing = await fixture.callAs(chat, 'chat_models', { provider: 'provider-nope' })
     assert.equal(missing.ok, true)
     assert.equal(missing.count, 0)
     assert.equal(missing.source, 'catalog')
@@ -73,15 +73,15 @@ function byKey(models, provider, model) {
 
 // 3. query matches model id or displayName, case-insensitively.
 {
-  const { fixture, chatbot } = await setup()
+  const { fixture, chat } = await setup()
   try {
-    const byId = await fixture.callAs(chatbot, 'chatbot_models', { query: 'VISION' })
+    const byId = await fixture.callAs(chat, 'chat_models', { query: 'VISION' })
     assert.equal(byId.count, 1)
     assert.equal(byId.models[0].model, 'model-vision')
-    const byName = await fixture.callAs(chatbot, 'chatbot_models', { query: 'text only' })
+    const byName = await fixture.callAs(chat, 'chat_models', { query: 'text only' })
     assert.equal(byName.count, 1)
     assert.equal(byName.models[0].model, 'model-text-only')
-    const shared = await fixture.callAs(chatbot, 'chatbot_models', { query: 'shared' })
+    const shared = await fixture.callAs(chat, 'chat_models', { query: 'shared' })
     assert.equal(shared.count, 2)
     assert.deepEqual(shared.models.map(item => item.provider).sort(), ['provider-ok', 'provider-text'])
   } finally {
@@ -91,17 +91,17 @@ function byKey(models, provider, model) {
 
 // 4. limit defaults to 50, clamps the page to limit, and rejects invalid values.
 {
-  const { fixture, chatbot } = await setup()
+  const { fixture, chat } = await setup()
   try {
-    const defaults = await fixture.callAs(chatbot, 'chatbot_models', {})
+    const defaults = await fixture.callAs(chat, 'chat_models', {})
     assert.equal(defaults.count, 5)
-    const capped = await fixture.callAs(chatbot, 'chatbot_models', { limit: 2 })
+    const capped = await fixture.callAs(chat, 'chat_models', { limit: 2 })
     assert.equal(capped.ok, true)
     assert.equal(capped.count, 2)
     assert.equal(capped.total, 5)
     assert.equal(capped.models.length, 2)
     for (const limit of [0, 201, 1.5, 'many']) {
-      const bad = await fixture.callAs(chatbot, 'chatbot_models', { limit })
+      const bad = await fixture.callAs(chat, 'chat_models', { limit })
       assert.equal(bad.ok, false)
       assert.equal(bad.code, 'invalid_limit')
     }
@@ -113,9 +113,9 @@ function byKey(models, provider, model) {
 // 5. Registry failure returns the bundled catalog with source + reason instead
 // of failing the call.
 {
-  const { fixture, chatbot } = await setup({ failListModels: true })
+  const { fixture, chat } = await setup({ failListModels: true })
   try {
-    const result = await fixture.callAs(chatbot, 'chatbot_models', {})
+    const result = await fixture.callAs(chat, 'chat_models', {})
     assert.equal(result.ok, true)
     assert.equal(result.source, 'bundled-fallback')
     assert.equal(result.count, 2)
@@ -130,9 +130,9 @@ function byKey(models, provider, model) {
 
 // 6. No llm registry at all is also a fallback, not an error.
 {
-  const { fixture, chatbot } = await setup({ noLlm: true })
+  const { fixture, chat } = await setup({ noLlm: true })
   try {
-    const result = await fixture.callAs(chatbot, 'chatbot_models', {})
+    const result = await fixture.callAs(chat, 'chat_models', {})
     assert.equal(result.ok, true)
     assert.equal(result.source, 'bundled-fallback')
     assert.equal(result.count, 2)
@@ -145,9 +145,9 @@ function byKey(models, provider, model) {
 // 7. An empty registry is a successful empty result with a reason; it is not a
 // failure and does not silently substitute the bundled list.
 {
-  const { fixture, chatbot } = await setup({ emptyModelCatalog: true })
+  const { fixture, chat } = await setup({ emptyModelCatalog: true })
   try {
-    const result = await fixture.callAs(chatbot, 'chatbot_models', {})
+    const result = await fixture.callAs(chat, 'chat_models', {})
     assert.equal(result.ok, true)
     assert.equal(result.source, 'catalog')
     assert.equal(result.count, 0)
@@ -159,13 +159,13 @@ function byKey(models, provider, model) {
   }
 }
 
-// 8. Non-Chatbot callers are rejected twice over: the tool is not installed on
+// 8. Non-Chat callers are rejected twice over: the tool is not installed on
 // another role, and the direct execute path has its own forbidden guard.
 {
-  const { fixture, chatbot } = await setup()
+  const { fixture, chat } = await setup()
   try {
-    await assert.rejects(fixture.callAs('session-worker', 'chatbot_models', {}), /tool not installed/)
-    const direct = await fixture.service.controller.chatbotModels({}, { agent: { id: 'session-worker' } })
+    await assert.rejects(fixture.callAs('session-worker', 'chat_models', {}), /tool not installed/)
+    const direct = await fixture.service.controller.chatModels({}, { agent: { id: 'session-worker' } })
     assert.equal(direct.ok, false)
     assert.equal(direct.code, 'forbidden')
   } finally {
@@ -173,4 +173,4 @@ function byKey(models, provider, model) {
   }
 }
 
-console.log('state chatbot models ok')
+console.log('state chat models ok')

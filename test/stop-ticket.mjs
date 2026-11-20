@@ -15,22 +15,22 @@ const eventsOf = stateDir => {
   try {
     const controller = fixture.service.controller
     const store = fixture.service.store
-    const chatbot = controller.state.chatSessionId
+    const chat = controller.state.chatSessionId
     const worker = (await controller.ensureWorker('global')).sessionId
     controller.state.addWorker(worker, { status: 'idle', currentTicketId: null })
     const ticket = store.addTicket({ status: 'working', executor: worker, goal: 'stop me' })
     controller.state.setTicketMeta(ticket.ticketId, { phase: 'working', workerId: worker })
     controller.state.setWorkOrder(ticket.ticketId, { ticketId: ticket.ticketId, summary: 'plan', steps: ['long job'] })
     fixture.setRunning(worker, true)
-    await fixture.callAs(chatbot, 'chatbot_steer', { ticketId: ticket.ticketId, message: 'pending direction' })
+    await fixture.callAs(chat, 'chat_steer', { ticketId: ticket.ticketId, message: 'pending direction' })
     assert.equal(controller.state.pendingInbox(ticket.ticketId, worker).length, 1)
 
-    // The guard rejects a non-Chatbot caller even if it reaches the method.
-    const forbidden = await controller.chatbotStopTicket({ ticketId: ticket.ticketId, reason: 'nope' }, { agent: fixture.agentFor(worker) })
+    // The guard rejects a non-Chat caller even if it reaches the method.
+    const forbidden = await controller.chatStopTicket({ ticketId: ticket.ticketId, reason: 'nope' }, { agent: fixture.agentFor(worker) })
     assert.equal(forbidden.ok, false)
     assert.equal(forbidden.code, 'forbidden')
     assert.equal(store.ticket(ticket.ticketId).status, 'working')
-    const stopped = await fixture.callAs(chatbot, 'chatbot_stop_ticket', { ticketId: ticket.ticketId, reason: 'user changed their mind' })
+    const stopped = await fixture.callAs(chat, 'chat_stop_ticket', { ticketId: ticket.ticketId, reason: 'user changed their mind' })
     assert.equal(stopped.ok, true, JSON.stringify(stopped))
     assert.equal(stopped.hardAbort, true, JSON.stringify(stopped))
     assert.ok(stopped.message.includes('已立即停止'))
@@ -53,12 +53,12 @@ const eventsOf = stateDir => {
     assert.ok(fixture.prompts.some(request => String(request.content[0].text).includes('已立即停止')))
 
     // A stopped ticket cannot receive another steer.
-    const steer = await fixture.callAs(chatbot, 'chatbot_steer', { ticketId: ticket.ticketId, message: 'late' })
+    const steer = await fixture.callAs(chat, 'chat_steer', { ticketId: ticket.ticketId, message: 'late' })
     assert.equal(steer.ok, false)
     assert.equal(steer.code, 'ticket_closed')
 
     // Repeat stop is idempotent: ok, no second event, no second cancel call.
-    const again = await fixture.callAs(chatbot, 'chatbot_stop_ticket', { ticketId: ticket.ticketId, reason: 'again' })
+    const again = await fixture.callAs(chat, 'chat_stop_ticket', { ticketId: ticket.ticketId, reason: 'again' })
     assert.equal(again.ok, true, JSON.stringify(again))
     assert.equal(again.idempotent, true)
     assert.equal(eventsOf(fixture.stateDir).filter(item => item.event === 'ticket.cancelled').length, 1)
@@ -75,7 +75,7 @@ const eventsOf = stateDir => {
   try {
     const controller = fixture.service.controller
     const store = fixture.service.store
-    const chatbot = controller.state.chatSessionId
+    const chat = controller.state.chatSessionId
     const worker = (await controller.ensureWorker('global')).sessionId
     controller.state.addWorker(worker, { status: 'idle', currentTicketId: null })
     delete fixture.ctx.sessionController.cancel
@@ -83,7 +83,7 @@ const eventsOf = stateDir => {
     controller.state.setTicketMeta(ticket.ticketId, { phase: 'working', workerId: worker })
     controller.state.setWorkOrder(ticket.ticketId, { ticketId: ticket.ticketId, summary: 'plan', steps: ['long job'] })
     fixture.setRunning(worker, true)
-    const stopped = await fixture.callAs(chatbot, 'chatbot_stop_ticket', { ticketId: ticket.ticketId, reason: 'deadline moved' })
+    const stopped = await fixture.callAs(chat, 'chat_stop_ticket', { ticketId: ticket.ticketId, reason: 'deadline moved' })
     assert.equal(stopped.ok, true, JSON.stringify(stopped))
     assert.equal(stopped.hardAbort, false)
     assert.equal(stopped.abortAvailable, false)
@@ -97,7 +97,7 @@ const eventsOf = stateDir => {
     // closed ticket. A raw inbox row injected afterwards is never picked up by
     // the soft-stop pre-step.
     controller.state.addInbox({ id: 'inbox_late', ticketId: ticket.ticketId, workerId: worker, message: 'late direction', from: 'chat', at: Date.now() })
-    const rejectedSteer = await fixture.callAs(chatbot, 'chatbot_steer', { ticketId: ticket.ticketId, message: 'late' })
+    const rejectedSteer = await fixture.callAs(chat, 'chat_steer', { ticketId: ticket.ticketId, message: 'late' })
     assert.equal(rejectedSteer.ok, false)
     assert.equal(rejectedSteer.code, 'ticket_closed')
 
@@ -136,12 +136,12 @@ const eventsOf = stateDir => {
   try {
     const controller = fixture.service.controller
     const store = fixture.service.store
-    const chatbot = controller.state.chatSessionId
+    const chat = controller.state.chatSessionId
     const worker = (await controller.ensureWorker('global')).sessionId
     controller.state.addWorker(worker, { status: 'idle', currentTicketId: null })
     const ticket = store.addTicket({ status: 'working', executor: worker, goal: 'idle stop' })
     controller.state.setTicketMeta(ticket.ticketId, { phase: 'working', workerId: worker })
-    const stopped = await fixture.callAs(chatbot, 'chatbot_stop_ticket', { ticketId: ticket.ticketId, reason: 'cancel idle work' })
+    const stopped = await fixture.callAs(chat, 'chat_stop_ticket', { ticketId: ticket.ticketId, reason: 'cancel idle work' })
     assert.equal(stopped.ok, true, JSON.stringify(stopped))
     assert.equal(stopped.hardAbort, false)
     assert.equal(stopped.softStop, false)
@@ -160,14 +160,14 @@ const eventsOf = stateDir => {
   try {
     const controller = fixture.service.controller
     const store = fixture.service.store
-    const chatbot = controller.state.chatSessionId
+    const chat = controller.state.chatSessionId
     const worker = (await controller.ensureWorker('global')).sessionId
     controller.state.addWorker(worker, { status: 'idle', currentTicketId: null })
     const ticket = store.addTicket({ status: 'working', executor: worker, goal: 'already done' })
     controller.state.setTicketMeta(ticket.ticketId, { phase: 'working', workerId: worker })
     const done = await fixture.callAs(worker, 'worker_report', { ticketId: ticket.ticketId, status: 'done', summary: 'finished', evidence: ['test'] })
     assert.equal(done.ok, true, JSON.stringify(done))
-    const stopped = await fixture.callAs(chatbot, 'chatbot_stop_ticket', { ticketId: ticket.ticketId, reason: 'too late' })
+    const stopped = await fixture.callAs(chat, 'chat_stop_ticket', { ticketId: ticket.ticketId, reason: 'too late' })
     assert.equal(stopped.ok, false)
     assert.equal(stopped.code, 'ticket_done')
     assert.equal(store.ticket(ticket.ticketId).status, 'done')

@@ -20,7 +20,7 @@ const workerOf = sessionId => fixture.service.controller.state.worker(sessionId)
 
 try {
   await fixture.service.ensure()
-  const chatbot = fixture.service.controller.state.chatSessionId
+  const chat = fixture.service.controller.state.chatSessionId
 
   // ① Old state.json: a worker row without workerType is a work Worker.
   {
@@ -51,11 +51,11 @@ try {
 
   // ② A reflection ticket: no Worker exists yet, so dispatch creates one.
   assert.equal(fixture.service.controller.state.workers().filter(item => item.workerType === 'reflection').length, 0)
-  // Reflection tickets are created internally now; chatbot_request is work-only.
+  // Reflection tickets are created internally now; chat_request is work-only.
   const reflectionRequest = await fixture.service.controller.requestTicket({
     goal: '复盘最近两次会话',
     acceptance: '给出根因与建议',
-  }, { agent: { id: chatbot } }, { mode: 'reflection' })
+  }, { agent: { id: chat } }, { mode: 'reflection' })
   assert.equal(reflectionRequest.ok, true, JSON.stringify(reflectionRequest))
   assert.equal(reflectionRequest.mode, 'reflection')
   const advisor = advisorOf()
@@ -87,7 +87,7 @@ try {
   assert.equal(reflectionTools.includes('bash'), false)
 
   // ③ A normal work ticket goes to a work Worker, never the reflection one.
-  const workRequest = await fixture.callAs(chatbot, 'chatbot_request', {
+  const workRequest = await fixture.callAs(chat, 'chat_request', {
     goal: '修一个普通 bug',
     acceptance: '测试通过',
     mode: 'work',
@@ -117,7 +117,7 @@ try {
   assert.equal(advisorTools.includes('session_events'), false)
 
   // ⑤ Kind mismatch is refused before anything is dispatched.
-  const mismatchRequest = await fixture.callAs(chatbot, 'chatbot_request', {
+  const mismatchRequest = await fixture.callAs(chat, 'chat_request', {
     goal: '又一个普通工单',
     acceptance: 'x',
     mode: 'work',
@@ -138,7 +138,7 @@ try {
   const withWorkspace = await fixture.service.controller.requestTicket({
     goal: '复盘项目',
     workspace: fixture.stateDir,
-  }, { agent: { id: chatbot } }, { mode: 'reflection' })
+  }, { agent: { id: chat } }, { mode: 'reflection' })
   assert.equal(withWorkspace.ok, false)
   assert.equal(withWorkspace.code, 'reflection_with_workspace')
 

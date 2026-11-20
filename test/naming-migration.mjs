@@ -43,6 +43,7 @@ try {
 
   const again = migrateLegacyState({ stateDir })
   assert.equal(again.changed, false)
+  assert.equal(again.backupDir, null)
 
   const boot = join(root, 'boot')
   mkdirSync(boot, { recursive: true })

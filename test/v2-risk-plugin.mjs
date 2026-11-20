@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createFixture } from './support/ria-fixture.mjs'
-import { classify, decideEscalation, resolveEscalationPolicy } from '../lib/v2/risk.mjs'
+import { classify, decideEscalation, resolveEscalationPolicy } from '../lib/core/risk.mjs'
 
 const command = 'dsh plugin --profile web add file:/home/gkl/Desktop/vibe_proj/dsh-ria'
 const result = classify({ toolName: 'bash', args: { command }, cwd: '/tmp', workspace: '/tmp' })

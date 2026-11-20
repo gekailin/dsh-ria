@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
-import { AUTO_TAG_LIMIT, TAG_LIMIT, normalizeTags, mergeTags } from '../lib/v2/tags.mjs'
-import { rankCandidateWorkers, isWorkerEligible } from '../lib/v2/worker-pool.mjs'
+import { AUTO_TAG_LIMIT, TAG_LIMIT, normalizeTags, mergeTags } from '../lib/store/tags.mjs'
+import { rankCandidateWorkers, isWorkerEligible } from '../lib/core/worker-pool.mjs'
 
 // normalizeTags: lowercase, whitespace/underscore to hyphen, filter, dedupe.
 assert.deepEqual(normalizeTags([' Frontend ', 'SQLite', 'frontend', 'a  b', 'a_b', 'x/y']),

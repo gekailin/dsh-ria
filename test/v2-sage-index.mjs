@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createFixture } from './support/ria-fixture.mjs'
-import { SAGE_PRINCIPLES_MAX_CHARS } from '../lib/v2/prompts.mjs'
+import { SAGE_PRINCIPLES_MAX_CHARS } from '../lib/core/prompts.mjs'
 
 const fixture = await createFixture({ v2Default: true })
 try {

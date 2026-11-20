@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createFixture } from './support/ria-fixture.mjs'
-import { projectKey } from '../lib/v2/cognition.mjs'
+import { projectKey } from '../lib/roles/cognition.mjs'
 
 const workspace = mkdtempSync(join(tmpdir(), 'ria-soft-tags-'))
 const fixture = await createFixture({

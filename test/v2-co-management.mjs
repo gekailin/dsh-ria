@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createFixture } from './support/ria-fixture.mjs'
-import { CoManagement } from '../lib/v2/co-management.mjs'
+import { CoManagement } from '../lib/roles/co-management.mjs'
 
 const tempDir = () => mkdtempSync(join(tmpdir(), 'ria-co-management-'))
 const dirs = [tempDir()]

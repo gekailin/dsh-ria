@@ -3,9 +3,9 @@
 // append-only), so normalizeTicket maps the actor on read only.
 import assert from 'node:assert/strict'
 import { normalizeTicket } from '../lib/tickets.mjs'
-import { ROLE_CHAT, isChatRole } from '../lib/v2/roles.mjs'
-import { roleSessionTitle } from '../lib/v2/controller.mjs'
-import { chatPrompt, roleLabel, sagePrompt } from '../lib/v2/prompts.mjs'
+import { ROLE_CHAT, isChatRole } from '../lib/roles/roles.mjs'
+import { roleSessionTitle } from '../lib/core/controller.mjs'
+import { chatPrompt, roleLabel, sagePrompt } from '../lib/core/prompts.mjs'
 import { readFileSync } from 'node:fs'
 
 // --- role ids ------------------------------------------------------------
@@ -14,7 +14,7 @@ assert.equal(isChatRole('chat'), true)
 assert.equal(isChatRole('chatbot'), false)
 assert.equal(isChatRole('advisor'), false)
 assert.equal(isChatRole(undefined), false)
-const rolesSource = readFileSync(new URL('../lib/v2/roles.mjs', import.meta.url), 'utf8')
+const rolesSource = readFileSync(new URL('../lib/roles/roles.mjs', import.meta.url), 'utf8')
 assert.equal(rolesSource.includes('LEGACY_ROLE_CHAT'), false)
 assert.equal(rolesSource.includes('normalizeRole'), false)
 

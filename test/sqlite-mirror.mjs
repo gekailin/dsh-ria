@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os'
 import { join, basename } from 'node:path'
 import { RiaStore } from '../lib/index.js'
-import { V2Store } from '../lib/v2/store.mjs'
+import { V2Store } from '../lib/store/store.mjs'
 import { StateWriter } from '../lib/state/writer.mjs'
 import { TicketRepository } from '../lib/state/tickets-repository.mjs'
 import { openDatabase, transaction } from '../lib/state/sqlite/db.mjs'

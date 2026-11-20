@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createFixture } from './support/ria-fixture.mjs'
-import { advisorPrompt, chatPrompt, workerPrompt } from '../lib/v2/prompts.mjs'
+import { advisorPrompt, chatPrompt, workerPrompt } from '../lib/core/prompts.mjs'
 import {
   DEFAULT_ESCALATION_POLICY,
   ESCALATION_POLICIES,
@@ -11,7 +11,7 @@ import {
   decideEscalation,
   mergeRiskLevels,
   resolveEscalationPolicy,
-} from '../lib/v2/risk.mjs'
+} from '../lib/core/risk.mjs'
 
 const WORKSPACE = process.cwd()
 
@@ -32,7 +32,7 @@ const WORKSPACE = process.cwd()
   }
 
   const medium = [
-    { label: 'write-lib', input: { toolName: 'write', args: { file_path: WORKSPACE + '/lib/v2/a.mjs' } }, rule: 'write-tracked-source' },
+    { label: 'write-lib', input: { toolName: 'write', args: { file_path: WORKSPACE + '/lib/a.mjs' } }, rule: 'write-tracked-source' },
     { label: 'edit-package', input: { toolName: 'edit', args: { file_path: WORKSPACE + '/package.json' } }, rule: 'write-tracked-source' },
     { label: 'git-commit', input: { toolName: 'bash', command: 'git commit -m x' }, rule: 'git-write' },
     { label: 'install', input: { toolName: 'bash', command: 'npm install left-pad' }, rule: 'install-deps' },
@@ -108,7 +108,7 @@ const WORKSPACE = process.cwd()
     assert.equal(risk.level, 'high', command)
     assert.equal(decideEscalation(risk.level, 'auto-low-medium'), 'ask')
   }
-  for (const command of ['ls -la', 'git status', 'git remote -v', 'git branch --list', 'npm test', 'node --check lib/v2/risk.mjs', 'sort input', 'sed -n 1p input']) {
+  for (const command of ['ls -la', 'git status', 'git remote -v', 'git branch --list', 'npm test', 'node --check lib/core/risk.mjs', 'sort input', 'sed -n 1p input']) {
     assert.equal(classify({ toolName: 'bash', command, cwd: WORKSPACE, workspace: WORKSPACE }).level, 'low', command)
   }
   const missing = classify({ toolName: 'bash', command: 'ls -la' })

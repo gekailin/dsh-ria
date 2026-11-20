@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createFixture } from './support/ria-fixture.mjs'
-import { MODEL_CATALOG_TTL_MS } from '../lib/v2/model-catalog.mjs'
+import { MODEL_CATALOG_TTL_MS } from '../lib/core/model-catalog.mjs'
 
 async function setup(options = {}) {
   const fixture = await createFixture({ v2: true, ...options })

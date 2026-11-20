@@ -5,8 +5,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { RiaStore } from '../lib/index.js'
-import { V2Store } from '../lib/v2/store.mjs'
-import { advisorPrompt, chatPrompt, ticketBrief, workerPrompt } from '../lib/v2/prompts.mjs'
+import { V2Store } from '../lib/store/store.mjs'
+import { advisorPrompt, chatPrompt, ticketBrief, workerPrompt } from '../lib/core/prompts.mjs'
 import { createFixture } from './support/ria-fixture.mjs'
 
 const read = rel => readFileSync(new URL(rel, import.meta.url), 'utf8')
@@ -84,20 +84,20 @@ for (const name of ['toolTicket', 'toolResolve', 'toolSpawn', 'toolModel', 'tool
 assert.equal(index.includes('tasks.log'), false, 'tasks.log compatibility path must be gone')
 assert.equal(index.includes('LEGACY_TICKET_LOG'), false)
 assert.equal(index.includes('ria_send_file'), false)
-const roles = read('../lib/v2/roles.mjs')
+const roles = read('../lib/roles/roles.mjs')
 assert.equal(roles.includes('LEGACY_ROLE_CHAT'), false)
 assert.equal(roles.includes('normalizeRole'), false)
-const controller = read('../lib/v2/controller.mjs')
+const controller = read('../lib/core/controller.mjs')
 for (const gone of ['ensureAdvisor', 'retireLegacyAdvisor', 'advisorMode', 'chatbotSessionId']) {
   assert.equal(controller.includes(gone), false, gone + ' must be gone from the controller')
 }
 assert.equal(controller.includes("roleSessionTitle('chatbot')"), false)
-const storeSource = read('../lib/v2/store.mjs')
+const storeSource = read('../lib/store/store.mjs')
 assert.equal(storeSource.includes('advisorMode'), false)
 assert.equal(storeSource.includes('setAdvisorMode'), false)
 assert.equal(storeSource.includes('chatbotSessionId'), false)
 assert.ok(storeSource.includes('chatSessionId'))
-const cognition = read('../lib/v2/cognition.mjs')
+const cognition = read('../lib/roles/cognition.mjs')
 assert.equal(cognition.includes('chatbot'), false)
 assert.ok(cognition.includes('chatDigest'))
 assert.equal(index.includes('cognition/chatbot'), false)

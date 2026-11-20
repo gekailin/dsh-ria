@@ -2,8 +2,8 @@ import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { V2Store } from '../lib/v2/store.mjs'
-import { LessonStore } from '../lib/v2/lessons.mjs'
+import { V2Store } from '../lib/store/store.mjs'
+import { LessonStore } from '../lib/store/lessons.mjs'
 import { createFixture } from './support/ria-fixture.mjs'
 
 // Lessons: Workers propose candidates, the Advisor reviews them, and dispatch

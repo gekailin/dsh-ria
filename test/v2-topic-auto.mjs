@@ -2,8 +2,8 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { advisorPlanSystemPrompt, parseAdvisorOutput } from '../lib/v2/advisor.mjs'
-import { projectKey } from '../lib/v2/cognition.mjs'
+import { advisorPlanSystemPrompt, parseAdvisorOutput } from '../lib/core/advisor.mjs'
+import { projectKey } from '../lib/roles/cognition.mjs'
 import { createFixture } from './support/ria-fixture.mjs'
 
 const textOf = request => String(((request.messages && request.messages[0] && request.messages[0].content || [])[0] || {}).text || '')

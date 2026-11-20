@@ -2,8 +2,8 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { apply } from '../../lib/index.js'
-import { roleSessionTitle } from '../../lib/v2/controller.mjs'
-import { ticketBrief } from '../../lib/v2/prompts.mjs'
+import { roleSessionTitle } from '../../lib/core/controller.mjs'
+import { ticketBrief } from '../../lib/core/prompts.mjs'
 
 const RIA_ID = 'session-ria'
 const MODEL_CATALOG = [
@@ -625,7 +625,7 @@ export async function createFixture(options = {}) {
 
   const service = apply(ctx, { stateDir })
   await service.ensure()
-  // Production Advisor planning is stateless (lib/v2/controller.mjs). Most
+  // Production Advisor planning is stateless (lib/core/controller.mjs). Most
   // suites here test Router/Worker mechanics and need a planned ticket whose
   // WorkOrder they control, plus an advisor-shaped session for the
   // ticket_plan/ticket_dispatch tool surface. This scaffolding keeps that

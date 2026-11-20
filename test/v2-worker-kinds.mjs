@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { V2Store } from '../lib/v2/store.mjs'
+import { V2Store } from '../lib/store/store.mjs'
 import { createFixture } from './support/ria-fixture.mjs'
 
 // Two Worker kinds: work (default, may write its workspace) and reflection

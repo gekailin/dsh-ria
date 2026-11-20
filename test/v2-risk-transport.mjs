@@ -2,8 +2,8 @@ import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createFixture } from './support/ria-fixture.mjs'
-import { PTC_MAX_NESTING, PTC_TRANSPORTS, parseTransportCall } from '../lib/v2/risk.mjs'
-import { V2Controller } from '../lib/v2/controller.mjs'
+import { PTC_MAX_NESTING, PTC_TRANSPORTS, parseTransportCall } from '../lib/core/risk.mjs'
+import { V2Controller } from '../lib/core/controller.mjs'
 
 const BT = String.fromCharCode(96)
 const probe = '/home/gkl/Desktop/ria-risk-probe.txt'

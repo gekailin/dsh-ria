@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createFixture } from './support/ria-fixture.mjs'
-import { projectKey } from '../lib/v2/cognition.mjs'
+import { projectKey } from '../lib/roles/cognition.mjs'
 
 // /board groups by projectKey and exposes Worker identity tags.
 const workspace = '/tmp/ria-board-project-key-test'

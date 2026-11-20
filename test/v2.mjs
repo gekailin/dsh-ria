@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createFixture } from './support/ria-fixture.mjs'
-import { ticketBrief } from '../lib/v2/prompts.mjs'
+import { ticketBrief } from '../lib/core/prompts.mjs'
 
 const independentCwd = mkdtempSync(join(tmpdir(), 'ria-independent-'))
 const fixture = await createFixture({
@@ -535,7 +535,7 @@ try {
 // the channel-facing session id pointing at the half-installed session.
 const errorDir = mkdtempSync(join(tmpdir(), 'dsh-ria-v2-error-'))
 try {
-  const { V2Store } = await import('../lib/v2/store.mjs')
+  const { V2Store } = await import('../lib/store/store.mjs')
   const store = new V2Store(errorDir)
   store.recordError('chat', new Error('install exploded'), { sessionId: 'session-bad', phase: 'create' })
   const reloaded = new V2Store(errorDir)

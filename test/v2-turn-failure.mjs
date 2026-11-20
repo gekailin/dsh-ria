@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createFixture } from './support/ria-fixture.mjs'
-import { STUCK_LAST_EVENT_MINUTES, computeTicketHealth } from '../lib/v2/ticket-health.mjs'
+import { STUCK_LAST_EVENT_MINUTES, computeTicketHealth } from '../lib/core/ticket-health.mjs'
 
 // A Worker turn can end abnormally (LLM idle timeout -> reason.kind=error, a
 // user/parent abort -> reason.kind=aborted). Before this fix `turn/end` only

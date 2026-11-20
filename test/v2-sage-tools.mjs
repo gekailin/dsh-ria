@@ -4,7 +4,7 @@ import { createFixture } from './support/ria-fixture.mjs'
 // Sage must see exactly its four cognition/governance tools. The restriction is an empty
 // allow-list: dsh-tools only validates/removes INHERITED (global/preset) tools
 // there, while the agent's own scoped registrations stay visible (see
-// lib/v2/controller.mjs restrictSage and dsh-tools/lib/index.js:453-467).
+// lib/core/controller.mjs restrictSage and dsh-tools/lib/index.js:453-467).
 //
 // The other roles are snapshotted here from the pre-change behaviour so a
 // regression in their agent creation/restriction paths fails this test too.

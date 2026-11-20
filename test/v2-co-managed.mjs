@@ -32,7 +32,7 @@ async function setup() {
     const advisor = v2.advisor('global').sessionId
     const made = await fixture.callAs(advisor, 'ticket_plan', {
       ticketId, summary: 'wire the transport', steps: ['read code', 'change dispatch'],
-      acceptance: 'tests pass', artifacts: ['lib/v2/co-managed.mjs'], notes: 'keep it read-only first',
+      acceptance: 'tests pass', artifacts: ['lib/roles/co-managed.mjs'], notes: 'keep it read-only first',
     })
     assert.equal(made.ok, true, JSON.stringify(made))
     return made
@@ -82,7 +82,7 @@ async function setup() {
     assert.equal(sent.workerSessionId, 'session-cm')
     const brief = textOf(fixture.prompts.at(-1))
     assert.ok(brief.startsWith('[WorkOrder #' + ticketId + ']'), brief.slice(0, 120))
-    for (const expected of ['wire the transport', 'read code', 'change dispatch', 'tests pass', 'lib/v2/co-managed.mjs', 'keep it read-only first']) {
+    for (const expected of ['wire the transport', 'read code', 'change dispatch', 'tests pass', 'lib/roles/co-managed.mjs', 'keep it read-only first']) {
       assert.ok(brief.includes(expected), 'brief should carry ' + expected)
     }
     assert.equal(fixture.service.store.ticket(ticketId).status, 'working')
@@ -102,7 +102,7 @@ async function setup() {
     // Assistant reply becomes a structured report.
     fixture.service.onSessionEvent({ header: { id: 'session-cm' } }, {
       type: 'assistant/message', time: Date.now(),
-      data: { content: [{ type: 'text', text: '结论: 派发改好了\n证据: node test/v2-co-managed.mjs 通过\n产物: lib/v2/co-managed.mjs\n未做项: 无' }] },
+      data: { content: [{ type: 'text', text: '结论: 派发改好了\n证据: node test/v2-co-managed.mjs 通过\n产物: lib/roles/co-managed.mjs\n未做项: 无' }] },
     })
     const report = v2.reportsFor(ticketId, 5).at(-1)
     assert.equal(report.structured, true)

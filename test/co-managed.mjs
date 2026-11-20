@@ -29,7 +29,7 @@ async function setup() {
     return made.ticketId
   }
   async function plan(ticketId) {
-    const advisor = state.advisor('global').sessionId
+    const advisor = controller.advisor('global').sessionId
     const made = await fixture.callAs(advisor, 'ria_ticket_plan', {
       ticketId, summary: 'wire the transport', steps: ['read code', 'change dispatch'],
       acceptance: 'tests pass', artifacts: ['lib/roles/co-managed.mjs'], notes: 'keep it read-only first',
@@ -39,7 +39,7 @@ async function setup() {
   }
   async function dispatch(ticketId) {
     await plan(ticketId)
-    const advisor = state.advisor('global').sessionId
+    const advisor = controller.advisor('global').sessionId
     const sent = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId })
     assert.equal(sent.ok, true, JSON.stringify(sent))
     return sent
@@ -245,7 +245,7 @@ async function setup() {
   try {
     await register()
     const ticketId = await ticket('no plan yet', '/work/proj/e')
-    const advisor = state.advisor('global').sessionId
+    const advisor = fixture.service.controller.advisor('global').sessionId
     const sent = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId })
     assert.equal(sent.ok, false)
     assert.equal(sent.code, 'work_order_missing')

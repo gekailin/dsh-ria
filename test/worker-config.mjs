@@ -15,13 +15,13 @@ try {
   const chat = fixture.service.controller.state.chatSessionId
 
   async function planAndDispatch(request) {
-    const plan = await fixture.callAs(controller.state.advisor('global').sessionId, 'ria_ticket_plan', {
+    const plan = await fixture.callAs(controller.advisor('global').sessionId, 'ria_ticket_plan', {
       ticketId: request.ticketId,
       summary: 'do it',
       steps: ['step one'],
     })
     assert.equal(plan.ok, true, JSON.stringify(plan))
-    const dispatched = await fixture.callAs(controller.state.advisor('global').sessionId, 'ria_ticket_dispatch', { ticketId: request.ticketId })
+    const dispatched = await fixture.callAs(controller.advisor('global').sessionId, 'ria_ticket_dispatch', { ticketId: request.ticketId })
     assert.equal(dispatched.ok, true, JSON.stringify(dispatched))
     return dispatched
   }

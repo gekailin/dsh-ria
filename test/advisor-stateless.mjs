@@ -19,7 +19,7 @@ try {
   const first = await fixture.callAs(chat, 'ria_chat_request', { goal: 'alpha goal' })
   assert.equal(first.ok, true, JSON.stringify(first))
   assert.equal(first.stateless, true)
-  assert.equal(controller.state.advisor('global'), null)
+  assert.equal(controller.advisor('global'), null)
   assert.equal(controller.state.ticketMeta(first.ticketId).advisorSessionId, undefined)
   assert.equal(advisorCreates().length, 0)
   assert.equal(fixture.service.store.ticket(first.ticketId).status, 'working')
@@ -72,7 +72,7 @@ try {
   const statelessAgain = await fixture.callAs(chat, 'ria_chat_request', { goal: 'stateless again' })
   assert.equal(statelessAgain.ok, true)
   assert.equal(statelessAgain.stateless, true)
-  assert.equal(controller.state.advisor('global'), null)
+  assert.equal(controller.advisor('global'), null)
   assert.equal(advisorCreates().length, 0)
 
   console.log('state advisor stateless ok')
@@ -98,7 +98,7 @@ try {
     assert.ok(failed)
     assert.equal(failed.sessionId, '')
     assert.equal(failed.payload.attempts, 2)
-    assert.equal(controller.state.advisor('global'), null)
+    assert.equal(controller.advisor('global'), null)
     console.log('state advisor failure ok')
   } finally {
     failing.cleanup()

@@ -28,7 +28,7 @@ async function planned(fixture, chat, request, advisor) {
   try {
     const chat = fixture.service.controller.state.chatSessionId
     const request = await fixture.callAs(chat, 'ria_chat_request', { goal: '改 state 角色名', mode: 'work' })
-    const advisor = fixture.service.controller.state.advisor('global').sessionId
+    const advisor = fixture.service.controller.advisor('global').sessionId
     await planned(fixture, chat, request, advisor)
     const dispatch = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: request.ticketId })
     assert.equal(dispatch.ok, true)
@@ -122,7 +122,7 @@ async function planned(fixture, chat, request, advisor) {
       workspace: repo,
       mode: 'work',
     })
-    const advisor = fixture.service.controller.state.advisor('global').sessionId
+    const advisor = fixture.service.controller.advisor('global').sessionId
     const search = await fixture.callAs(advisor, 'ria_lesson_search', {
       query: '角色改名 state 旧字段兼容',
       workspace: repo,

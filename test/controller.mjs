@@ -224,7 +224,7 @@ try {
   assert.equal(fixture.service.store.ticket(created.ticketId).status, 'open')
   assert.equal(fixture.service.store.ticket(created.ticketId).waitingOn, 'ria')
 
-  const advisor = fixture.service.controller.state.advisor('global').sessionId
+  const advisor = fixture.service.controller.advisor('global').sessionId
   // Retrospective tools belong to reflection Workers, not the Advisor.
   assert.deepEqual(fixture.visibleTools(advisor).sort(), ['read', 'ria_lesson_review', 'ria_lesson_search', 'ria_ticket_block', 'ria_ticket_dispatch', 'ria_ticket_plan', 'ria_ticket_read'])
   assert.equal(fixture.prompts.at(-1).sessionId, advisor)
@@ -499,7 +499,7 @@ let workerId
 try {
   const chat = first.service.controller.state.chatSessionId
   const created = await first.callAs(chat, 'ria_chat_request', { goal: 'long running task' })
-  const advisor = first.service.controller.state.advisor('global').sessionId
+  const advisor = first.service.controller.advisor('global').sessionId
   await first.callAs(advisor, 'ria_ticket_plan', { ticketId: created.ticketId, summary: 'do the work' })
   const dispatched = await first.callAs(advisor, 'ria_ticket_dispatch', { ticketId: created.ticketId })
   workingTicketId = created.ticketId

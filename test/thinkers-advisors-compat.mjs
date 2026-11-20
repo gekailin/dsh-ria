@@ -10,17 +10,17 @@ try {
   mkdirSync(stateDir, { recursive: true })
   writeFileSync(join(stateDir, 'state.json'), JSON.stringify({
     thinkers: { global: { scope: 'global', sessionId: 'session-old', cwd: '/tmp/ria-thinkers', createdAt: 1 } },
+    advisors: { global: { scope: 'global', sessionId: 'session-old' } },
     meta: { workerSeq: 0, reflectionSeq: 0 },
   }, null, 2) + '\n')
-
   const store = new StateStore(stateDir)
-  assert.equal(store.advisor('global').sessionId, 'session-old')
-  assert.equal(store.advisor('global').cwd, '/tmp/ria-thinkers')
+  assert.equal(typeof store.advisor, 'undefined')
   assert.equal('thinkers' in store.data, false)
+  assert.equal('advisors' in store.data, false)
   store.save()
   const saved = JSON.parse(readFileSync(join(stateDir, 'state.json'), 'utf8'))
-  assert.equal(saved.advisors.global.sessionId, 'session-old')
   assert.equal('thinkers' in saved, false)
+  assert.equal('advisors' in saved, false)
   console.log('thinkers compat ok')
 } finally {
   rmSync(root, { recursive: true, force: true })

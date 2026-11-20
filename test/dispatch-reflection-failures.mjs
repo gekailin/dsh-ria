@@ -6,7 +6,7 @@ const reflectionPlan = async (fixture, controller) => {
   const chat = controller.state.chatSessionId
   const request = await controller.requestTicket({ goal: 'reflect on recent work', acceptance: 'report' }, { agent: { id: chat } }, { mode: 'reflection' })
   assert.equal(request.ok, true, JSON.stringify(request))
-  const advisor = controller.state.advisor('global').sessionId
+  const advisor = controller.advisor('global').sessionId
   const plan = await fixture.callAs(advisor, 'ria_ticket_plan', {
     ticketId: request.ticketId,
     summary: 'read evidence and write a retrospective',
@@ -98,7 +98,7 @@ const reflectionPlan = async (fixture, controller) => {
     const chat = controller.state.chatSessionId
     const request = await controller.requestTicket({ goal: 'final recheck failure', acceptance: 'x' }, { agent: { id: chat } }, { mode: 'work' })
     assert.equal(request.ok, true, JSON.stringify(request))
-    const advisor = controller.state.advisor('global').sessionId
+    const advisor = controller.advisor('global').sessionId
     const plan = await fixture.callAs(advisor, 'ria_ticket_plan', { ticketId: request.ticketId, summary: 'work', steps: ['work'] })
     assert.equal(plan.ok, true, JSON.stringify(plan))
     const idle = await controller.ensureWorker('global')

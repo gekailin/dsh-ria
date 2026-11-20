@@ -16,7 +16,7 @@ const auditLines = () => {
 try {
   await fixture.service.ensure()
   const made = await fixture.callAs(chat, 'ria_chat_request', { goal: 'grant pending approval', acceptance: 'no cancelled' })
-  const advisor = fixture.service.controller.state.advisor('global').sessionId
+  const advisor = fixture.service.controller.advisor('global').sessionId
   await fixture.callAs(advisor, 'ria_ticket_plan', { ticketId: made.ticketId, summary: 'wait on approval', steps: ['approval'] })
   const dispatched = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: made.ticketId })
   const ticketId = made.ticketId

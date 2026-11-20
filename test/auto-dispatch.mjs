@@ -15,7 +15,7 @@ async function plannedTicket(fixture, args = {}) {
   const chat = controller.state.chatSessionId
   const request = await fixture.callAs(chat, 'ria_chat_request', { goal: 'auto-dispatch policy', ...args })
   assert.equal(request.ok, true, JSON.stringify(request))
-  const advisor = controller.state.advisor('global').sessionId
+  const advisor = controller.advisor('global').sessionId
   const plan = await fixture.callAs(advisor, 'ria_ticket_plan', {
     ticketId: request.ticketId, summary: 'execute the ticket', steps: ['work'],
   })
@@ -250,7 +250,7 @@ await withFixture(async fixture => {
   assert.notEqual((await controller.ensureReflectionWorker('global')).sessionId, reflection.sessionId)
   const request = await controller.requestTicket({ goal: 'reflection auto-dispatch' }, { agent: { id: controller.state.chatSessionId } }, { mode: 'reflection' })
   assert.equal(request.ok, true, JSON.stringify(request))
-  const advisor = controller.state.advisor('global').sessionId
+  const advisor = controller.advisor('global').sessionId
   assert.equal((await fixture.callAs(advisor, 'ria_ticket_plan', { ticketId: request.ticketId, summary: 'read the logs', steps: ['ria_session_list'] })).ok, true)
   const sent = await fixture.callAs(advisor, 'ria_ticket_dispatch', {
     ticketId: request.ticketId, workerSessionId: reflection.sessionId,

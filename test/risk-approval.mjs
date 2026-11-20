@@ -166,7 +166,7 @@ const riskAudits = () => auditLines().filter(item => item.event === 'approval/de
 try {
   await fixture.service.ensure()
   const request = await fixture.callAs(chat, 'ria_chat_request', { goal: 'risk approval probe', acceptance: 'none' })
-  const advisor = fixture.service.controller.state.advisor('global').sessionId
+  const advisor = fixture.service.controller.advisor('global').sessionId
   await fixture.callAs(advisor, 'ria_ticket_plan', { ticketId: request.ticketId, summary: 'probe risk', steps: ['probe'] })
   const dispatch = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: request.ticketId })
   assert.equal(dispatch.ok, true)

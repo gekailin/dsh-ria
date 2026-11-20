@@ -10,7 +10,7 @@ async function dispatchWorker(fixture) {
   const chat = fixture.service.controller.state.chatSessionId
   const made = await fixture.callAs(chat, 'ria_chat_request', { goal: 'delegation deny test' })
   assert.equal(made.ok, true)
-  const advisor = fixture.service.controller.state.advisor('global').sessionId
+  const advisor = fixture.service.controller.advisor('global').sessionId
   const plan = await fixture.callAs(advisor, 'ria_ticket_plan', { ticketId: made.ticketId, summary: 'do the work' })
   assert.equal(plan.ok, true)
   const sent = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: made.ticketId })

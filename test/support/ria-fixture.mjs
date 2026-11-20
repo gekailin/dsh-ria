@@ -636,13 +636,13 @@ export async function createFixture(options = {}) {
   const createAdvisorSession = async (scope = 'global') => {
     const sessionId = 'session-advisor-' + (++advisorSeq)
     const cwd = join(stateDir, 'advisors', String(advisorSeq))
-    service.controller.state.setAdvisor(scope, sessionId, { cwd })
+    service.controller.setAdvisor(scope, sessionId, { cwd })
     const created = await service.controller.createSession({ sessionId, cwd, agentPreset: 'ptc', title: roleSessionTitle('advisor') })
     service.controller.install(created.agent, 'advisor')
     return sessionId
   }
   const advisorSession = async (scope = 'global') => {
-    const existing = service.controller.state.advisor(scope)
+    const existing = service.controller.advisor(scope)
     if (existing && existing.sessionId) return String(existing.sessionId)
     return await createAdvisorSession(scope)
   }
@@ -650,7 +650,7 @@ export async function createFixture(options = {}) {
     service.controller.createAdvisorForTicket = async (ticket, meta = {}, request = null, extra = '') => {
       const ticketId = String(ticket.ticketId)
       const sessionId = await createAdvisorSession('ticket:' + ticketId)
-      service.controller.state.setAdvisor('global', sessionId, { cwd: join(stateDir, 'advisors') })
+      service.controller.setAdvisor('global', sessionId, { cwd: join(stateDir, 'advisors') })
       service.controller.state.setTicketMeta(ticketId, { advisorSessionId: sessionId })
       const lines = [ticketBrief(ticket, request, meta)]
       if (extra) lines.push('', extra)

@@ -10,7 +10,7 @@ async function setup() {
 async function planAndDispatch(fixture, chat, goal = 'do the work') {
   const made = await fixture.callAs(chat, 'ria_chat_request', { goal })
   assert.equal(made.ok, true)
-  const advisor = fixture.service.controller.state.advisor('global').sessionId
+  const advisor = fixture.service.controller.advisor('global').sessionId
   const plan = await fixture.callAs(advisor, 'ria_ticket_plan', { ticketId: made.ticketId, summary: 'execute the work order' })
   assert.equal(plan.ok, true)
   const sent = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: made.ticketId })
@@ -262,7 +262,7 @@ for (const unavailable of ['archived', 'missing', 'unresolvable']) {
   const { fixture, chat } = await setup()
   try {
     const made = await fixture.callAs(chat, 'ria_chat_request', { goal: 'unbound planned ticket' })
-    const advisor = fixture.service.controller.state.advisor('global').sessionId
+    const advisor = fixture.service.controller.advisor('global').sessionId
     await fixture.callAs(advisor, 'ria_ticket_plan', { ticketId: made.ticketId, summary: 'work' })
     fixture.service.store.transitionTicket(made.ticketId, 'blocked', { actor: 'router', executor: 'advisor', waitingOn: 'user', blockedReason: 'choose' })
     const resumed = await fixture.callAs(chat, 'ria_chat_resume', { ticketId: made.ticketId })

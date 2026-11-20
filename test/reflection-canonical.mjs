@@ -11,7 +11,7 @@ try {
   assert.equal(request.ok, true, JSON.stringify(request))
   const forDate = '2026-11-20'
   controller.state.setTicketMeta(request.ticketId, { reflectionForDate: forDate })
-  const advisor = controller.state.advisor('global').sessionId
+  const advisor = controller.advisor('global').sessionId
   const plan = await fixture.callAs(advisor, 'ria_ticket_plan', { ticketId: request.ticketId, summary: 'reflect', steps: ['read'] })
   assert.equal(plan.ok, true, JSON.stringify(plan))
   const dispatched = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: request.ticketId })

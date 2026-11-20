@@ -52,7 +52,7 @@ try {
   const chat = fixture.service.controller.state.chatSessionId
   const made = await fixture.callAs(chat, 'ria_chat_request', { goal: 'review the retrospective tools' })
   assert.equal(made.ok, true)
-  const advisor = fixture.service.controller.state.advisor('global').sessionId
+  const advisor = fixture.service.controller.advisor('global').sessionId
   // Create both Worker kinds before the read-only baseline: session creation
   // renames the session, which is test setup rather than a write by the tools.
   const worker = await fixture.service.controller.ensureWorker('global')

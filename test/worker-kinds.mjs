@@ -15,7 +15,7 @@ const fixture = await createFixture({
   extraGlobalTools: ['grep', 'glob'],
 })
 
-const advisorOf = () => fixture.service.controller.state.advisor('global').sessionId
+const advisorOf = () => fixture.service.controller.advisor('global').sessionId
 const workerOf = sessionId => fixture.service.controller.state.worker(sessionId)
 
 try {

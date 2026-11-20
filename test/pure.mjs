@@ -28,14 +28,16 @@ try {
     lastError: null,
   }, null, 2))
   const store = new StateStore(dir)
-  assert.equal(store.advisor('global').sessionId, 'session-old')
-  assert.equal(store.advisor('global').cwd, '/tmp/ria-thinkers')
+  // Stateless Advisor: legacy advisors/thinkers bindings are ignored.
+  assert.equal(typeof store.advisor, 'undefined')
   assert.equal(store.data.tickets.ticket_legacy.phase, 'advisor')
+  assert.equal('advisors' in store.data, false)
+  assert.equal('thinkers' in store.data, false)
 
-  // The first write normalizes the field: advisors only, legacy key gone.
-  store.setAdvisor('global', 'session-new')
+  // New state never writes advisor bindings.
+  store.save()
   const normalized = JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8'))
-  assert.equal(normalized.advisors.global.sessionId, 'session-new')
+  assert.equal('advisors' in normalized, false)
   assert.equal('thinkers' in normalized, false)
 
   // A ticket written before the rename is loaded with the canonical role.

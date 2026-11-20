@@ -58,7 +58,7 @@ for (const [name, text] of Object.entries(templates)) {
     const chat = controller.state.chatSessionId
     const request = await fixture.callAs(chat, 'ria_chat_request', { goal: 'unknown tool', acceptance: 'x' })
     assert.equal(request.ok, true, JSON.stringify(request))
-    const advisor = controller.state.advisor('global').sessionId
+    const advisor = controller.advisor('global').sessionId
     const plan = await fixture.callAs(advisor, 'ria_ticket_plan', {
       ticketId: request.ticketId,
       summary: 'use a removed tool',

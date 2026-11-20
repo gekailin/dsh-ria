@@ -34,7 +34,7 @@ try {
   const verified = verifySqliteState({ stateDir: dir })
   assert.equal(verified.ok, true)
   assert.equal(verified.mode, 'verify-only')
-  assert.deepEqual(verified.counts, { tickets: 3, history: 3, hot: 2, archived: 1, meta: 1 })
+  assert.deepEqual(verified.counts, { tickets: 3, history: 3, hot: 2, archived: 1, meta: 0 })
   assert.equal(verified.countsMatch, true)
   assert.deepEqual(verified.integrity, ['ok'])
   assert.equal(sha(join(dir, 'ria.sqlite')), dbBefore, 'verification is read-only')

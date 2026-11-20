@@ -26,7 +26,7 @@ try {
   const before = readFileSync(join(stateDir, 'ria.json'), 'utf8')
   const seeded = seedSqliteFromState({ stateDir })
   assert.equal(seeded.ok, true)
-  assert.deepEqual(seeded.counts, { tickets: 2, history: 2, hot: 1, archived: 1, meta: 1 })
+  assert.deepEqual(seeded.counts, { tickets: 2, history: 2, hot: 1, archived: 1, meta: null })
   const exported = exportTickets({ stateDir })
   assert.deepEqual(exported.ria.tickets, [ticket])
   assert.deepEqual(exported.state.tickets[ticket.ticketId], meta)

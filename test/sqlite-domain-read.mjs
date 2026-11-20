@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { RiaStore } from '../lib/index.js'
 import { LessonStore } from '../lib/store/lessons.mjs'
-import { migrateDomains } from '../lib/state/sqlite/domain-migration.mjs'
 import { openDatabase } from '../lib/state/sqlite/db.mjs'
 import { SqliteTicketAdapter } from '../lib/state/sqlite/adapter.mjs'
 import { SqliteTicketRuntime } from '../lib/state/sqlite/runtime.mjs'
@@ -17,8 +16,15 @@ const dir = mkdtempSync(join(tmpdir(), 'ria-domain-read-'))
 try {
   writeFileSync(join(dir, 'ria.json'), JSON.stringify({ schemaVersion: 5, tickets: [ticket], topics: legacyTopics, links: legacyLinks }))
   writeFileSync(join(dir, 'lessons.json'), JSON.stringify({ entries: { l1: { id: 'l1', status: 'active', scenario: 's', approach: 'a', pitfall: 'p', createdAt: 4 } } }))
-  { const db = openDatabase(join(dir, 'ria.sqlite'), { create: true }); new SqliteTicketAdapter(db).save(ticket); db.close() }
-  migrateDomains({ stateDir: dir })
+  {
+    const db = openDatabase(join(dir, 'ria.sqlite'), { create: true })
+    new SqliteTicketAdapter(db).save(ticket)
+    db.prepare('INSERT INTO topics(id,title,project_key,tags,brief,archived_at,merged_into,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)')
+      .run('topic_a', 'Alpha', 'p', '["t"]', 'b', null, null, 1, 2)
+    db.prepare('INSERT INTO topic_links(topic_id,ticket_id,role,created_at) VALUES(?,?,?,?)').run('topic_a', 't1', 'primary', 3)
+    db.prepare('INSERT INTO lessons(id,status,scenario,approach,pitfall,created_at) VALUES(?,?,?,?,?,?)').run('l1', 'active', 's', 'a', 'p', 4)
+    db.close()
+  }
   const runtime = new SqliteTicketRuntime({ stateDir: dir })
   const store = new RiaStore(dir, { runtime })
   assert.deepEqual(store.topics().map(topic => topic.topicId), ['topic_a'])

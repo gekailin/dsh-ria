@@ -76,11 +76,16 @@ try {
   assert.equal(fixture.service.store.ticket(reflectionRequest.ticketId).executor, reflectionWorkerId)
   assert.equal(fixture.service.controller.state.workers().filter(item => item.workerType === 'reflection').length, 1)
 
-  // Its tool surface: read-only investigation plus the retrospective pair, no
-  // write/execute tools.
+  // Its tool surface: read-only investigation plus the bound retrospective
+  // tools, no write/execute tools. A reflection dispatch binds all eight
+  // ria_reflect_* tools (including the Sage context reader).
   const reflectionTools = fixture.visibleTools(reflectionWorkerId).sort()
   assert.deepEqual(reflectionTools, [
-    'glob', 'grep', 'read', 'ria_session_events', 'ria_session_list', 'ria_worker_report',
+    'glob', 'grep', 'read',
+    'ria_reflect_read_context', 'ria_reflect_read_role_context',
+    'ria_reflect_read_sage_context', 'ria_reflect_read_session',
+    'ria_reflect_read_sessions', 'ria_reflect_read_tickets', 'ria_reflect_report',
+    'ria_reflect_status', 'ria_session_events', 'ria_session_list', 'ria_worker_report',
   ])
   assert.equal(reflectionTools.includes('write'), false)
   assert.equal(reflectionTools.includes('edit'), false)
@@ -149,9 +154,13 @@ try {
   const advisorBrief = fixture.prompts.find(item => String(item.sessionId) === String(advisor) && /模式: reflection/.test(String(item.content[0].text)))
   assert.ok(advisorBrief, 'expected an Advisor ticket brief with mode reflection')
   assert.match(String(advisorBrief.content[0].text), /模式: reflection（复盘，派给 reflection worker）/)
-  // The reflection Worker's dispatch brief points at its state-dir cwd.
+  // The reflection Worker is dispatched with the bound reflectionInstruction,
+  // not a generic ticket brief: it names the ticket, the run date and the Sage
+  // audit requirement.
   const workerBrief = fixture.prompts.filter(item => item.sessionId === reflectionWorkerId).at(-1)
-  assert.match(String(workerBrief.content[0].text), /reflection-workers/)
+  assert.match(String(workerBrief.content[0].text), /工单绑定/)
+  assert.match(String(workerBrief.content[0].text), /Sage 质量检查/)
+  assert.match(String(workerBrief.content[0].text), new RegExp('ticketId: ' + reflectionRequest.ticketId))
 
   console.log('state worker kinds ok')
 } finally {

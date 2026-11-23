@@ -42,6 +42,7 @@
     "lib/turn-end.mjs",
     "lib/outbox.mjs",
     "lib/reflection.mjs",
+    "lib/reflection-sage-context.mjs",
     "lib/role-context.mjs",
     "lib/memory.mjs",
     "lib/text-size.mjs",

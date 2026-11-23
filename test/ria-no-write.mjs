@@ -14,7 +14,7 @@ const hash = path => createHash('sha256').update(readFileSync(path)).digest('hex
 try {
   writeFileSync(riaPath, JSON.stringify({ schemaVersion: 5, version: 5, storage: 'sqlite',
     tickets: [], topics: [], links: [], settings: { blockDirectUserMessages: true } }))
-  writeFileSync(join(dir, 'state.json'), JSON.stringify({ workers: {}, meta: {} }))
+  writeFileSync(join(dir, 'state.json'), JSON.stringify({ executors: {}, meta: {} }))
   const db = openDatabase(join(dir, 'ria.sqlite'), { create: true })
   db.close()
   const runtime = new SqliteTicketRuntime({ stateDir: dir,

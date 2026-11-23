@@ -11,8 +11,8 @@ try {
     schemaVersion: 1,
     tickets: { legacy: { ticketId: 'legacy', projectCwd: '/legacy' } },
     ticketMirror: { generation: 7 },
-    workers: {},
-    meta: { workerSeq: 0, reflectionSeq: 0 },
+    executors: {},
+    meta: { executorSeq: 0, reflectionSeq: 0 },
   }))
   const store = new StateStore(dir, { metaAuthority: 'sqlite' })
   assert.equal(store.data.tickets, undefined, 'legacy ticket mirror removed on load')

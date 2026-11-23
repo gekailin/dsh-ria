@@ -13,42 +13,42 @@ assert.ok(normalizeTags(['前端', '数据-库', 'state.1']).includes('前端'))
 assert.deepEqual(mergeTags(['A'], ['b', 'a']), ['a', 'b'])
 
 const now = 1_000_000_000_000
-const base = { status: 'idle', currentTicketId: null, workerType: 'work', allowAutoDispatch: true, seq: 10 }
+const base = { status: 'idle', currentTicketId: null, executorType: 'work', allowAutoDispatch: true, seq: 10 }
 
 // Dedicated security: a dedicated sqlite worker must never take a generic or
 // frontend ticket, even if it is the newest idle worker.
 {
-  const workers = [
+  const executors = [
     { ...base, sessionId: 'w1', seq: 1, tags: ['sqlite'], dedicated: true, lastUsedAt: now },
     { ...base, sessionId: 'w2', seq: 2, tags: [], lastUsedAt: now - 1000 },
   ]
-  const generic = rankCandidateWorkers(workers, { now })
+  const generic = rankCandidateWorkers(executors, { now })
   assert.deepEqual(generic.map(item => item.worker.sessionId), ['w2'])
-  const frontend = rankCandidateWorkers(workers, { now, ticketTags: ['frontend'] })
+  const frontend = rankCandidateWorkers(executors, { now, ticketTags: ['frontend'] })
   assert.deepEqual(frontend.map(item => item.worker.sessionId), ['w2'])
-  const sqlite = rankCandidateWorkers(workers, { now, ticketTags: ['sqlite'] })
+  const sqlite = rankCandidateWorkers(executors, { now, ticketTags: ['sqlite'] })
   assert.equal(sqlite[0].worker.sessionId, 'w1')
 }
 
 // Affinity beats blind lastUsedAt: an explicit frontend worker older than a
 // generic worker still wins a frontend ticket.
 {
-  const workers = [
+  const executors = [
     { ...base, sessionId: 'frontend', seq: 1, tags: ['frontend'], lastUsedAt: now - 5 * 86400000 },
     { ...base, sessionId: 'generic', seq: 2, tags: [], lastUsedAt: now },
   ]
-  const ranked = rankCandidateWorkers(workers, { now, ticketTags: ['frontend'] })
+  const ranked = rankCandidateWorkers(executors, { now, ticketTags: ['frontend'] })
   assert.deepEqual(ranked.map(item => item.worker.sessionId), ['frontend', 'generic'])
   assert.equal(ranked[0].matchedExplicitTags[0], 'frontend')
 }
 
 // recentTopics: previous topic is the strongest context signal.
 {
-  const workers = [
+  const executors = [
     { ...base, sessionId: 'topic', seq: 1, tags: [], recentTopics: ['t1'], lastUsedAt: now - 86400000 },
     { ...base, sessionId: 'other', seq: 2, tags: [], recentTopics: ['t2'], lastUsedAt: now },
   ]
-  const ranked = rankCandidateWorkers(workers, { now, primaryTopicId: 't1' })
+  const ranked = rankCandidateWorkers(executors, { now, primaryTopicId: 't1' })
   assert.equal(ranked[0].worker.sessionId, 'topic')
   assert.equal(ranked[0].matchedTopic, 0)
 }
@@ -56,11 +56,11 @@ const base = { status: 'idle', currentTicketId: null, workerType: 'work', allowA
 // Generic ticket: a tagged worker gets the default -10 penalty, so an
 // untagged generic worker wins even if the tagged one was used more recently.
 {
-  const workers = [
+  const executors = [
     { ...base, sessionId: 'tagged', seq: 1, tags: ['sqlite'], lastUsedAt: now },
     { ...base, sessionId: 'plain', seq: 2, tags: [], lastUsedAt: now - 1000 },
   ]
-  const ranked = rankCandidateWorkers(workers, { now })
+  const ranked = rankCandidateWorkers(executors, { now })
   assert.equal(ranked[0].worker.sessionId, 'plain')
   assert.equal(ranked[0].genericPenalty, 0)
   assert.equal(ranked[1].worker.sessionId, 'tagged')
@@ -69,27 +69,27 @@ const base = { status: 'idle', currentTicketId: null, workerType: 'work', allowA
 
 // requireTagMatch + hard safety filters.
 {
-  const workers = [
+  const executors = [
     { ...base, sessionId: 'busy', tags: ['frontend'], currentTicketId: 'ticket_x' },
     { ...base, sessionId: 'archived', tags: ['frontend'], archivedAt: 1 },
     { ...base, sessionId: 'optout', tags: ['frontend'], allowAutoDispatch: false },
     { ...base, sessionId: 'match', tags: ['frontend'] },
   ]
-  assert.equal(isWorkerEligible(workers[0], {}), false)
-  assert.equal(isWorkerEligible(workers[1], {}), false)
-  assert.equal(isWorkerEligible(workers[2], {}), false)
-  const ranked = rankCandidateWorkers(workers, { ticketTags: ['frontend'], requireTagMatch: true })
+  assert.equal(isWorkerEligible(executors[0], {}), false)
+  assert.equal(isWorkerEligible(executors[1], {}), false)
+  assert.equal(isWorkerEligible(executors[2], {}), false)
+  const ranked = rankCandidateWorkers(executors, { ticketTags: ['frontend'], requireTagMatch: true })
   assert.deepEqual(ranked.map(item => item.worker.sessionId), ['match'])
-  assert.deepEqual(rankCandidateWorkers(workers, { ticketTags: ['docs'], requireTagMatch: true }), [])
+  assert.deepEqual(rankCandidateWorkers(executors, { ticketTags: ['docs'], requireTagMatch: true }), [])
 }
 
 // Deterministic tie-break: same score => seq ascending.
 {
-  const workers = [
+  const executors = [
     { ...base, sessionId: 'b', seq: 2, tags: [] },
     { ...base, sessionId: 'a', seq: 1, tags: [] },
   ]
-  const ranked = rankCandidateWorkers(workers, { now, ticketTags: [] , })
+  const ranked = rankCandidateWorkers(executors, { now, ticketTags: [] , })
   assert.deepEqual(ranked.map(item => item.worker.sessionId), ['a', 'b'])
 }
 

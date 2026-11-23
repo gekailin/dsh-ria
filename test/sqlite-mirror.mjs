@@ -57,7 +57,7 @@ function setup() {
   writeFileSync(join(dir, 'state.json'), JSON.stringify({ tickets: {
     first: { scope: 'stale-json', attachments: ['stale'], metaRevision: 99999, updatedAt: 9999999999999 },
     absent: { scope: 'must-not-import' },
-  }, reports: [], workers: {} }))
+  }, reports: [], executors: {} }))
   const clock = new Clock()
   const logs = []
   const runtime = new SqliteTicketRuntime({ stateDir: dir, clock, debounceMs: 25, retryMs: 100,
@@ -377,20 +377,20 @@ function setup() {
     assert.throws(() => f.repository.runSync('create-rollback', () => {
       const created = f.store.addTicket({ status: 'intake', waitingOn: 'ria', executor: null, goal: 'rollback' })
       id = created.ticketId
-      f.state.setTicketMeta(id, { scope: 'global', workerId: 'w1', projectCwd: '/x' })
+      f.state.setTicketMeta(id, { scope: 'global', executorId: 'w1', projectCwd: '/x' })
       throw new Error('force rollback')
     }), /force rollback/)
     assert.equal(f.external.record(id), undefined, 'ticket and meta roll back together')
 
     const created = f.repository.runSync('create-with-meta', () => {
       const ticket = f.store.addTicket({ status: 'intake', waitingOn: 'ria', executor: null, goal: 'with meta' })
-      f.state.setTicketMeta(ticket.ticketId, { scope: 'global', workerId: 'w2', projectCwd: '/repo' })
+      f.state.setTicketMeta(ticket.ticketId, { scope: 'global', executorId: 'w2', projectCwd: '/repo' })
       return ticket
     })
     const record = f.external.record(created.ticketId)
     assert.ok(record.meta, 'DB meta is written with the new ticket')
     assert.equal(record.meta.scope, 'global')
-    assert.equal(record.meta.workerId, 'w2')
+    assert.equal(record.meta.executorId, 'w2')
     assert.equal(record.meta.projectCwd, '/repo')
     assert.equal(record.meta.ticketId, created.ticketId)
     f.runtime.flush()

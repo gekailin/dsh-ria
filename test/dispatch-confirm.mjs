@@ -19,7 +19,7 @@ async function dispatch(fixture, chat, goal = 'ship the thing') {
   assert.equal(plan.ok, true)
   const sent = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: made.ticketId })
   assert.equal(sent.ok, true)
-  return { ticketId: made.ticketId, workerId: sent.workerSessionId }
+  return { ticketId: made.ticketId, executorId: sent.workerSessionId }
 }
 
 function expire(fixture, ticketId) {
@@ -36,11 +36,11 @@ function expire(fixture, ticketId) {
 {
   const { fixture, chat } = await setup()
   try {
-    const { ticketId, workerId } = await dispatch(fixture, chat)
+    const { ticketId, executorId } = await dispatch(fixture, chat)
     const ticket = expire(fixture, ticketId)
     assert.equal(ticket.attempt.confirmedAt, undefined)
     fixture.service.onSessionEvent(
-      { header: { id: workerId } },
+      { header: { id: executorId } },
       { type: 'turn/start', data: { turn: 2 } },
     )
     assert.equal(typeof ticket.attempt.confirmedAt, 'number')
@@ -59,8 +59,8 @@ function expire(fixture, ticketId) {
 {
   const { fixture, chat } = await setup()
   try {
-    const { ticketId, workerId } = await dispatch(fixture, chat)
-    const reported = await fixture.callAs(workerId, 'ria_worker_report', {
+    const { ticketId, executorId } = await dispatch(fixture, chat)
+    const reported = await fixture.callAs(executorId, 'ria_worker_report', {
       ticketId,
       status: 'progress',
       summary: 'baseline checked',

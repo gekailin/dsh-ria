@@ -78,9 +78,9 @@ try {
   const list = await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'get' })
   assert.equal(list.ok, true)
   assert.deepEqual(list.presets, ['ptc', 'standard', 'minimal'])
-  const listed = list.workers.find(item => item.sessionId === created.sessionId)
+  const listed = list.executors.find(item => item.sessionId === created.sessionId)
   assert.ok(listed, 'the newly created Worker is listed')
-  assert.equal(listed.workerType, 'work')
+  assert.equal(listed.executorType, 'work')
   assert.equal(listed.preset, 'standard')
   assert.equal(typeof listed.seq, 'number')
   assert.match(listed.title, /Worker/)
@@ -89,21 +89,21 @@ try {
   assert.deepEqual(listed.model, { provider: 'provider-ok', model: 'model-vision' })
 
   // ⑥ Model changes apply live and emit worker.config.changed.
-  const modelChanged = await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'set', workerId: created.sessionId, model: 'model-fast', provider: 'provider-ok' })
+  const modelChanged = await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'set', executorId: created.sessionId, model: 'model-fast', provider: 'provider-ok' })
   assert.equal(modelChanged.ok, true, JSON.stringify(modelChanged))
   assert.equal(modelChanged.recreated, false)
   assert.equal(modelChanged.after.model, 'model-fast')
   assert.deepEqual(modelChanged.before, { provider: 'provider-ok', model: 'model-vision' })
   const modelEvent = events.find(item => item.event === 'worker.config.changed' && item.payload.field === 'model')
   assert.ok(modelEvent)
-  assert.equal(modelEvent.payload.workerId, created.sessionId)
+  assert.equal(modelEvent.payload.executorId, created.sessionId)
   assert.equal(modelEvent.payload.before.model, 'model-vision')
   assert.equal(modelEvent.payload.after.model, 'model-fast')
   const afterModel = await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'get' })
-  assert.equal(afterModel.workers.find(item => item.sessionId === created.sessionId).model.model, 'model-fast')
+  assert.equal(afterModel.executors.find(item => item.sessionId === created.sessionId).model.model, 'model-fast')
 
   // ⑦ A preset change without recreate is refused with an actionable error.
-  const presetOnly = await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'set', workerId: created.sessionId, preset: 'minimal' })
+  const presetOnly = await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'set', executorId: created.sessionId, preset: 'minimal' })
   assert.equal(presetOnly.ok, false)
   assert.equal(presetOnly.code, 'worker_preset_requires_recreate')
   assert.match(presetOnly.message, /重建 worker/)
@@ -113,7 +113,7 @@ try {
   // same cwd/type with the new preset, and the old session is archived.
   const recreated = await fixture.callAs(chat, 'ria_chat_worker_config', {
     action: 'set',
-    workerId: created.sessionId,
+    executorId: created.sessionId,
     preset: 'minimal',
     recreate: true,
   })
@@ -124,7 +124,7 @@ try {
   const replacement = store.worker(recreated.worker.sessionId)
   assert.ok(replacement)
   assert.equal(replacement.preset, 'minimal')
-  assert.equal(replacement.workerType, 'work')
+  assert.equal(replacement.executorType, 'work')
   assert.equal(replacement.cwd, listed.cwd)
   assert.equal(recreated.archivedOld, true)
   const presetEvent = events.find(item => item.event === 'worker.config.changed' && item.payload.field === 'preset')
@@ -135,10 +135,10 @@ try {
   assert.equal(presetEvent.payload.newWorkerId, replacement.sessionId)
 
   // ⑨ Errors stay readable.
-  const missing = await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'set', workerId: 'session-nope', model: 'model-fast' })
+  const missing = await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'set', executorId: 'session-nope', model: 'model-fast' })
   assert.equal(missing.ok, false)
   assert.equal(missing.code, 'worker_missing')
-  const badPreset = await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'set', workerId: replacement.sessionId, preset: 'danger' })
+  const badPreset = await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'set', executorId: replacement.sessionId, preset: 'danger' })
   assert.equal(badPreset.ok, false)
   assert.equal(badPreset.code, 'invalid_worker_preset')
   assert.match(badPreset.message, /ptc, standard, minimal/)

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * archive-workers.mjs — archive Ria worker sessions through the canonical DSH
+ * archive-executors.mjs — archive Ria worker sessions through the canonical DSH
  * Connection RPC channel (no state-file editing, no session deletion).
  *
  * Channel (see reports/done.md for the full evidence chain):
@@ -14,10 +14,10 @@
  * session cookie, exactly as a browser opening the printed URL does.
  *
  * Usage:
- *   node scripts/archive-workers.mjs --seqs 7,9,10 --dry-run
- *   node scripts/archive-workers.mjs --sessions session-a,session-b --apply
- *   node scripts/archive-workers.mjs --seqs 7,9 --apply
- *   node scripts/archive-workers.mjs --readback 7,9,10
+ *   node scripts/archive-executors.mjs --seqs 7,9,10 --dry-run
+ *   node scripts/archive-executors.mjs --sessions session-a,session-b --apply
+ *   node scripts/archive-executors.mjs --seqs 7,9 --apply
+ *   node scripts/archive-executors.mjs --readback 7,9,10
  *
  * Options:
  *   --seqs <a,b,c>        Ria worker seq numbers (resolved from GET /plugins/dsh-ria/api/state)
@@ -73,7 +73,7 @@ async function connect() {
       headers: { 'content-type': 'application/json', cookie },
       body: JSON.stringify({
         type: 'client-request',
-        rpcId: rpcId || 'archive-workers-' + method.replace('/', '-'),
+        rpcId: rpcId || 'archive-executors-' + method.replace('/', '-'),
         method,
         payload: { args: payloadArgs },
       }),
@@ -95,11 +95,11 @@ if (sessionIds.length) {
   // Ria's own HTTP state projection lists every bound worker with its seq.
   const response = await fetch(base + '/plugins/dsh-ria/api/state', { headers: { cookie } }).catch(() => null)
   const state = response && response.ok ? await response.json() : null
-  const workers = (state && state.state && state.state.workers) || []
+  const executors = (state && state.state && state.state.executors) || []
   for (const seq of seqs) {
-    const row = workers.find(item => Number(item.seq) === seq)
+    const row = executors.find(item => Number(item.seq) === seq)
     if (!row) {
-      console.error('seq ' + seq + ': not present in Ria /state workers')
+      console.error('seq ' + seq + ': not present in Ria /state executors')
       continue
     }
     targets.push({ sessionId: String(row.sessionId), seq })

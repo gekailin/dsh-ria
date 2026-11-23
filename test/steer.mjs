@@ -10,7 +10,7 @@ try {
   const worker = (await controller.ensureWorker('global')).sessionId
   controller.state.addWorker(worker, { status: 'idle', currentTicketId: null })
   const ticket = fixture.service.store.addTicket({ status: 'working', executor: worker, goal: 'steer test' })
-  controller.state.setTicketMeta(ticket.ticketId, { phase: 'working', workerId: worker })
+  controller.state.setTicketMeta(ticket.ticketId, { phase: 'working', executorId: worker })
   controller.state.setWorkOrder(ticket.ticketId, { ticketId: ticket.ticketId, summary: 'plan', steps: ['do it'], acceptance: 'ok' })
   const events = () => {
     try {
@@ -34,7 +34,7 @@ try {
 
   // A failed delivery at done parks the ticket and emits undelivered.
   const second = fixture.service.store.addTicket({ status: 'working', executor: worker, goal: 'steer failure' })
-  controller.state.setTicketMeta(second.ticketId, { phase: 'working', workerId: worker })
+  controller.state.setTicketMeta(second.ticketId, { phase: 'working', executorId: worker })
   controller.state.setWorkOrder(second.ticketId, { ticketId: second.ticketId, summary: 'plan', steps: ['do it'] })
   fixture.setRunning(worker, true)
   await fixture.callAs(chat, 'ria_chat_steer', { ticketId: second.ticketId, message: 'never delivered' })
@@ -49,7 +49,7 @@ try {
 
   // Resume rearm prompt failure records undelivered without silent loss.
   const third = fixture.service.store.addTicket({ status: 'working', executor: worker, goal: 'rearm failure' })
-  controller.state.setTicketMeta(third.ticketId, { phase: 'working', workerId: worker })
+  controller.state.setTicketMeta(third.ticketId, { phase: 'working', executorId: worker })
   fixture.setPromptFailure(new Error('cannot wake'))
   const rearmed = await controller.rearmWorkingTicket(third.ticketId, worker, 'resume msg', 'chat')
   assert.equal(rearmed.ok, false)
@@ -60,7 +60,7 @@ try {
 
   // Empty inbox done path remains unchanged.
   const fourth = fixture.service.store.addTicket({ status: 'working', executor: worker, goal: 'empty inbox' })
-  controller.state.setTicketMeta(fourth.ticketId, { phase: 'working', workerId: worker })
+  controller.state.setTicketMeta(fourth.ticketId, { phase: 'working', executorId: worker })
   const emptyDone = await fixture.callAs(worker, 'ria_worker_report', { ticketId: fourth.ticketId, status: 'done', summary: 'finished', evidence: ['test'] })
   assert.equal(emptyDone.ok, true)
   assert.equal(fixture.service.store.ticket(fourth.ticketId).status, 'done')

@@ -16,10 +16,10 @@ try {
   const controller = fixture.service.controller
   const store = controller.state
   store.addWorker('session-board-a', {
-    kind: 'managed', workerType: 'work', cwd: workspace, status: 'idle',
+    kind: 'managed', executorType: 'work', cwd: workspace, status: 'idle',
     tags: ['frontend', 'board'], roleNote: '看板 UI', dedicated: true,
   })
-  store.addWorker('session-board-b', { kind: 'managed', workerType: 'work', cwd: workspace, status: 'idle' })
+  store.addWorker('session-board-b', { kind: 'managed', executorType: 'work', cwd: workspace, status: 'idle' })
   const first = fixture.service.store.addTicket({ status: 'open', waitingOn: 'ria', executor: 'session-board-a', goal: 'board a work', acceptance: 'x' })
   const second = fixture.service.store.addTicket({ status: 'open', waitingOn: 'ria', executor: 'session-board-b', goal: 'board b work', acceptance: 'x' })
   controller.state.setTicketMeta(first.ticketId, { projectCwd: workspace })

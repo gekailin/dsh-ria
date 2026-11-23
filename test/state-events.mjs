@@ -8,14 +8,14 @@ import { EventLog } from '../lib/state/event-log.mjs'
 
 const hash = path => createHash('sha256').update(readFileSync(path)).digest('hex')
 const seed = () => ({
-  schemaVersion: 1, chatSessionId: 'chat', sageSessionId: null, workers: {}, tickets: {},
+  schemaVersion: 1, chatSessionId: 'chat', sageSessionId: null, executors: {}, tickets: {},
   requests: { req1: { requestId: 'req1', ticketId: 't1', goal: 'g', createdAt: 1 } },
   reports: [{ reportId: 'rep1', ticketId: 't1', summary: 's', at: 2 }],
   workOrders: { t1: { ticketId: 't1', summary: 'work', steps: [] } },
-  inbox: [{ id: 'in1', ticketId: 't1', workerId: 'w1', message: 'm', at: 3 }],
+  inbox: [{ id: 'in1', ticketId: 't1', executorId: 'w1', message: 'm', at: 3 }],
   ticketFeedback: [{ feedbackId: 'fb1', ticketId: 't1', kind: 'note', at: 4 }],
   lessonCandidates: [{ id: 'lc1', status: 'candidate', scenario: 's', at: 5 }],
-  meta: { workerSeq: 0, reflectionSeq: 0 }, lastError: null,
+  meta: { executorSeq: 0, reflectionSeq: 0 }, lastError: null,
 })
 
 const dir = mkdtempSync(join(tmpdir(), 'ria-events-'))
@@ -68,7 +68,7 @@ try {
       cap.addRequest({ requestId: 'q' + i, ticketId: 't1', goal: 'g' + i })
       cap.addReport({ reportId: 'rp' + i, ticketId: 't1', summary: 's' })
       cap.setWorkOrder('t' + i, { ticketId: 't' + i, summary: 'w' })
-      cap.addInbox({ id: 'i' + i, ticketId: 't1', workerId: 'w', message: 'm' })
+      cap.addInbox({ id: 'i' + i, ticketId: 't1', executorId: 'w', message: 'm' })
     }
     cap.data.ticketFeedback = Array.from({ length: 510 }, (_, i) => ({ feedbackId: 'f' + i, ticketId: 't1', kind: 'x' }))
     cap.save()

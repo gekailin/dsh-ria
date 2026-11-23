@@ -10,7 +10,7 @@ try {
   const controller = fixture.service.controller
   const worker = await controller.ensureWorker('global')
   const ticket = fixture.service.store.addTicket({ status: 'working', executor: worker.sessionId, goal: 'long multi-step task' })
-  controller.state.setTicketMeta(ticket.ticketId, { phase: 'working', workerId: worker.sessionId })
+  controller.state.setTicketMeta(ticket.ticketId, { phase: 'working', executorId: worker.sessionId })
   const now = Date.now()
   const stale = now - 60 * 60000
   const stored = fixture.service.store.ticket(ticket.ticketId)

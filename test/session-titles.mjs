@@ -52,8 +52,8 @@ try {
   assert.equal(await titleOf(worker3), 'Ria Worker 3')
 
   // Old bindings without seq are assigned persistent numbers and renamed once.
-  controller.state.addWorker('session-legacy-worker', { workerType: 'work', status: 'idle' })
-  controller.state.addWorker('session-legacy-reflection', { workerType: 'reflection', status: 'idle' })
+  controller.state.addWorker('session-legacy-worker', { executorType: 'work', status: 'idle' })
+  controller.state.addWorker('session-legacy-reflection', { executorType: 'reflection', status: 'idle' })
   await sc.rename({ sessionId: chat, title: 'Chat' })
   await sc.rename({ sessionId: advisor, title: 'Advisor' })
   await sc.rename({ sessionId: worker1, title: 'Worker 1' })
@@ -97,8 +97,8 @@ try {
   // a real AbortSignal to projections().
   {
     controller.state.setSage('session-sage')
-    controller.state.addWorker('session-read-fail', { workerType: 'work', status: 'idle', seq: 50 })
-    controller.state.addWorker('session-rename-fail', { workerType: 'work', status: 'idle', seq: 51 })
+    controller.state.addWorker('session-read-fail', { executorType: 'work', status: 'idle', seq: 50 })
+    controller.state.addWorker('session-rename-fail', { executorType: 'work', status: 'idle', seq: 51 })
     await sc.rename({ sessionId: 'session-sage', title: 'Sage' })
     await sc.rename({ sessionId: 'session-read-fail', title: 'Worker 50' })
     await sc.rename({ sessionId: 'session-rename-fail', title: 'Worker 51' })

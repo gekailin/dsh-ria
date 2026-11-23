@@ -21,8 +21,8 @@ async function withEvents(fixture) {
     const controller = fixture.service.controller
     const store = controller.state
     const events = await withEvents(fixture)
-    const workersDir = join(fixture.stateDir, 'workers')
-    store.addWorker('session-archived', { scope: 'global', workerType: 'work', cwd: workersDir, status: 'idle', lastUsedAt: 9000 })
+    const workersDir = join(fixture.stateDir, 'executors')
+    store.addWorker('session-archived', { scope: 'global', executorType: 'work', cwd: workersDir, status: 'idle', lastUsedAt: 9000 })
 
     // Creating the first real Worker must not pick the archived binding.
     const first = await controller.ensureWorker('global')
@@ -33,14 +33,14 @@ async function withEvents(fixture) {
     // Make the real Worker idle and older than the dead binding, so the dead one
     // is tried first and must fall through to it.
     store.addWorker(first.sessionId, { status: 'idle', currentTicketId: null, lastUsedAt: 1000 })
-    store.addWorker('session-deleted', { scope: 'global', workerType: 'work', cwd: workersDir, status: 'idle', lastUsedAt: 8000 })
+    store.addWorker('session-deleted', { scope: 'global', executorType: 'work', cwd: workersDir, status: 'idle', lastUsedAt: 8000 })
     const second = await controller.ensureWorker('global', null, undefined, 'ticket_probe')
     assert.equal(second.created, false, JSON.stringify(second))
     assert.equal(second.sessionId, first.sessionId)
     assert.equal(store.worker('session-deleted'), null, 'a dead binding is removed')
     const failed = events.find(event => event.event === 'worker.resolve_failed')
     assert.ok(failed, 'expected worker.resolve_failed')
-    assert.equal(failed.payload.workerId, 'session-deleted')
+    assert.equal(failed.payload.executorId, 'session-deleted')
     assert.equal(failed.ticketId, 'ticket_probe')
     assert.equal(typeof failed.payload.latencyMs, 'number')
     assert.ok(failed.payload.error)
@@ -52,13 +52,13 @@ async function withEvents(fixture) {
     assert.equal(events.filter(event => event.event === 'worker.resolve_failed').length, 1)
 
     // Startup reconcile is idempotent and reports what it cleaned.
-    store.addWorker('session-gone', { scope: 'global', workerType: 'work', cwd: workersDir, status: 'idle', lastUsedAt: 1 })
+    store.addWorker('session-gone', { scope: 'global', executorType: 'work', cwd: workersDir, status: 'idle', lastUsedAt: 1 })
     assert.equal(await controller.reconcileWorkerBindings(), 1)
     assert.equal(store.worker('session-gone'), null)
     assert.equal(await controller.reconcileWorkerBindings(), 0)
     const reconciled = events.filter(event => event.event === 'worker.reconcile_removed')
     assert.equal(reconciled.length, 1)
-    assert.equal(reconciled[0].payload.workerId, 'session-gone')
+    assert.equal(reconciled[0].payload.executorId, 'session-gone')
   } finally {
     fixture.cleanup()
   }

@@ -16,7 +16,7 @@ try {
     recentWorkers: { w1: { sessionId: 'w1' } }, ticketFeedback: [{ feedbackId: 'f1', kind: 'x' }],
   }
   writeFileSync(join(dir, 'ria.json'), JSON.stringify(ria))
-  writeFileSync(join(dir, 'state.json'), JSON.stringify({ workers: {}, meta: { workerSeq: 0, reflectionSeq: 0 } }))
+  writeFileSync(join(dir, 'state.json'), JSON.stringify({ executors: {}, meta: { executorSeq: 0, reflectionSeq: 0 } }))
   const riaHash = hash(join(dir, 'ria.json'))
   const first = migrateRiaControl({ stateDir: dir, now: 1_800_000_000_000 })
   assert.equal(first.mode, 'migrated')

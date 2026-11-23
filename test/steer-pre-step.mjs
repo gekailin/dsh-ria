@@ -20,7 +20,7 @@ try {
   }
   const newTicket = goal => {
     const ticket = store.addTicket({ status: 'working', executor: worker, goal })
-    controller.state.setTicketMeta(ticket.ticketId, { phase: 'working', workerId: worker })
+    controller.state.setTicketMeta(ticket.ticketId, { phase: 'working', executorId: worker })
     controller.state.setWorkOrder(ticket.ticketId, { ticketId: ticket.ticketId, summary: 'plan', steps: ['do it'], acceptance: 'ok' })
     return ticket
   }

@@ -21,11 +21,11 @@ async function setup() {
     assert.equal(added.ok, true, JSON.stringify(added))
     return added
   }
-  async function ticket(goal, projectCwd, workerId = 'session-cm') {
+  async function ticket(goal, projectCwd, executorId = 'session-cm') {
     const made = await fixture.callAs(chat, 'ria_chat_request', { goal })
     assert.equal(made.ok, true, JSON.stringify(made))
     if (projectCwd !== undefined) state.setTicketMeta(made.ticketId, { projectCwd })
-    if (workerId) state.setTicketMeta(made.ticketId, { workerId })
+    if (executorId) state.setTicketMeta(made.ticketId, { executorId })
     return made.ticketId
   }
   async function plan(ticketId) {
@@ -56,7 +56,7 @@ async function setup() {
     assert.equal(added.worker.cwd, '/work/proj')
     assert.equal(added.worker.title, 'CM Session')
     assert.equal(added.worker.allowAutoDispatch, true)
-    assert.deepEqual((await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'list' })).workers.map(item => item.sessionId), ['session-cm'])
+    assert.deepEqual((await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'list' })).executors.map(item => item.sessionId), ['session-cm'])
     const off = await register('session-cm', { allowAutoDispatch: false })
     assert.equal(off.worker.allowAutoDispatch, false)
     assert.equal(state.worker('session-cm').allowAutoDispatch, false)
@@ -212,11 +212,11 @@ async function setup() {
   try {
     await register()
     const idle = state.worker('session-cm')
-    assert.equal(controller.isWorkerSelectable(idle, { projectCwd: '/work/proj/sub', workerType: 'work' }), true)
-    assert.equal(controller.isWorkerSelectable(idle, { projectCwd: '/work/proj', workerType: 'work' }), true)
-    assert.equal(controller.isWorkerSelectable(idle, { projectCwd: null, workerType: 'work' }), false, 'global tickets never select it')
-    assert.equal(controller.isWorkerSelectable(idle, { projectCwd: '/work/other/proj', workerType: 'work' }), false, 'another project never selects it')
-    assert.equal(controller.isWorkerSelectable(idle, { projectCwd: '/work/projective', workerType: 'work' }), false, 'sibling prefix is not inside cwd')
+    assert.equal(controller.isWorkerSelectable(idle, { projectCwd: '/work/proj/sub', executorType: 'work' }), true)
+    assert.equal(controller.isWorkerSelectable(idle, { projectCwd: '/work/proj', executorType: 'work' }), true)
+    assert.equal(controller.isWorkerSelectable(idle, { projectCwd: null, executorType: 'work' }), false, 'global tickets never select it')
+    assert.equal(controller.isWorkerSelectable(idle, { projectCwd: '/work/other/proj', executorType: 'work' }), false, 'another project never selects it')
+    assert.equal(controller.isWorkerSelectable(idle, { projectCwd: '/work/projective', executorType: 'work' }), false, 'sibling prefix is not inside cwd')
     const picked = await controller.ensureWorker('project', null, '/work/proj/sub', null)
     assert.equal(picked.sessionId, 'session-cm')
     // The global ticket keeps a managed Worker: a fresh session is created instead.

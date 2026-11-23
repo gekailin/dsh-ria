@@ -16,7 +16,7 @@ const planReply = routing => () => JSON.stringify({
     const events = []
     fixture.service.routerEvent = event => { events.push(event) }
     const set = await fixture.callAs(chat, 'ria_chat_worker_config', {
-      action: 'set', workerId: worker.sessionId,
+      action: 'set', executorId: worker.sessionId,
       tags: ['SQLite', '前端 UI'], roleNote: '数据库事务专用', dedicated: true,
     })
     assert.equal(set.ok, true, JSON.stringify(set))
@@ -29,19 +29,19 @@ const planReply = routing => () => JSON.stringify({
     assert.deepEqual(configEvents.map(event => event.payload.field).sort(), ['dedicated', 'roleNote', 'tags'])
 
     const get = await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'get' })
-    const row = get.workers.find(item => item.sessionId === worker.sessionId)
+    const row = get.executors.find(item => item.sessionId === worker.sessionId)
     assert.deepEqual(row.tags, ['sqlite', '前端-ui'])
     assert.equal(row.dedicated, true)
 
     // Clearing explicit tags is explicit: pass [].
-    const cleared = await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'set', workerId: worker.sessionId, tags: [], dedicated: false })
+    const cleared = await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'set', executorId: worker.sessionId, tags: [], dedicated: false })
     assert.equal(cleared.ok, true)
     assert.deepEqual(cleared.worker.tags, [])
     assert.equal(cleared.worker.dedicated, false)
 
-    assert.equal((await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'set', workerId: worker.sessionId, tags: 'docs' })).code, 'invalid_tags')
-    assert.equal((await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'set', workerId: worker.sessionId, roleNote: 'x'.repeat(121) })).code, 'invalid_role_note')
-    assert.equal((await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'set', workerId: worker.sessionId, dedicated: 'yes' })).code, 'invalid_dedicated')
+    assert.equal((await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'set', executorId: worker.sessionId, tags: 'docs' })).code, 'invalid_tags')
+    assert.equal((await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'set', executorId: worker.sessionId, roleNote: 'x'.repeat(121) })).code, 'invalid_role_note')
+    assert.equal((await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'set', executorId: worker.sessionId, dedicated: 'yes' })).code, 'invalid_dedicated')
     console.log('worker config identity ok')
   } finally {
     fixture.cleanup()
@@ -65,7 +65,7 @@ const planReply = routing => () => JSON.stringify({
     assert.equal(added.worker.roleNote, '文档专用')
     assert.equal(added.worker.dedicated, true)
     const list = await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'list' })
-    const row = list.workers.find(item => item.sessionId === 'session-doc')
+    const row = list.executors.find(item => item.sessionId === 'session-doc')
     assert.deepEqual(row.tags, ['docs', '写作'])
     assert.equal(row.dedicated, true)
     const updated = await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'add', sessionId: 'session-doc', tags: [], dedicated: false })
@@ -93,7 +93,7 @@ const planReply = routing => () => JSON.stringify({
     const removed = await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'remove', sessionId: 'session-doc' })
     assert.equal(removed.removed, true)
     const afterRemove = await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'list' })
-    assert.equal(afterRemove.workers.some(item => item.sessionId === 'session-doc'), false)
+    assert.equal(afterRemove.executors.some(item => item.sessionId === 'session-doc'), false)
     console.log('co-managed identity ok')
   } finally {
     fixture.cleanup()

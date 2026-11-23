@@ -82,9 +82,9 @@ try {
   const zombie = make('open', 121)
   const ghostWorking = make('working', 90)
   const healthy = make('working', 120)
-  controller.state.addWorker('session-live', { kind: 'managed', status: 'working', currentTicketId: healthy.ticketId, workerType: 'work' })
+  controller.state.addWorker('session-live', { kind: 'managed', status: 'working', currentTicketId: healthy.ticketId, executorType: 'work' })
   healthy.executor = 'session-live'
-  controller.state.setTicketMeta(healthy.ticketId, { phase: 'working', workerId: 'session-live' })
+  controller.state.setTicketMeta(healthy.ticketId, { phase: 'working', executorId: 'session-live' })
   const exactly60 = make('open', 60)
   const fresh = make('open', 5)
 

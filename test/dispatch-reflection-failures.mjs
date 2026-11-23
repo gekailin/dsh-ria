@@ -26,7 +26,7 @@ const reflectionPlan = async (fixture, controller) => {
     controller.state.setTicketMeta(request.ticketId, { routingTags: ['reflect'], requireTagMatch: true })
     const dispatched = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: request.ticketId })
     assert.equal(dispatched.ok, true, JSON.stringify(dispatched))
-    assert.equal(controller.state.worker(dispatched.workerSessionId).workerType, 'reflection')
+    assert.equal(controller.state.worker(dispatched.workerSessionId).executorType, 'reflection')
     assert.deepEqual(controller.state.worker(dispatched.workerSessionId).tags || [], [])
   } finally { fixture.cleanup() }
 }
@@ -45,7 +45,7 @@ const reflectionPlan = async (fixture, controller) => {
   try {
     const controller = fixture.service.controller
     controller.state.addWorker('session-reflect-tagged', {
-      kind: 'managed', workerType: 'reflection', status: 'idle', scope: 'global',
+      kind: 'managed', executorType: 'reflection', status: 'idle', scope: 'global',
       cwd: '/tmp/ria-reflect-tagged', tags: ['reflect'], allowAutoDispatch: true,
     })
     const { request, advisor } = await reflectionPlan(fixture, controller)
@@ -54,7 +54,7 @@ const reflectionPlan = async (fixture, controller) => {
     assert.equal(dispatched.ok, true, JSON.stringify(dispatched))
     assert.notEqual(dispatched.workerSessionId, 'session-reflect-tagged')
     const created = controller.state.worker(dispatched.workerSessionId)
-    assert.equal(created.workerType, 'reflection')
+    assert.equal(created.executorType, 'reflection')
     assert.deepEqual(created.tags || [], [])
   } finally { fixture.cleanup() }
 }

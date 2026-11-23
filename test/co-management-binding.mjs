@@ -22,11 +22,11 @@ async function setup(options = {}) {
     assert.equal(added.ok, true, JSON.stringify(added))
     return added
   }
-  async function makeTicket(goal, projectCwd, workerId = 'session-cm') {
+  async function makeTicket(goal, projectCwd, executorId = 'session-cm') {
     const made = await fixture.callAs(chat, 'ria_chat_request', { goal })
     assert.equal(made.ok, true, JSON.stringify(made))
     if (projectCwd !== undefined) state.setTicketMeta(made.ticketId, { projectCwd })
-    if (workerId) state.setTicketMeta(made.ticketId, { workerId })
+    if (executorId) state.setTicketMeta(made.ticketId, { executorId })
     return made.ticketId
   }
   async function plan(ticketId) {
@@ -124,7 +124,7 @@ const events = stateDir => readFileSync(join(stateDir, 'events.jsonl'), 'utf8')
     state.addWorker('session-cm', { status: 'idle', currentTicketId: null })
     assert.equal(state.worker('session-cm').currentTicketId, null)
     assert.equal(controller.isWorkerSelectable(state.worker('session-cm'), {
-      projectCwd: '/work/proj/a', workerType: 'work', automatic: false,
+      projectCwd: '/work/proj/a', executorType: 'work', automatic: false,
     }), false, 'busy comes from the executing ticket meta')
 
     const secondId = await makeTicket('second ticket', '/work/proj/a')
@@ -142,7 +142,7 @@ const events = stateDir => readFileSync(join(stateDir, 'events.jsonl'), 'utf8')
     assert.equal(controller.executingTicketsFor('session-cm').length, 0)
     assert.equal(state.worker('session-cm').status, 'idle')
     assert.equal(controller.isWorkerSelectable(state.worker('session-cm'), {
-      projectCwd: '/work/proj/a', workerType: 'work', automatic: false,
+      projectCwd: '/work/proj/a', executorType: 'work', automatic: false,
     }), true, 'clearing the binding frees the session')
     console.log('co-management concurrent busy from ticket meta ok')
   } finally { fixture.cleanup() }

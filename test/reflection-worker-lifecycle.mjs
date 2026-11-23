@@ -22,13 +22,13 @@ try {
 
   // The old design kept one resident reflection Worker (seq 2). It must be
   // archived exactly once, on the first per-run reflection.
-  controller.state.addWorker(legacyId, { workerType: 'reflection', status: 'idle', seq: 2, cwd: '/tmp/legacy-reflection' })
+  controller.state.addWorker(legacyId, { executorType: 'reflection', status: 'idle', seq: 2, cwd: '/tmp/legacy-reflection' })
   controller.state.setMeta({ reflectionSeq: 2 })
 
   const first = await controller.ensureReflectionWorker('global')
   assert.equal(first.created, true)
   assert.equal(first.meta.seq, 3)
-  assert.equal(first.meta.workerLabel, 'Ria Reflection Worker 3')
+  assert.equal(first.meta.executorLabel, 'Ria Reflection Worker 3')
   assert.equal(await titleOf(first.sessionId), 'Ria Reflection Worker 3')
   assert.ok(fixture.archivedSessions.includes(legacyId), JSON.stringify(fixture.archivedSessions))
   assert.equal(controller.state.worker(legacyId), null)
@@ -42,7 +42,7 @@ try {
   const second = await controller.ensureReflectionWorker('global')
   assert.notEqual(second.sessionId, first.sessionId)
   assert.equal(second.meta.seq, 4)
-  assert.equal(second.meta.workerLabel, 'Ria Reflection Worker 4')
+  assert.equal(second.meta.executorLabel, 'Ria Reflection Worker 4')
   assert.equal(JSON.parse(readFileSync(join(fixture.stateDir, 'state.json'), 'utf8')).meta.reflectionSeq, 4)
   assert.equal(new StateStore(fixture.stateDir).data.meta.reflectionSeq, 4)
 
@@ -74,7 +74,7 @@ try {
     .find(event => event.event === 'reflection.worker.reuse_fallback')
   assert.ok(fallbackEvent, 'fallback must be observable')
   assert.equal(fallbackEvent.payload.runId, 'run-fallback')
-  assert.equal(fallbackEvent.payload.workerId, reused.sessionId)
+  assert.equal(fallbackEvent.payload.executorId, reused.sessionId)
   assert.match(fallbackEvent.payload.error, /host refused session create/)
 
   // A reflection ticket owns its Worker: done/failed/cancelled archives it,
@@ -88,7 +88,7 @@ try {
   const dispatched = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: request.ticketId })
   assert.equal(dispatched.ok, true, JSON.stringify(dispatched))
   const runWorker = dispatched.workerSessionId
-  assert.equal(controller.state.worker(runWorker).workerLabel, controller.state.worker(runWorker).workerLabel)
+  assert.equal(controller.state.worker(runWorker).executorLabel, controller.state.worker(runWorker).executorLabel)
   const report = await fixture.callAs(runWorker, 'ria_worker_report', {
     ticketId: request.ticketId, status: 'done', summary: ['# 反思报告', '', 'lifecycle ok'].join('\n'), evidence: ['test'],
   })
@@ -116,7 +116,7 @@ try {
   const dispatched2 = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: secondRun.reflectionTicketId })
   assert.equal(dispatched2.ok, true, JSON.stringify(dispatched2))
   assert.notEqual(dispatched2.workerSessionId, runWorker)
-  assert.equal(controller.state.worker(dispatched2.workerSessionId).workerType, 'reflection')
+  assert.equal(controller.state.worker(dispatched2.workerSessionId).executorType, 'reflection')
   const report2 = await fixture.callAs(dispatched2.workerSessionId, 'ria_worker_report', {
     ticketId: secondRun.reflectionTicketId, status: 'done', summary: ['# 反思报告', '', 'second run'].join('\n'), evidence: ['test'],
   })

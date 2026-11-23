@@ -22,7 +22,7 @@ try {
   await fixture.service.ensure()
   const chat = fixture.service.controller.state.chatSessionId
 
-  // ① Old state.json: a worker row without workerType is a work Worker.
+  // ① Old state.json: a worker row without executorType is a work Worker.
   {
     const dir = mkdtempSync(join(tmpdir(), 'ria-worker-kinds-'))
     try {
@@ -30,7 +30,7 @@ try {
         schemaVersion: 1,
         chatSessionId: null,
         advisors: {},
-        workers: { 'session-old': { sessionId: 'session-old', kind: 'managed', scope: 'global', status: 'idle', cwd: '/tmp/old-worker' } },
+        executors: { 'session-old': { sessionId: 'session-old', kind: 'managed', scope: 'global', status: 'idle', cwd: '/tmp/old-worker' } },
         requests: {},
         tickets: {},
         workOrders: {},
@@ -39,18 +39,18 @@ try {
         lastError: null,
       }, null, 2))
       const store = new StateStore(dir)
-      assert.equal(store.worker('session-old').workerType, 'work')
-      assert.deepEqual(store.workers().map(item => item.workerType), ['work'])
+      assert.equal(store.worker('session-old').executorType, 'work')
+      assert.deepEqual(store.executors().map(item => item.executorType), ['work'])
       // The read default is persisted on the next write.
       store.addWorker('session-old', { lastUsedAt: 1 })
-      assert.equal(JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8')).workers['session-old'].workerType, 'work')
+      assert.equal(JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8')).executors['session-old'].executorType, 'work')
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
   }
 
   // ② A reflection ticket: no Worker exists yet, so dispatch creates one.
-  assert.equal(fixture.service.controller.state.workers().filter(item => item.workerType === 'reflection').length, 0)
+  assert.equal(fixture.service.controller.state.executors().filter(item => item.executorType === 'reflection').length, 0)
   // Reflection tickets are created internally now; ria_chat_request is work-only.
   const reflectionRequest = await fixture.service.controller.requestTicket({
     goal: '复盘最近两次会话',
@@ -69,12 +69,12 @@ try {
   assert.equal(reflectionDispatch.ok, true, JSON.stringify(reflectionDispatch))
   const reflectionWorkerId = reflectionDispatch.workerSessionId
   const reflectionMeta = workerOf(reflectionWorkerId)
-  assert.equal(reflectionMeta.workerType, 'reflection')
+  assert.equal(reflectionMeta.executorType, 'reflection')
   // Its cwd is under the Ria state directory: it has no repository sandbox.
   assert.ok(String(reflectionMeta.cwd).startsWith(fixture.stateDir), reflectionMeta.cwd)
   assert.equal(fixture.service.store.ticket(reflectionRequest.ticketId).status, 'working')
   assert.equal(fixture.service.store.ticket(reflectionRequest.ticketId).executor, reflectionWorkerId)
-  assert.equal(fixture.service.controller.state.workers().filter(item => item.workerType === 'reflection').length, 1)
+  assert.equal(fixture.service.controller.state.executors().filter(item => item.executorType === 'reflection').length, 1)
 
   // Its tool surface: read-only investigation plus the bound retrospective
   // tools, no write/execute tools. A reflection dispatch binds all eight
@@ -107,7 +107,7 @@ try {
   assert.equal(workDispatch.ok, true, JSON.stringify(workDispatch))
   const workWorkerId = workDispatch.workerSessionId
   const workMeta = workerOf(workWorkerId)
-  assert.equal(workMeta.workerType, 'work')
+  assert.equal(workMeta.executorType, 'work')
   assert.notEqual(workWorkerId, reflectionWorkerId)
   const workTools = fixture.visibleTools(workWorkerId).sort()
   assert.deepEqual(workTools, [

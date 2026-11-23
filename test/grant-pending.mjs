@@ -176,8 +176,8 @@ try {
   // A completion report arriving before the next grant is finalized, not timed out.
   const complete = fixture.service.store.addTicket({ status: 'blocked', executor: worker, waitingOn: 'approval', blockedReason: 'old approval',
     attempt: { startedAt: Date.now() - 1000 }, failure: { code: 'approval_timeout', message: 'legacy timeout' } })
-  controller.state.setTicketMeta(complete.ticketId, { phase: 'blocked', workerId: worker })
-  controller.state.addReport({ reportId: 'saved_done', ticketId: complete.ticketId, workerId: worker, status: 'done', summary: 'already completed', evidence: ['exit 0'], at: Date.now() })
+  controller.state.setTicketMeta(complete.ticketId, { phase: 'blocked', executorId: worker })
+  controller.state.addReport({ reportId: 'saved_done', ticketId: complete.ticketId, executorId: worker, status: 'done', summary: 'already completed', evidence: ['exit 0'], at: Date.now() })
   controller.pendingApprovals.set('apr_saved_done', { ticketId: complete.ticketId, sessionId: worker, toolName: 'bash', callId: 'saved-done-call', key: 'saved-done-key' })
   const completingGrant = await fixture.callAs(chat, 'ria_chat_grant', { action: 'set', ticketId: complete.ticketId,
     sandboxMode: 'danger-full-access', approvalPolicy: 'never', reason: 'finish recorded result' })
@@ -189,7 +189,7 @@ try {
 
   // Only a matching successful operation clears a pending approval; failure doesn't.
   const successful = fixture.service.store.addTicket({ status: 'blocked', executor: worker, waitingOn: 'approval', blockedReason: 'stale command' })
-  controller.state.setTicketMeta(successful.ticketId, { phase: 'blocked', workerId: worker })
+  controller.state.setTicketMeta(successful.ticketId, { phase: 'blocked', executorId: worker })
   controller.pendingApprovals.set('apr_success', { ticketId: successful.ticketId, sessionId: worker, toolName: 'bash', callId: 'success-call', key: 'success-key' })
   controller.recordSuccessfulApprovalOperation(worker, { callId: 'other-call', exitCode: 0 })
   controller.recordSuccessfulApprovalOperation(worker, { callId: 'success-call', exitCode: 1 })
@@ -205,8 +205,8 @@ try {
 
   // Saved done wins when cancellation arrives first; no approval_timeout is written.
   const late = fixture.service.store.addTicket({ status: 'blocked', executor: worker, waitingOn: 'approval', blockedReason: 'late budget cancel', attempt: { startedAt: Date.now() - 1000 } })
-  controller.state.setTicketMeta(late.ticketId, { phase: 'blocked', workerId: worker })
-  controller.state.addReport({ reportId: 'done-before-cancel', ticketId: late.ticketId, workerId: worker, status: 'done', summary: 'finished before cancel', evidence: ['success'], at: Date.now() })
+  controller.state.setTicketMeta(late.ticketId, { phase: 'blocked', executorId: worker })
+  controller.state.addReport({ reportId: 'done-before-cancel', ticketId: late.ticketId, executorId: worker, status: 'done', summary: 'finished before cancel', evidence: ['success'], at: Date.now() })
   controller.pendingApprovals.set('apr_late_done', { ticketId: late.ticketId, sessionId: worker, toolName: 'bash', callId: 'late-done-call', key: 'late-done-key' })
   fixture.service.onSessionEvent({ header: { id: worker } }, { type: 'approval/decided', data: { id: 'apr_late_done', outcome: 'cancelled' } })
   await settle()
@@ -216,7 +216,7 @@ try {
 
   // Completion also clears a request that arrived before its approval/asked event.
   const orphan = fixture.service.store.addTicket({ status: 'blocked', executor: worker, waitingOn: 'approval', blockedReason: 'orphan request' })
-  controller.state.setTicketMeta(orphan.ticketId, { phase: 'blocked', workerId: worker })
+  controller.state.setTicketMeta(orphan.ticketId, { phase: 'blocked', executorId: worker })
   const orphanSettler = controller.createApprovalSettler(worker, 'bash', 'orphan-call', '', { ticketId: orphan.ticketId })
   const orphanDone = await fixture.callAs(worker, 'ria_worker_report', { ticketId: orphan.ticketId, status: 'done', summary: 'orphan finished', evidence: ['done output'] })
   assert.equal(orphanDone.ok, true, JSON.stringify(orphanDone))

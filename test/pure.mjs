@@ -19,7 +19,7 @@ try {
     schemaVersion: 1,
     chatSessionId: null,
     thinkers: { global: { scope: 'global', sessionId: 'session-old', cwd: '/tmp/ria-thinkers', createdAt: 1 } },
-    workers: {},
+    executors: {},
     requests: {},
     tickets: { ticket_legacy: { ticketId: 'ticket_legacy', phase: 'thinker' } },
     workOrders: {},

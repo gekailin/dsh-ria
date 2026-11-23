@@ -260,8 +260,8 @@ try {
   await assert.rejects(fixture.callAs(worker, retiredTool, { ticketId: created.ticketId }), /tool not installed/)
   assert.equal(fixture.service.controller.state.workOrder(created.ticketId).summary, 'read the notes and write a paragraph')
   const workerMeta = fixture.service.controller.state.worker(worker)
-  assert.match(workerMeta.cwd, /workers$/)
-  assert.ok(workerMeta.artifactDir.includes('/workers/runs/'))
+  assert.match(workerMeta.cwd, /executors$/)
+  assert.ok(workerMeta.artifactDir.includes('/executors/runs/'))
 
   // The Chat can change any top-level session's permissions on an explicit
   // user request, not just managed Workers. A pure downgrade is permanent: no
@@ -413,7 +413,7 @@ try {
   }
 
   // A request that names a project directory must give the Worker that cwd,
-  // so its sandbox can actually edit the project instead of stateDir/workers.
+  // so its sandbox can actually edit the project instead of stateDir/executors.
   const workspace = mkdtempSync(join(tmpdir(), 'ria-state-workspace-'))
   try {
     const refused = await fixture.callAs(chat, 'ria_chat_request', {
@@ -495,7 +495,7 @@ try {
 const first = await createFixture({ state: true })
 const stateDir = first.stateDir
 let workingTicketId
-let workerId
+let executorId
 try {
   const chat = first.service.controller.state.chatSessionId
   const created = await first.callAs(chat, 'ria_chat_request', { goal: 'long running task' })
@@ -503,7 +503,7 @@ try {
   await first.callAs(advisor, 'ria_ticket_plan', { ticketId: created.ticketId, summary: 'do the work' })
   const dispatched = await first.callAs(advisor, 'ria_ticket_dispatch', { ticketId: created.ticketId })
   workingTicketId = created.ticketId
-  workerId = dispatched.workerSessionId
+  executorId = dispatched.workerSessionId
   assert.equal(first.service.store.ticket(workingTicketId).status, 'working')
 } finally {
   first.cleanup({ keepState: true })
@@ -520,12 +520,12 @@ try {
   assert.equal(parked.status, 'blocked')
   assert.equal(parked.waitingOn, 'environment')
   assert.match(parked.blockedReason, /重启/)
-  assert.equal(second.service.controller.state.worker(workerId).status, 'idle')
+  assert.equal(second.service.controller.state.worker(executorId).status, 'idle')
   const status = second.service.controller.status()
   assert.equal(status.chatSessionId, chat)
   assert.equal(status.lastError, null)
   assert.ok(status.tickets.some(item => item.ticketId === workingTicketId && item.status === 'blocked'))
-  assert.ok(status.workers.some(item => item.sessionId === workerId && item.status === 'idle'))
+  assert.ok(status.executors.some(item => item.sessionId === executorId && item.status === 'idle'))
 } finally {
   second.cleanup()
   rmSync(stateDir, { recursive: true, force: true })

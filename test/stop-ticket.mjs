@@ -19,7 +19,7 @@ const eventsOf = stateDir => {
     const worker = (await controller.ensureWorker('global')).sessionId
     controller.state.addWorker(worker, { status: 'idle', currentTicketId: null })
     const ticket = store.addTicket({ status: 'working', executor: worker, goal: 'stop me' })
-    controller.state.setTicketMeta(ticket.ticketId, { phase: 'working', workerId: worker })
+    controller.state.setTicketMeta(ticket.ticketId, { phase: 'working', executorId: worker })
     controller.state.setWorkOrder(ticket.ticketId, { ticketId: ticket.ticketId, summary: 'plan', steps: ['long job'] })
     fixture.setRunning(worker, true)
     await fixture.callAs(chat, 'ria_chat_steer', { ticketId: ticket.ticketId, message: 'pending direction' })
@@ -80,7 +80,7 @@ const eventsOf = stateDir => {
     controller.state.addWorker(worker, { status: 'idle', currentTicketId: null })
     delete fixture.ctx.sessionController.cancel
     const ticket = store.addTicket({ status: 'working', executor: worker, goal: 'soft stop' })
-    controller.state.setTicketMeta(ticket.ticketId, { phase: 'working', workerId: worker })
+    controller.state.setTicketMeta(ticket.ticketId, { phase: 'working', executorId: worker })
     controller.state.setWorkOrder(ticket.ticketId, { ticketId: ticket.ticketId, summary: 'plan', steps: ['long job'] })
     fixture.setRunning(worker, true)
     const stopped = await fixture.callAs(chat, 'ria_chat_stop_ticket', { ticketId: ticket.ticketId, reason: 'deadline moved' })
@@ -96,7 +96,7 @@ const eventsOf = stateDir => {
     // The stop cleared the queue, and the normal steer entry point rejects a
     // closed ticket. A raw inbox row injected afterwards is never picked up by
     // the soft-stop pre-step.
-    controller.state.addInbox({ id: 'inbox_late', ticketId: ticket.ticketId, workerId: worker, message: 'late direction', from: 'chat', at: Date.now() })
+    controller.state.addInbox({ id: 'inbox_late', ticketId: ticket.ticketId, executorId: worker, message: 'late direction', from: 'chat', at: Date.now() })
     const rejectedSteer = await fixture.callAs(chat, 'ria_chat_steer', { ticketId: ticket.ticketId, message: 'late' })
     assert.equal(rejectedSteer.ok, false)
     assert.equal(rejectedSteer.code, 'ticket_closed')
@@ -140,7 +140,7 @@ const eventsOf = stateDir => {
     const worker = (await controller.ensureWorker('global')).sessionId
     controller.state.addWorker(worker, { status: 'idle', currentTicketId: null })
     const ticket = store.addTicket({ status: 'working', executor: worker, goal: 'idle stop' })
-    controller.state.setTicketMeta(ticket.ticketId, { phase: 'working', workerId: worker })
+    controller.state.setTicketMeta(ticket.ticketId, { phase: 'working', executorId: worker })
     const stopped = await fixture.callAs(chat, 'ria_chat_stop_ticket', { ticketId: ticket.ticketId, reason: 'cancel idle work' })
     assert.equal(stopped.ok, true, JSON.stringify(stopped))
     assert.equal(stopped.hardAbort, false)
@@ -164,7 +164,7 @@ const eventsOf = stateDir => {
     const worker = (await controller.ensureWorker('global')).sessionId
     controller.state.addWorker(worker, { status: 'idle', currentTicketId: null })
     const ticket = store.addTicket({ status: 'working', executor: worker, goal: 'already done' })
-    controller.state.setTicketMeta(ticket.ticketId, { phase: 'working', workerId: worker })
+    controller.state.setTicketMeta(ticket.ticketId, { phase: 'working', executorId: worker })
     const done = await fixture.callAs(worker, 'ria_worker_report', { ticketId: ticket.ticketId, status: 'done', summary: 'finished', evidence: ['test'] })
     assert.equal(done.ok, true, JSON.stringify(done))
     const stopped = await fixture.callAs(chat, 'ria_chat_stop_ticket', { ticketId: ticket.ticketId, reason: 'too late' })

@@ -11,7 +11,7 @@ try {
   writeFileSync(join(stateDir, 'state.json'), JSON.stringify({
     thinkers: { global: { scope: 'global', sessionId: 'session-old', cwd: '/tmp/ria-thinkers', createdAt: 1 } },
     advisors: { global: { scope: 'global', sessionId: 'session-old' } },
-    meta: { workerSeq: 0, reflectionSeq: 0 },
+    meta: { executorSeq: 0, reflectionSeq: 0 },
   }, null, 2) + '\n')
   const store = new StateStore(stateDir)
   assert.equal(typeof store.advisor, 'undefined')

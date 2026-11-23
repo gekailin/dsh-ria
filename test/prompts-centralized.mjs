@@ -15,7 +15,7 @@ for (const mod of [chat, advisor, sage, worker, reflection]) assert.equal(typeof
 assert.equal(chat.chatPrompt(), core.chatPrompt())
 assert.equal(advisor.advisorPrompt(), core.advisorPrompt())
 assert.equal(sage.sagePrompt({ principles: 'p' }), core.sagePrompt({ principles: 'p' }))
-assert.equal(worker.workerPrompt({ workerSeq: 1 }), core.workerPrompt({ workerSeq: 1 }))
+assert.equal(worker.workerPrompt({ executorSeq: 1 }), core.workerPrompt({ executorSeq: 1 }))
 assert.equal(typeof chat.STYLE_PRESET_PROMPTS.concise, 'string')
 assert.equal(advisor.advisorPlanSystemPrompt(), coreAdvisorSystem())
 

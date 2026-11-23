@@ -16,7 +16,7 @@ const run = async (name, body) => {
   controller.state.addWorker(worker, { status: 'idle', currentTicketId: null })
   const ticket = fixture.service.store.addTicket({ status: 'working', executor: worker, goal: name })
   const ticketId = ticket.ticketId
-  controller.state.setTicketMeta(ticketId, { phase: 'working', workerId: worker })
+  controller.state.setTicketMeta(ticketId, { phase: 'working', executorId: worker })
   controller.state.setWorkOrder(ticketId, { ticketId, summary: 'mock inbox delivery', steps: ['consume messages'], acceptance: 'inbox empty' })
   const originalPrompt = fixture.ctx.sessionController.prompt.bind(fixture.ctx.sessionController)
   fixture.ctx.sessionController.prompt = async (request, signal) => {
@@ -103,7 +103,7 @@ await run('busy resume and steer share the very next pre-step input', async h =>
   const delivered = h.events().find(event => event.event === 'steer.delivered')
   assert.equal(delivered.payload.deliveryMode, 'pre-step')
   assert.deepEqual(delivered.payload.messages.map(item => item.source), ['resume', 'steer'])
-  assert.ok(delivered.payload.messages.every(item => item.workerId === h.worker && item.ticketId === h.ticketId))
+  assert.ok(delivered.payload.messages.every(item => item.executorId === h.worker && item.ticketId === h.ticketId))
   assert.deepEqual((await h.step()).messages, [])
   assert.equal(h.host.attempts.length, 0)
 })

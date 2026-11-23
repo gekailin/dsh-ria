@@ -9,7 +9,7 @@ const root = mkdtempSync(join(tmpdir(), 'ria-co-unified-'))
 try {
   const dir = join(root, 'state'); const { mkdirSync } = await import('node:fs'); mkdirSync(dir, { recursive: true })
   const state = new StateStore(dir)
-  state.data.workers = {
+  state.data.executors = {
     'session-old': { sessionId: 'session-old', kind: 'co-managed', title: 'Old', cwd: '/work/old', tags: ['old'], allowAutoDispatch: false, dedicated: true, status: 'idle', currentTicketId: null },
   }
   state.save()

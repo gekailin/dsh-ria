@@ -141,7 +141,7 @@ try {
     await fixture.service.wechatClaw.deliverText('/直通 session-independent')
     assert.equal(fixture.service.controller.status().direct.active, true)
     assert.equal(fixture.service.controller.status().direct.sessionId, 'session-independent')
-    assert.match(directForwarded.at(-1), /已进入直通模式：Alpha Session/)
+    assert.equal(directForwarded.at(-1), '已进入直通 → Alpha Session；发送 /退出直通 退出')
     directForwarded.length = 0
 
     const beforeDirect = fixture.prompts.length
@@ -166,11 +166,16 @@ try {
 
     // While direct is active, /退出直通 must be caught at the channel boundary.
     await fixture.service.wechatClaw.deliverText('/直通状态')
-    assert.match(directForwarded.at(-1), /直通中：Alpha Session \(session-independent\)/)
-    assert.match(directForwarded.at(-1), /切换目标：\/直通 <会话名>/)
+    assert.equal(directForwarded.at(-1), '当前直通 → Alpha Session')
     await fixture.service.wechatClaw.deliverText('/退出直通')
     assert.equal(fixture.service.controller.status().direct.active, false)
-    assert.equal(directForwarded.at(-1), '已退出直通模式。')
+    assert.equal(directForwarded.at(-1), '已退出直通')
+
+    // Off-state status and a second exit are explicit, not silent.
+    await fixture.service.wechatClaw.deliverText('/直通状态')
+    assert.equal(directForwarded.at(-1), '当前未直通')
+    await fixture.service.wechatClaw.deliverText('/退出直通')
+    assert.equal(directForwarded.at(-1), '当前未直通，无需退出')
 
     // After exit, ordinary text goes back to Chat instead of the direct target.
     const beforeRestored = fixture.prompts.length
@@ -181,8 +186,7 @@ try {
     const beforeCommand = fixture.prompts.length
     await fixture.service.wechatClaw.deliverText('/直通 alphasession')
     assert.equal(fixture.service.controller.status().direct.active, true)
-    assert.match(directForwarded.at(-1), /已进入直通模式：Alpha Session/)
-    assert.match(directForwarded.at(-1), /切换目标：\/直通 <会话名>/)
+    assert.equal(directForwarded.at(-1), '已进入直通 → Alpha Session；发送 /退出直通 退出')
     assert.equal(fixture.prompts.length, beforeCommand)
     await fixture.service.wechatClaw.deliverText('/退出直通')
     assert.equal(fixture.service.controller.status().direct.active, false)
@@ -192,19 +196,21 @@ try {
     await fixture.service.wechatClaw.deliverText('/直通 session-blank')
     assert.equal(fixture.service.controller.status().direct.active, true)
     assert.equal(fixture.service.controller.status().direct.sessionId, 'session-blank')
+    assert.equal(directForwarded.at(-1), '已进入直通 → Blank Session；发送 /退出直通 退出')
     await fixture.service.wechatClaw.deliverText('/退出直通')
     assert.equal(fixture.service.controller.status().direct.active, false)
 
     // Command-layer failures are readable and never fall through to Chat.
     const beforeMissing = fixture.prompts.length
-    await fixture.service.wechatClaw.deliverText('/直通 no-such-session')
+    await fixture.service.wechatClaw.deliverText('/直通 session-no-such-session')
     assert.equal(fixture.service.controller.status().direct.active, false)
-    assert.match(directForwarded.at(-1), /没有开启直通：/)
+    assert.match(directForwarded.at(-1), /^直通开启失败：/)
+    assert.match(directForwarded.at(-1), /目标不是普通会话：session-no-such-session/)
     assert.equal(fixture.prompts.length, beforeMissing)
     const managed = await fixture.service.controller.ensureExecutor('global')
     await fixture.service.wechatClaw.deliverText('/直通 ' + managed.sessionId)
     assert.equal(fixture.service.controller.status().direct.active, false)
-    assert.match(directForwarded.at(-1), /managed executor 不能作为直通目标/)
+    assert.match(directForwarded.at(-1), /^直通开启失败：managed executor 不能作为直通目标/)
   } finally {
     fixture.service.wechatClaw.forwardAssistant = directForward
   }

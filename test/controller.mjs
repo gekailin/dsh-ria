@@ -77,7 +77,7 @@ try {
   assert.equal(historicalStatus.ticket.status, historical.status)
   const historicalBrief = ticketBrief(historical, { goal: historical.goal }, fixture.service.controller.state.ticketMeta(requested.ticketId))
   assert.match(historicalBrief, /模式: work/)
-  assert.deepEqual(fixture.visibleTools(chat).sort(), ['ria_chat_co_manage', 'ria_chat_direct', 'ria_chat_executor_config', 'ria_chat_grant', 'ria_chat_models', 'ria_chat_new_session', 'ria_chat_propose', 'ria_chat_read', 'ria_chat_request', 'ria_chat_resume', 'ria_chat_send_image', 'ria_chat_session_config', 'ria_chat_sessions', 'ria_chat_status', 'ria_chat_steer', 'ria_chat_stop_ticket', 'ria_chat_watch'])
+  assert.deepEqual(fixture.visibleTools(chat).sort(), ['ria_chat_co_manage', 'ria_chat_executor_config', 'ria_chat_grant', 'ria_chat_models', 'ria_chat_new_session', 'ria_chat_propose', 'ria_chat_read', 'ria_chat_request', 'ria_chat_resume', 'ria_chat_send_image', 'ria_chat_session_config', 'ria_chat_sessions', 'ria_chat_status', 'ria_chat_steer', 'ria_chat_stop_ticket', 'ria_chat_watch'])
   // WeChat Claw resolves its peer session through these two callbacks. In state
   // they must point at the Chat, not at the retired legacy manager.
   assert.equal(fixture.service.wechatClaw.getRiaId(), chat)
@@ -123,17 +123,24 @@ try {
     assert.equal(readPending.queueLength, 0)
   }
 
-  // Direct mode is a memory-only WeChat bypass: inbound text is steered into the
-  // chosen independent session, and that session's assistant text is forwarded
-  // back with a prefix. Commands are intercepted before Chat sees them.
-  const directOn = await fixture.callAs(chat, 'ria_chat_direct', { action: 'on', sessionId: 'session-independent' })
-  assert.equal(directOn.ok, true)
-  assert.equal(directOn.active, true)
-  assert.equal(fixture.service.controller.status().direct.sessionId, 'session-independent')
+  // Direct mode is command-layer only: Chat has no ria_chat_direct tool (or
+  // chat_direct/chatbot_direct aliases), but the channel boundary still
+  // intercepts /直通, /直通状态 and /退出直通 before Chat sees them.
+  assert.equal(fixture.visibleTools(chat).includes('ria_chat_direct'), false)
+  const chatToolMap = fixture.agentTools.get(chat)
+  assert.equal(chatToolMap.has('ria_chat_direct'), false)
+  assert.equal(chatToolMap.has('chat_direct'), false)
+  assert.equal(chatToolMap.has('chatbot_direct'), false)
   const directForwarded = []
   const directForward = fixture.service.wechatClaw.forwardAssistant
   fixture.service.wechatClaw.forwardAssistant = text => { directForwarded.push(text) }
   try {
+    await fixture.service.wechatClaw.deliverText('/直通 session-independent')
+    assert.equal(fixture.service.controller.status().direct.active, true)
+    assert.equal(fixture.service.controller.status().direct.sessionId, 'session-independent')
+    assert.match(directForwarded.at(-1), /已进入直通模式：Alpha Session/)
+    directForwarded.length = 0
+
     const beforeDirect = fixture.prompts.length
     await fixture.service.wechatClaw.deliverText('这条直接给 Alpha')
     const directPrompt = fixture.prompts.slice(beforeDirect).find(item => item.sessionId === 'session-independent')
@@ -154,6 +161,7 @@ try {
     )
     assert.deepEqual(directForwarded, ['【直通·Alpha Session】\nAlpha 的直通回复'])
 
+    // While direct is active, /退出直通 must be caught at the channel boundary.
     await fixture.service.wechatClaw.deliverText('/直通状态')
     assert.match(directForwarded.at(-1), /直通中：Alpha Session \(session-independent\)/)
     assert.match(directForwarded.at(-1), /切换目标：\/直通 <会话名>/)
@@ -161,14 +169,31 @@ try {
     assert.equal(fixture.service.controller.status().direct.active, false)
     assert.equal(directForwarded.at(-1), '已退出直通模式。')
 
+    // After exit, ordinary text goes back to Chat instead of the direct target.
+    const beforeRestored = fixture.prompts.length
+    await fixture.service.wechatClaw.deliverText('回到普通聊天')
+    assert.ok(fixture.prompts.slice(beforeRestored).some(item => String(item.sessionId) === String(chat)))
+
+    // Re-enter by title; the command layer does not prompt Chat, and exit again.
     const beforeCommand = fixture.prompts.length
     await fixture.service.wechatClaw.deliverText('/直通 alphasession')
     assert.equal(fixture.service.controller.status().direct.active, true)
     assert.match(directForwarded.at(-1), /已进入直通模式：Alpha Session/)
     assert.match(directForwarded.at(-1), /切换目标：\/直通 <会话名>/)
     assert.equal(fixture.prompts.length, beforeCommand)
-    const directOff = await fixture.callAs(chat, 'ria_chat_direct', { action: 'off' })
-    assert.equal(directOff.active, false)
+    await fixture.service.wechatClaw.deliverText('/退出直通')
+    assert.equal(fixture.service.controller.status().direct.active, false)
+
+    // Command-layer failures are readable and never fall through to Chat.
+    const beforeMissing = fixture.prompts.length
+    await fixture.service.wechatClaw.deliverText('/直通 no-such-session')
+    assert.equal(fixture.service.controller.status().direct.active, false)
+    assert.match(directForwarded.at(-1), /没有开启直通：/)
+    assert.equal(fixture.prompts.length, beforeMissing)
+    const managed = await fixture.service.controller.ensureExecutor('global')
+    await fixture.service.wechatClaw.deliverText('/直通 ' + managed.sessionId)
+    assert.equal(fixture.service.controller.status().direct.active, false)
+    assert.match(directForwarded.at(-1), /managed executor 不能作为直通目标/)
   } finally {
     fixture.service.wechatClaw.forwardAssistant = directForward
   }
@@ -518,7 +543,7 @@ try {
   const chat = second.service.controller.state.chatSessionId
   assert.ok(chat)
   assert.equal(second.service.store.riaSessionId, chat)
-  assert.deepEqual(second.visibleTools(chat).sort(), ['ria_chat_co_manage', 'ria_chat_direct', 'ria_chat_executor_config', 'ria_chat_grant', 'ria_chat_models', 'ria_chat_new_session', 'ria_chat_propose', 'ria_chat_read', 'ria_chat_request', 'ria_chat_resume', 'ria_chat_send_image', 'ria_chat_session_config', 'ria_chat_sessions', 'ria_chat_status', 'ria_chat_steer', 'ria_chat_stop_ticket', 'ria_chat_watch'])
+  assert.deepEqual(second.visibleTools(chat).sort(), ['ria_chat_co_manage', 'ria_chat_executor_config', 'ria_chat_grant', 'ria_chat_models', 'ria_chat_new_session', 'ria_chat_propose', 'ria_chat_read', 'ria_chat_request', 'ria_chat_resume', 'ria_chat_send_image', 'ria_chat_session_config', 'ria_chat_sessions', 'ria_chat_status', 'ria_chat_steer', 'ria_chat_stop_ticket', 'ria_chat_watch'])
   await second.service.startup()
   const parked = second.service.store.ticket(workingTicketId)
   assert.equal(parked.status, 'blocked')

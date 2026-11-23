@@ -114,17 +114,15 @@ try {
       assert.equal(status.watch.titleSnapshot, 'Watched Session')
       await assert.rejects(() => fixture.callAs('session-other', 'ria_chat_watch', { action: 'list' }), /tool not installed|forbidden/)
 
-      // Commands.
-      const command = await fixture.service.controller.handleWatchCommand('/协管列表', chat)
-      assert.equal(command.handled, true)
-      assert.match(command.reply, /Watched Session/)
-      const statusCommand = await fixture.service.controller.handleWatchCommand('/协管状态 session-watch', chat)
-      assert.equal(statusCommand.ok, true)
-      const removeCommand = await fixture.service.controller.handleWatchCommand('/取消协管 session-watch', chat)
-      assert.equal(removeCommand.ok, true)
-      assert.equal(fixture.service.controller.coManagement.watches().length, 0)
-      const addCommand = await fixture.service.controller.handleWatchCommand('/协管 Watched', chat)
-      assert.equal(addCommand.ok, true, JSON.stringify(addCommand))
+      // Slash co-management commands were removed. /协管列表 is ordinary Chat
+      // text: it must not be parsed as a command or mutate co-management.
+      assert.equal(typeof fixture.service.controller.handleWatchCommand, 'undefined')
+      const watchCountBeforeSlash = fixture.service.controller.coManagement.watches().length
+      const promptsBeforeSlash = fixture.prompts.length
+      await fixture.service.wechatClaw.deliverText('/协管列表')
+      const chatPrompts = fixture.prompts.slice(promptsBeforeSlash).filter(item => String(item.sessionId) === String(chat))
+      assert.ok(chatPrompts.some(item => String(item.content[0].text).includes('/协管列表')))
+      assert.equal(fixture.service.controller.coManagement.watches().length, watchCountBeforeSlash)
 
       const watch = () => fixture.service.controller.coManagement.watch('session-watch')
       const emitAssistant = (seq, text) => fixture.service.onSessionEvent(

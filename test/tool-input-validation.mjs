@@ -69,9 +69,9 @@ try {
   assert.equal(badType.expected, 'string')
   assert.equal(badType.got, 'number')
 
-  const badEnum = await fixture.callAs(chat, 'ria_chat_direct', { action: 'bogus' })
+  const badEnum = await fixture.callAs(chat, 'ria_chat_grant', { action: 'bogus' })
   assertShape(badEnum, 'invalid_argument', 'action')
-  assert.deepEqual(badEnum.allowed, ['on', 'off', 'status'])
+  assert.deepEqual(badEnum.allowed, ['set', 'list', 'reset'])
   assert.equal(badEnum.got, 'bogus')
 
   // 4. Nested objects are strict too: the field path and nested legal keys are

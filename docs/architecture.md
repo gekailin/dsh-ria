@@ -2,7 +2,7 @@
 
 > 一页读懂当前系统：边界、对象、流程与可靠性。用户用法见 [README.md](../README.md)。
 >
-> **架构提示：** 插件只运行当前架构（Chat / Advisor / Router / Worker）。旧版单会话 manager 已移除，代码与测试为准。
+> **架构提示：** 插件只运行当前架构（Chat / Advisor / Router / Executor）。旧版单会话 manager 已移除，代码与测试为准。
 
 ## 目录
 
@@ -18,22 +18,22 @@
 
 ## 1. 定位与边界
 
-Ria（阿汐）是一个全局唯一的顶层 DSH Session，不是 subagent，也不是多 Agent 编排器。她以 PTC preset 运行，模型只直接看到 `run_code` 和生成的 SDK；15 个 `ria_*` 工具通过 SDK 注册。她的职责是**管理任务，不是替 worker 干活**：
+Ria（阿汐）是一个全局唯一的顶层 DSH Session，不是 subagent，也不是多 Agent 编排器。她以 PTC preset 运行，模型只直接看到 `run_code` 和生成的 SDK；15 个 `ria_*` 工具通过 SDK 注册。她的职责是**管理任务，不是替 executor 干活**：
 
 1. 听懂需求，不清楚就先问；
 2. 把可执行部分写成工单，定义验收标准；
-3. 派给已有或新建的顶层 worker；
-4. 等 worker 停下，读取结果；
+3. 派给已有或新建的顶层 executor；
+4. 等 executor 停下，读取结果；
 5. 向用户汇报，或在需要拍板时停下来问。
 
-executor 要么是 worker 的 sessionId，要么是 `self`：Ria 默认把任务转交 worker；用户明确说“你来做”时，executor 取 `self`（也是 `ria_resolve` 的缺省值）。一条真实用户消息恰好有一个归宿：被回答、变成工单、并入已有工单、执行控制操作，或显式阻塞等用户；不存在“消息悄悄消失”。
+executor 要么是 executor 的 sessionId，要么是 `self`：Ria 默认把任务转交 executor；用户明确说“你来做”时，executor 取 `self`（也是 `ria_resolve` 的缺省值）。一条真实用户消息恰好有一个归宿：被回答、变成工单、并入已有工单、执行控制操作，或显式阻塞等用户；不存在“消息悄悄消失”。
 
 不做的部分：
 
-- 不轮询 worker 进度，不维护独立 bridge，不额外占端口；只监听宿主事件与 worker idle。
-- 默认按风险代批 worker 的权限请求：低风险只放行本次调用，高风险只能转给用户或拒绝；只有在用户明确要求时才通过 `ria_grant` 调整会话权限；纯降权永久，任何提权都必须带 TTL 并自动恢复，从不自动放宽。
-- 不把 subagent 当 worker；派发目标必须是顶层会话。
-- 不写 transcript；Ria 与 worker 的会话日志仍由 DSH 管理。
+- 不轮询 executor 进度，不维护独立 bridge，不额外占端口；只监听宿主事件与 executor idle。
+- 默认按风险代批 executor 的权限请求：低风险只放行本次调用，高风险只能转给用户或拒绝；只有在用户明确要求时才通过 `ria_grant` 调整会话权限；纯降权永久，任何提权都必须带 TTL 并自动恢复，从不自动放宽。
+- 不把 subagent 当 executor；派发目标必须是顶层会话。
+- 不写 transcript；Ria 与 executor 的会话日志仍由 DSH 管理。
 
 ## 2. 核心对象
 
@@ -45,7 +45,7 @@ executor 要么是 worker 的 sessionId，要么是 `self`：Ria 默认把任务
 |---|---|---|
 | `intake` | 每条真实用户消息由 Host 自动登记，等 Ria 定性；只有 intake 能被 `ria_resolve` 定性，且只能一次 | `ria` |
 | `open` | 已定性，等 Ria 派发；有依赖时等依赖 | `ria` |
-| `working` | 已投递给 worker，等这一轮结束 | `worker` |
+| `working` | 已投递给 executor，等这一轮结束 | `executor` |
 | `blocked` | 等用户回答、审批或环境恢复；不自动续跑 | `user` |
 | `forked` | 分叉容器，等子工单；P1 预留，当前 `split` 返回 `not_supported` | `children` |
 | `done` | 完成；`resolution.kind` 可为 answered、merged、control 等 | `none` |
@@ -54,8 +54,8 @@ executor 要么是 worker 的 sessionId，要么是 `self`：Ria 默认把任务
 
 `done` / `failed` / `cancelled` 是终态，但都可以 reopen 回 `open`；历史与 revision 保留。
 
-- **executor**：`self` 或一个顶层 worker 的 sessionId；一个工单同一时间只有一个 executor。
-- **waitingOn**：`ria`、`worker`、`user`、`approval`、`environment`、`children`、`dependency`、`none`。它回答“现在卡在谁”。
+- **executor**：`self` 或一个顶层 executor 的 sessionId；一个工单同一时间只有一个 executor。
+- **waitingOn**：`ria`、`executor`、`user`、`approval`、`environment`、`children`、`dependency`、`none`。它回答“现在卡在谁”。
 - **dependsOn**：最多 8 个上游，DAG，可跨 root。未全部 `done` 时工单停在 `open + waitingOn=dependency`，不可派发；上游 `failed`/`cancelled` 不自动跳过，写 `dependencyAlerts` 并告警。全部 `done` 后写 `readyAt`，生成 `queueToken = ticketId:readyAt:revision`。token 不入库，派发时校验，保证一次就绪最多派发一次。
 - **checklist**：有序步骤，最多 50 条；status 与看板显示 `done/total`；终态后视为最终结果，不再改勾。转 done/cancelled 时若仍有未勾项，默认拒绝（checklist_pending）；只有显式 waiver 才放行，并把 waiver、未完成项与豁免时间一并写进 resolution，所有收口路径（含 cascade、merge、resolveIntake、父工单自动收口）走同一门禁。
 - **attention**：结构化等待项 `{kind, question, options?}`；`blocked + user` 放问题与选项，`blocked + approval` 放审批引用。审批默认由插件按风险规则加 Ria 裁决处理；Ria 只能放行本次调用，不能改持久权限。
@@ -68,9 +68,9 @@ executor 要么是 worker 的 sessionId，要么是 `self`：Ria 默认把任务
   │ Host: agent/pre-step 登记
   ▼
 intake ──ria_resolve──▶ open ──ria_request 预检──▶ working
-                                                     │ worker turn 结束
+                                                     │ executor turn 结束
                                                      ▼
-                              [Worker idle] ◀── agent/status = idle
+                              [Executor idle] ◀── agent/status = idle
                                                      │
                                                      ▼
                               ria_read ──▶ done / blocked / 续跑
@@ -79,9 +79,9 @@ intake ──ria_resolve──▶ open ──ria_request 预检──▶ working
 1. **登记**：Host 只在 `agent/pre-step` 捕获 `source.kind=user` 且非 host 的消息，自动建 root `intake`，并在同一 turn 注入 `[Task intake]`（`source.kind=ria-task-host`，不会被再次捕获）。
 2. **定性**：Ria 调 `ria_resolve`，把 intake 收敛为 answered、work、merge、control 或 blocked。每个 intake 只能定性一次；`ria_ticket` 不能改 intake。
 3. **派发**：work 生成工单并指定 executor；`ria_request` 先做预检：会话存在、是顶层、未归档、cwd 可用、目标匹配 executor、依赖 token 有效、附件与模型支持。
-4. **执行**：worker 收到的是一条普通用户消息，不加任务前缀；防误发提示由 system prompt section 提供。
-5. **唤醒**：worker 的 `agent/status` 变为 idle，且它正是一个 `working` 工单的 executor 时，Host 向 Ria 发 `[Worker idle]`。通知 30 秒节流、排除 Ria 自己，只带最后 turn 与 end reason，不代表任务成功。
-6. **收口**：Ria 先 `ria_read` 看 worker 的最后输出，再决定 `done`、`blocked`，或补充信息继续派发。worker turn 以 `aborted(user)` 结束时，工单自动转 `blocked`，Ria 必须停下来问用户，不自行续跑。
+4. **执行**：executor 收到的是一条普通用户消息，不加任务前缀；防误发提示由 system prompt section 提供。
+5. **唤醒**：executor 的 `agent/status` 变为 idle，且它正是一个 `working` 工单的 executor 时，Host 向 Ria 发 `[Executor idle]`。通知 30 秒节流、排除 Ria 自己，只带最后 turn 与 end reason，不代表任务成功。
+6. **收口**：Ria 先 `ria_read` 看 executor 的最后输出，再决定 `done`、`blocked`，或补充信息继续派发。executor turn 以 `aborted(user)` 结束时，工单自动转 `blocked`，Ria 必须停下来问用户，不自行续跑。
 
 兜底：未定性的 intake 在 `agent/turn-stopping` 先被 steer 提醒一次，第二次仍未定性就自动 `blocked`；`agent/turn/end` 时，`aborted(user)` 会把未定性 intake 收敛为 `cancelled`，error 落 `blocked`，其余留给重启恢复。
 
@@ -89,7 +89,7 @@ intake ──ria_resolve──▶ open ──ria_request 预检──▶ working
 
 ### 4.1 派发前预检
 
-目标会话不存在、是 subagent、已归档、cwd 不可用、executor 不匹配、依赖未就绪、附件缺失或模型不支持图片，都会在产生任何副作用之前失败：不投递、不写 recentWorkers、不动工单。
+目标会话不存在、是 subagent、已归档、cwd 不可用、executor 不匹配、依赖未就绪、附件缺失或模型不支持图片，都会在产生任何副作用之前失败：不投递、不写 recentExecutors、不动工单。
 
 ### 4.2 真实消息与副作用分开
 
@@ -109,11 +109,11 @@ outbox 与 `ria.json` 不是同一个事务：派发已被接受、但 outbox �
 
 ### 4.4 审批自动化
 
-插件监听 `approval/request`，用 `lib/approval-policy.mjs` 对缓存的工具参数做保守分类。监听器以 `prepend` 注册：宿主 web bundle 先加载的 `dsh-api-remotes` 会把审批转发给浏览器并等用户点击，且不调用 `next()`；普通注册（append）会让转发器先拿到请求，Ria 永远收不到。prepend 后 Ria 先判断自己的 active 工单，不匹配再用 `next()` 放回宿主原生 UI。低风险直接返回 `allowed-once`（仅本次），硬拒绝直接 `rejected`；中/高风险把工单迁到 `blocked + waitingOn=approval`，写 attention，唤醒 Ria，并等待 `ria_approval_decision`。Ria 只能 allow 中/低风险；高风险只能 `ask-user` 或 `deny`。2 分钟无决定、唤醒失败或审计失败一律按拒绝处理并通知用户。`ask-user` 调用宿主原生 UI，用户的结果同样入审计。审批结束、abort 或 TTL 到期后，工单从 `blocked` 经 `open` 回到 `working`；重启时清理已失效的审批引用，避免永久卡住。关闭设置开关后回到只读观察 + 原生 UI 的旧行为。到达但未归 Ria 处理的请求会向 `approval-diagnostics.jsonl` 写一行 `{event:"approval_unhandled",reason,agentId,toolName,callId?}`，用于排查「worker 有 approval/asked、Ria 侧却没有任何记录」。
+插件监听 `approval/request`，用 `lib/approval-policy.mjs` 对缓存的工具参数做保守分类。监听器以 `prepend` 注册：宿主 web bundle 先加载的 `dsh-api-remotes` 会把审批转发给浏览器并等用户点击，且不调用 `next()`；普通注册（append）会让转发器先拿到请求，Ria 永远收不到。prepend 后 Ria 先判断自己的 active 工单，不匹配再用 `next()` 放回宿主原生 UI。低风险直接返回 `allowed-once`（仅本次），硬拒绝直接 `rejected`；中/高风险把工单迁到 `blocked + waitingOn=approval`，写 attention，唤醒 Ria，并等待 `ria_approval_decision`。Ria 只能 allow 中/低风险；高风险只能 `ask-user` 或 `deny`。2 分钟无决定、唤醒失败或审计失败一律按拒绝处理并通知用户。`ask-user` 调用宿主原生 UI，用户的结果同样入审计。审批结束、abort 或 TTL 到期后，工单从 `blocked` 经 `open` 回到 `working`；重启时清理已失效的审批引用，避免永久卡住。关闭设置开关后回到只读观察 + 原生 UI 的旧行为。到达但未归 Ria 处理的请求会向 `approval-diagnostics.jsonl` 写一行 `{event:"approval_unhandled",reason,agentId,toolName,callId?}`，用于排查「executor 有 approval/asked、Ria 侧却没有任何记录」。
 
 ### 4.5 依赖与忙碌
 
-依赖全部完成时，`queue_wake` 经 outbox 叫醒 Ria；`ria_request` 校验 `queueToken`，未就绪或 token 过期返回 `ticket_not_ready`。目标 worker 正在跑 turn 或已有 pending 队列时，`mode=queue` 返回 `worker_busy`；`mode=steer` 只用于同步信息，不下发新任务。
+依赖全部完成时，`queue_wake` 经 outbox 叫醒 Ria；`ria_request` 校验 `queueToken`，未就绪或 token 过期返回 `ticket_not_ready`。目标 executor 正在跑 turn 或已有 pending 队列时，`mode=queue` 返回 `executor_busy`；`mode=steer` 只用于同步信息，不下发新任务。
 
 ### 4.6 归档与写入
 
@@ -140,7 +140,7 @@ outbox 与 `ria.json` 不是同一个事务：派发已被接受、但 outbox �
 
 | 文件 / 目录 | 职责 |
 |---|---|
-| `ria.json` | 热状态 schema v5：Ria session、tickets、pending deliveries、recentWorkers、grants、settings、dispatchNotes、feedback |
+| `ria.json` | 热状态 schema v5：Ria session、tickets、pending deliveries、recentExecutors、grants、settings、dispatchNotes、feedback |
 | `outbox.json` | 副作用待投递 / 失败 / 已送达记录；独立于 ria.json |
 | `tickets.log.jsonl` | 终态工单归档；按月文件保留 12 个月 |
 | `memory.md` | 稳定偏好，默认 2400 字符 / 12 条 / 单条 300，0600；超出归档到 `memory-archive/<slug>.md`（不注入） |
@@ -160,11 +160,11 @@ outbox 与 `ria.json` 不是同一个事务：派发已被接受、但 outbox �
 - **微信「文件传输助手」**：网页版协议，入站文本与图片，出站文本、`.md` 文件与本机图片。
 - 三个通道都在 DSH 进程内运行，不启动 bridge、不额外占端口；凭据只存本机。
 
-任务看板是只读的全屏浮层：横轴按项目（worker 所属 workspace），项目内是主题卡瀑布；主题弹窗用二维网格展示工单与依赖。看板不建工单、不派发、不唤醒 worker；工作区表头与主题卡各有一个「说」输入框，只把带工作区或主题来源标注的用户消息以 queue 模式发给 Ria，之后仍由 Ria 正常派发。顶部统计按「数量（活跃 X · 阻塞 Y）」显示项目/主题/工单；工单提交后由同源 SSE `/board/events` 推送变更，看板去抖后自动刷新并保留滚动位置和筛选；筛选只灰化不匹配的卡片。悬停工单卡只显示单号、状态、执行者和更新时间的精简浮层，底部可复制单号或打开 worker；单击工单卡（包括卡内执行者名字）打开详情弹窗，弹窗按需读取 `GET /board/ticket` 的「最后结果」，长清单和完整字段都在这里。
+任务看板是只读的全屏浮层：横轴按项目（executor 所属 workspace），项目内是主题卡瀑布；主题弹窗用二维网格展示工单与依赖。看板不建工单、不派发、不唤醒 executor；工作区表头与主题卡各有一个「说」输入框，只把带工作区或主题来源标注的用户消息以 queue 模式发给 Ria，之后仍由 Ria 正常派发。顶部统计按「数量（活跃 X · 阻塞 Y）」显示项目/主题/工单；工单提交后由同源 SSE `/board/events` 推送变更，看板去抖后自动刷新并保留滚动位置和筛选；筛选只灰化不匹配的卡片。悬停工单卡只显示单号、状态、执行者和更新时间的精简浮层，底部可复制单号或打开 executor；单击工单卡（包括卡内执行者名字）打开详情弹窗，弹窗按需读取 `GET /board/ticket` 的「最后结果」，长清单和完整字段都在这里。
 
 ## 7. 记忆与反省
 
-`memory.md` 只放稳定偏好与长期约定，由 `ria_memory` 显式读写；默认上限 2400 字符 / 12 条 / 单条 300（warn 阈值 2160 / 11 / 270），超限拒绝写入，长内容归档到 `memory-archive/<slug>.md`（不注入）；不抄工单状态、时间戳或逐轮流水。定期反思已实现：设置页可开启每天/每周的 schedule，到点后 Ria 启动一个独立的只读 worker（只有 6 个 `ria_reflect_*` 工具），读当天/当周的工单、turn 与 outbox（会话默认 `summary`，异常再按 `ref`/窗口 `full` 定点读），把报告写到 `reflections/YYYY-MM-DD.md`；worker 只提议隐性规则，不自动改写记忆。报告在写入草稿前就跑与 finish 相同的校验，失败不落盘；Ria 也可用 `ria_reflect action=validate` 先验后写。每次 dispatch 自动在固定主题「记忆与反思」下建一张监控工单（executor=本次反思 worker，status=working，run.json 记 watchTicketId）；finish 把它置 done 并写 reportPath/bytes，abort 置 cancelled，报告失败/超时置 blocked 并写原因；重启恢复会跳过这类监控单。报告渲染/归档 UI、多天回填与 P2 wiki 尚未实现。
+`memory.md` 只放稳定偏好与长期约定，由 `ria_memory` 显式读写；默认上限 2400 字符 / 12 条 / 单条 300（warn 阈值 2160 / 11 / 270），超限拒绝写入，长内容归档到 `memory-archive/<slug>.md`（不注入）；不抄工单状态、时间戳或逐轮流水。定期反思已实现：设置页可开启每天/每周的 schedule，到点后 Ria 启动一个独立的只读 executor（只有 6 个 `ria_reflect_*` 工具），读当天/当周的工单、turn 与 outbox（会话默认 `summary`，异常再按 `ref`/窗口 `full` 定点读），把报告写到 `reflections/YYYY-MM-DD.md`；executor 只提议隐性规则，不自动改写记忆。报告在写入草稿前就跑与 finish 相同的校验，失败不落盘；Ria 也可用 `ria_reflect action=validate` 先验后写。每次 dispatch 自动在固定主题「记忆与反思」下建一张监控工单（executor=本次反思 executor，status=working，run.json 记 watchTicketId）；finish 把它置 done 并写 reportPath/bytes，abort 置 cancelled，报告失败/超时置 blocked 并写原因；重启恢复会跳过这类监控单。报告渲染/归档 UI、多天回填与 P2 wiki 尚未实现。
 
 ## 8. 扩展点
 

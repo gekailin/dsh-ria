@@ -3,11 +3,11 @@
 
 ![阿汐站在玻璃中庭里，手里提着一盏灯](docs/hero.jpg)
 
-阿汐（Ria）是 DSH Web 插件 dsh-ria 里的常驻管家：您把事说清楚，她拆成一张张带验收标准的活儿，派给合适的 worker，盯到收尾，再把结果和卡点带回来。她不替 worker 写代码，也不要求您记命令——您只管对她说人话。
+阿汐（Ria）是 DSH Web 插件 dsh-ria 里的常驻管家：您把事说清楚，她拆成一张张带验收标准的活儿，派给合适的 executor，盯到收尾，再把结果和卡点带回来。她不替 executor 写代码，也不要求您记命令——您只管对她说人话。
 
-> 当前只有唯一架构：Chat 面对您，Advisor 拆解，Router 记录状态，Worker 执行。旧版单会话 Ria 已移除，不再支持 `{ v2: false }`。
+> 当前只有唯一架构：Chat 面对您，Advisor 拆解，Router 记录状态，Executor 执行。旧版单会话 Ria 已移除，不再支持 `{ v2: false }`。
 >
-> 工具命名：所有角色工具统一使用 `ria_` 前缀。旧名（`chat_*`/`chatbot_*`、`ticket_*`、`sage_*`、`lesson_*`、`worker_report`、`session_*`）保留为 deprecated 别名，调用时会 warn；下次重启验证通过后移除。
+> 工具命名：所有角色工具统一使用 `ria_` 前缀。配置与回报工具现为 `ria_chat_executor_config` / `ria_executor_report`；旧名（`chat_*`/`chatbot_*`、`ticket_*`、`sage_*`、`lesson_*`、`ria_chat_worker_config`、`ria_worker_report`、`worker_report`、`session_*`）保留为 deprecated 别名，调用时会 warn；下次重启验证通过后移除。
 >
 > 需要审批的操作走 DSH 原生审批界面；Chat 仅在用户明确要求时可用 `ria_chat_grant` 调整任意顶层会话的 sandbox/approval：纯降权永久生效；同一 grant 同时含降权和提权时，TTL 到期、ticket 结束或重启只自动恢复提权字段，降权保留。旧版单会话 Ria 已移除。
 
@@ -22,8 +22,8 @@
 - **「阿汐，盯一下数据看板那个活，卡住就告诉我卡在哪。」**
   <sub>她盯着进展，遇到卡点带着原因来问你，而不是等到最后才说“做不完”。</sub>
 - **「阿汐，搜索结果页不对，筛选条件没带上，让改的人再返工一版。」**
-  <sub>她把问题写成可验收的标准，退回给原来的 worker，改完按同一标准复核。</sub>
-- **「阿汐，给写文档的 worker 开一下这个仓库的写权限，只开 docs/。」**
+  <sub>她把问题写成可验收的标准，退回给原来的 executor，改完按同一标准复核。</sub>
+- **「阿汐，给写文档的 executor 开一下这个仓库的写权限，只开 docs/。」**
   <sub>她按最小范围调整权限，改完把生效范围和回滚方式一起告诉你。</sub>
 
 ## 她记得住，也会复盘

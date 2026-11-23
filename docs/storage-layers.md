@@ -14,7 +14,7 @@
 
 `~/.dsh/state/ria/state.json` 只保留控制面：
 
-- `workers`、`settings`、`grants`、`recentWorkers`
+- `executors`、`settings`、`grants`、`recentExecutors`
 - `chatSessionId` / `sageSessionId` / `riaSessionId` / `riaPreset`
 - `meta`、`lastError`、`storage`、`version`、`createdAt`、`lastHumanMessageAt`
 - `coManagement`（协管 watch 注册表；旧 co-management.json 仅迁移时读取）
@@ -23,7 +23,7 @@
 
 ### 协管：一个概念、一个入口
 
-`state.coManagement` 是协管唯一注册源，每条含 `sessionId/title/cwd/tags/roleNote/relay{relayReplies,relayQuestions,rateLimit}/allowDispatch/dedicated/addedAt`。旧 `co-management.json` 只在启动迁移时读取并备份为 `.bak.<ts>`，之后只读；`workers` 不再持久化 `kind=co-managed`（运行时由 coManagement 派生候选）。
+`state.coManagement` 是协管唯一注册源，每条含 `sessionId/title/cwd/tags/roleNote/relay{relayReplies,relayQuestions,rateLimit}/allowDispatch/dedicated/addedAt`。旧 `co-management.json` 只在启动迁移时读取并备份为 `.bak.<ts>`，之后只读；`executors` 不再持久化 `kind=co-managed`（运行时由 coManagement 派生候选）。
 
 | 工具 | 状态 | 动作 |
 |---|---|---|
@@ -57,7 +57,7 @@ Phase A 起不再写入；磁盘保留只读一版作为回滚材料。下个版
 | 数据类别 | 应写位置 | 判定理由 | 常见误写反例 |
 |---|---|---|---|
 | 工单、历史、主题、链接 | SQLite | 关系查询、按状态筛选、唯一约束 | 把 tickets/topics 镜像回 ria.json |
-| Worker/设置/grant/session id/控制面 meta | state.json | 小、低频、启动即读 | 把 requests/reports 留在 state.json |
+| Executor/设置/grant/session id/控制面 meta | state.json | 小、低频、启动即读 | 把 requests/reports 留在 state.json |
 | 请求、报告、WorkOrder、inbox、反馈 | events.jsonl | 追加流水、可按尾部重建、轮转 | 每次保存重写整个数组到 state.json |
 | 操作审计/告警 | operation-events.jsonl | 独立消费与保留策略 | 与业务事件混在一个文件 |
 | 一次性回滚副本 | ria.json / *.bak | 只读、下版本删除 | 继续当作运行态读源 |

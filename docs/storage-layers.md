@@ -19,6 +19,8 @@
 - `meta`、`lastError`、`storage`、`version`、`createdAt`、`lastHumanMessageAt`
 - `coManagement`（协管 watch 注册表；旧 co-management.json 仅迁移时读取）
 
+`executors[].executorLabel` 以实时 Session 标题为准，启动时由 `syncExecutorLabels()` 对齐；一次性对齐脚本已删除。
+
 目标 **< 100KB**。请求/报告/派单/收件箱/反馈/lesson 候选不在这里（Phase B 后）。
 
 ### 协管：一个概念、一个入口
@@ -41,6 +43,7 @@
 - 只追加，不就地改写
 - 默认按 **50MB** 轮转到 `events-<timestamp>.jsonl`，保留 **14 天**（可配 `maxBytes` / `retainDays`）
 - 启动从当前文件 + archive 新到旧重建：requests/reports/workOrders/ticketFeedback 各 500，inbox 全量；lessonCandidates 不再写入（兼容读取只用于旧数据）
+- 历史事件行保留旧 `worker*` 键，不改写；读取端经 `lib/state/worker-executor-keys.mjs` 兼容读出（下个版本删除该兼容层）。
 
 `operation-events.jsonl` 仍是独立审计流，不承载业务状态。
 

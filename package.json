@@ -17,9 +17,7 @@
   "scripts": {
     "router": "node lib/router/cli.mjs",
     "router:test": "node test/router.mjs",
-    "test": "node scripts/run-tests.mjs",
-    "migrate:worker-to-executor": "node scripts/migrate-worker-to-executor.mjs",
-    "align:executor-labels": "node scripts/align-executor-labels.mjs"
+    "test": "node scripts/run-tests.mjs"
   },
   "exports": {
     ".": "./lib/index.js",

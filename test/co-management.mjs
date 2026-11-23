@@ -223,6 +223,22 @@ try {
       assert.equal(fixture.service.controller.state.executor('session-other').status, 'idle')
       assert.deepEqual(fixture.service.controller.state.executor('session-other').autoTags, { learned: 5 }, 're-add preserves autoTags')
 
+      // Auto-registration uses allowDispatch=false and repeated add is idempotent.
+      const autoAdded = await fixture.callAs(chat, 'ria_chat_co_manage', {
+        action: 'add', sessionId: 'session-other', allowDispatch: false,
+      })
+      assert.equal(autoAdded.ok, true, JSON.stringify(autoAdded))
+      assert.equal(fixture.service.controller.coManagement.watch('session-other').allowDispatch, false)
+      assert.equal(fixture.service.controller.state.executor('session-other').allowAutoDispatch, false)
+      assert.deepEqual(fixture.service.controller.state.executor('session-other').autoTags, { learned: 5 }, 'auto add must not reset autoTags')
+      const autoAddedAgain = await fixture.callAs(chat, 'ria_chat_co_manage', {
+        action: 'add', sessionId: 'session-other', allowDispatch: false,
+      })
+      assert.equal(autoAddedAgain.ok, true, JSON.stringify(autoAddedAgain))
+      assert.equal(autoAddedAgain.existing, true)
+      assert.equal(fixture.service.controller.coManagement.watch('session-other').allowDispatch, false)
+      assert.deepEqual(fixture.service.controller.state.executor('session-other').autoTags, { learned: 5 }, 'repeated auto add preserves autoTags')
+
       const prompt = chatPrompt()
       assert.match(prompt, /协管\/接管 X.*allowDispatch=true/)
       assert.match(prompt, /跟踪\/盯着 X.*allowDispatch=false/)

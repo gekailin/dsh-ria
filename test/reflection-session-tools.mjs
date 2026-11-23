@@ -67,7 +67,7 @@ try {
   }
   // The retrospective tools moved off the Advisor onto the reflection Worker.
   assert.deepEqual(fixture.visibleTools(advisor).sort(), [
-    'glob', 'grep', 'read', 'ria_lesson_review', 'ria_lesson_search', 'ria_ticket_block', 'ria_ticket_dispatch', 'ria_ticket_plan', 'ria_ticket_read',
+    'glob', 'grep', 'read', 'ria_ticket_block', 'ria_ticket_dispatch', 'ria_ticket_plan', 'ria_ticket_read',
   ])
   assert.deepEqual(fixture.visibleTools(reflection.sessionId).sort(), [
     'glob', 'grep', 'read', 'ria_session_events', 'ria_session_list', 'ria_worker_report',

@@ -226,7 +226,7 @@ try {
 
   const advisor = fixture.service.controller.advisor('global').sessionId
   // Retrospective tools belong to reflection Workers, not the Advisor.
-  assert.deepEqual(fixture.visibleTools(advisor).sort(), ['read', 'ria_lesson_review', 'ria_lesson_search', 'ria_ticket_block', 'ria_ticket_dispatch', 'ria_ticket_plan', 'ria_ticket_read'])
+  assert.deepEqual(fixture.visibleTools(advisor).sort(), ['read', 'ria_ticket_block', 'ria_ticket_dispatch', 'ria_ticket_plan', 'ria_ticket_read'])
   assert.equal(fixture.prompts.at(-1).sessionId, advisor)
   assert.match(fixture.prompts.at(-1).content[0].text, /Ticket brief/)
 

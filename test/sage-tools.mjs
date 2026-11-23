@@ -34,7 +34,7 @@ const MOUNTED_GLOBALS = [
   'ask_user_question', 'job_list', 'list_subagent_models', 'exit_plan_mode',
 ]
 const ADVISOR_TOOLS = [
-  'glob', 'grep', 'read', 'ria_lesson_review', 'ria_lesson_search',
+  'glob', 'grep', 'read', 
   'ria_ticket_block', 'ria_ticket_dispatch', 'ria_ticket_plan', 'ria_ticket_read',
 ]
 const WORKER_DENY = ['subagent', 'subagent_fork', 'list_agents', 'send_message', 'interrupt_agent']

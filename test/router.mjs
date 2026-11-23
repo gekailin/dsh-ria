@@ -218,4 +218,47 @@ const sessionCandidates = defaultCandidates('session')
   }
 }
 
+// Without an explicit provider/model the host method scores with the chat's
+// model: switching the chat model switches the Router too.
+{
+  const fixture = await createFixture()
+  try {
+    const service = fixture.service
+    const seen = []
+    service.routerLlm = {
+      async *stream(options) {
+        seen.push({ provider: options.provider, model: options.model, reasoningEffort: options.reasoningEffort })
+        yield { type: 'text-delta', index: 0, text: JSON.stringify({
+          scores: [
+            { candidate_id: 'project:dsh-ria', score: 9, confidence: 0.9, reason: 'Ria work' },
+            { candidate_id: 'project:web-ui', score: 2, confidence: 0.8, reason: 'not UI' },
+            { candidate_id: 'global', score: 1, confidence: 0.7, reason: 'not cross-project' },
+            { candidate_id: 'ask', score: 1, confidence: 0.9, reason: 'clear enough' },
+          ],
+          no_fit: 0,
+          needs_clarification: false,
+        }) }
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      },
+    }
+    const result = await service.routerScore({ mode: 'project', request: '把 Ria 看板按项目分组' })
+    assert.equal(seen.length, 1)
+    assert.equal(seen[0].provider, 'provider-ok')
+    assert.equal(seen[0].model, 'model-vision')
+    assert.equal(seen[0].reasoningEffort, undefined)
+    assert.equal(result.provider, 'provider-ok')
+    assert.equal(result.reasoningEffort, null)
+
+    // The chat's model AND thinking effort both follow the selection.
+    await fixture.ctx.sessionController.selectModel({ sessionId: fixture.service.store.riaSessionId, provider: 'provider-ok', model: 'model-fast', reasoningEffort: 'high' })
+    const switched = await service.routerScore({ mode: 'project', request: '把 Ria 看板按项目分组' })
+    assert.equal(seen[1].model, 'model-fast')
+    assert.equal(seen[1].reasoningEffort, 'high')
+    assert.equal(switched.provider, 'provider-ok')
+    assert.equal(switched.reasoningEffort, 'high')
+  } finally {
+    fixture.cleanup()
+  }
+}
+
 console.log('router tests passed')

@@ -36,6 +36,23 @@ try {
   assert.match(payload.workOrderSummary, /alpha goal/)
   assert.ok(fixture.prompts.some(item => item.sessionId === fixture.service.store.ticket(first.ticketId).executor))
 
+  // The Advisor plans with the chat's model: there is no separate Advisor
+  // configuration, and the request itself stays a one-shot model call.
+  const firstCall = fixture.llmCalls[fixture.llmCalls.length - 1]
+  assert.equal(firstCall.provider, 'provider-ok')
+  assert.equal(firstCall.model, 'model-vision')
+  assert.equal(firstCall.sessionId, undefined)
+  // An unset chat effort stays unset: the Advisor must not invent one.
+  assert.equal(firstCall.reasoningEffort, undefined)
+
+  // Switching the chat model or its thinking effort switches planning with it.
+  await fixture.ctx.sessionController.selectModel({ sessionId: chat, provider: 'provider-ok', model: 'model-fast', reasoningEffort: 'high' })
+  const switched = await fixture.callAs(chat, 'ria_chat_request', { goal: 'switched model' })
+  assert.equal(switched.ok, true, JSON.stringify(switched))
+  const switchedCall = fixture.llmCalls[fixture.llmCalls.length - 1]
+  assert.equal(switchedCall.model, 'model-fast')
+  assert.equal(switchedCall.reasoningEffort, 'high')
+
   // Two tickets are isolated; the same ticket with an existing WorkOrder does
   // not call the model again.
   const beforeCalls = fixture.llmCalls.length

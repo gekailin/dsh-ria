@@ -22,6 +22,9 @@ const fixture = await createFixture({
     { sessionId: 'session-pending-other', running: true, blank: false, updatedAt: 5, cwd: independentCwd, projections: { values: { title: 'Pending Other' } } },
     { sessionId: 'session-idle', running: false, blank: false, updatedAt: 4, cwd: independentCwd, projections: { values: { title: 'Idle Session' } } },
     { sessionId: 'session-input-required', running: false, blank: false, updatedAt: 3, cwd: independentCwd, projections: { values: { title: 'Input Required' } } },
+    // Newly created sessions are blank until their first message; direct mode
+    // must be able to address them by id.
+    { sessionId: 'session-blank', running: false, blank: true, updatedAt: 2, cwd: independentCwd, projections: { values: { title: 'Blank Session' } } },
   ],
   pendingInputs: {
     'session-pending-approval': ['approval'],
@@ -181,6 +184,14 @@ try {
     assert.match(directForwarded.at(-1), /已进入直通模式：Alpha Session/)
     assert.match(directForwarded.at(-1), /切换目标：\/直通 <会话名>/)
     assert.equal(fixture.prompts.length, beforeCommand)
+    await fixture.service.wechatClaw.deliverText('/退出直通')
+    assert.equal(fixture.service.controller.status().direct.active, false)
+
+    // A blank session created by ria_chat_new_session is directable before its
+    // first message; this is the regression case for the blank-row filter.
+    await fixture.service.wechatClaw.deliverText('/直通 session-blank')
+    assert.equal(fixture.service.controller.status().direct.active, true)
+    assert.equal(fixture.service.controller.status().direct.sessionId, 'session-blank')
     await fixture.service.wechatClaw.deliverText('/退出直通')
     assert.equal(fixture.service.controller.status().direct.active, false)
 

@@ -88,17 +88,22 @@ try {
   assert.equal(listed.status, 'idle')
   assert.deepEqual(listed.model, { provider: 'provider-ok', model: 'model-vision' })
 
-  // ⑥ Model changes apply live and emit executor.config.changed.
+  // ⑥ Model changes are deprecated on executor_config and forwarded to session_config.
   const modelChanged = await fixture.callAs(chat, 'ria_chat_executor_config', { action: 'set', executorId: created.sessionId, model: 'model-fast', provider: 'provider-ok' })
   assert.equal(modelChanged.ok, true, JSON.stringify(modelChanged))
   assert.equal(modelChanged.recreated, false)
+  assert.equal(modelChanged.deprecated, true)
+  assert.deepEqual(modelChanged.deprecatedParams.sort(), ['model', 'provider'])
   assert.equal(modelChanged.after.model, 'model-fast')
   assert.deepEqual(modelChanged.before, { provider: 'provider-ok', model: 'model-vision' })
-  const modelEvent = events.find(item => item.event === 'executor.config.changed' && item.payload.field === 'model')
+  const modelEvent = events.find(item => item.event === 'session.model.changed' && item.payload.sessionId === created.sessionId)
   assert.ok(modelEvent)
-  assert.equal(modelEvent.payload.executorId, created.sessionId)
-  assert.equal(modelEvent.payload.before.model, 'model-vision')
-  assert.equal(modelEvent.payload.after.model, 'model-fast')
+  assert.equal(modelEvent.payload.from.model, 'model-vision')
+  assert.equal(modelEvent.payload.to.model, 'model-fast')
+  const deprecatedEvent = events.find(item => item.event === 'tool.param_deprecated' && item.payload.tool === 'ria_chat_executor_config')
+  assert.ok(deprecatedEvent)
+  assert.deepEqual(deprecatedEvent.payload.params.sort(), ['model', 'provider'])
+  assert.equal(deprecatedEvent.payload.replacement, 'ria_chat_session_config')
   const afterModel = await fixture.callAs(chat, 'ria_chat_executor_config', { action: 'get' })
   assert.equal(afterModel.executors.find(item => item.sessionId === created.sessionId).model.model, 'model-fast')
 

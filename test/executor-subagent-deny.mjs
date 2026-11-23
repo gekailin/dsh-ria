@@ -3,7 +3,7 @@ import { createFixture } from './support/ria-fixture.mjs'
 
 const BASE_EXECUTOR_TOOLS = ['bash', 'edit', 'read', 'ria_executor_report', 'run_code', 'write']
 const ADVISOR_TOOLS = ['read', 'ria_ticket_block', 'ria_ticket_dispatch', 'ria_ticket_plan', 'ria_ticket_read']
-const CHAT_TOOLS = ['ria_chat_co_manage', 'ria_chat_direct', 'ria_chat_executor_config', 'ria_chat_grant', 'ria_chat_models', 'ria_chat_new_session', 'ria_chat_propose', 'ria_chat_read', 'ria_chat_request', 'ria_chat_resume', 'ria_chat_send_image', 'ria_chat_sessions', 'ria_chat_status', 'ria_chat_steer', 'ria_chat_stop_ticket', 'ria_chat_watch']
+const CHAT_TOOLS = ['ria_chat_co_manage', 'ria_chat_direct', 'ria_chat_executor_config', 'ria_chat_grant', 'ria_chat_models', 'ria_chat_new_session', 'ria_chat_propose', 'ria_chat_read', 'ria_chat_request', 'ria_chat_resume', 'ria_chat_send_image', 'ria_chat_session_config', 'ria_chat_sessions', 'ria_chat_status', 'ria_chat_steer', 'ria_chat_stop_ticket', 'ria_chat_watch']
 const FULL_DENY = ['subagent', 'subagent_fork', 'list_agents', 'send_message', 'interrupt_agent']
 
 async function dispatchExecutor(fixture) {

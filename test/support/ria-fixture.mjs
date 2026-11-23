@@ -47,6 +47,9 @@ export async function createFixture(options = {}) {
   const archivedSessions = []
   const listeners = new Map()
   const summaries = []
+  const sandboxModes = new Map()
+  const approvalPolicies = new Map()
+  const approvalCalls = []
   const modelCalls = { listProviders: 0, listModels: 0 }
   const titles = new Map([
     ['session-executor', 'Executor One'],
@@ -145,7 +148,12 @@ export async function createFixture(options = {}) {
     followup(message) { followups.push(message) },
     session: {
       snapshotEvents() { return options.sessionEvents && options.sessionEvents[riaId] ? options.sessionEvents[riaId].slice() : [] },
-      append(...args) { appends.push({ sessionId: riaId, args }); return { seq: 0, time: 1 } },
+      append(event, data) {
+        appends.push({ sessionId: riaId, args: [event, data] })
+        if (event === 'sandbox/mode' && data) sandboxModes.set(riaId, data.mode)
+        if (event === 'approval/policy' && data) approvalPolicies.set(riaId, data.policy)
+        return { seq: 0, time: 1 }
+      },
     },
   }
 
@@ -167,7 +175,12 @@ export async function createFixture(options = {}) {
       model: { current() { return model } },
       session: {
         snapshotEvents() { return options.sessionEvents && options.sessionEvents[id] ? options.sessionEvents[id].slice() : [] },
-        append(...args) { appends.push({ sessionId: id, args }); return { seq: 0, time: 1 } },
+        append(event, data) {
+          appends.push({ sessionId: id, args: [event, data] })
+          if (event === 'sandbox/mode' && data) sandboxModes.set(id, data.mode)
+          if (event === 'approval/policy' && data) approvalPolicies.set(id, data.policy)
+          return { seq: 0, time: 1 }
+        },
       },
     }
   }
@@ -381,13 +394,22 @@ export async function createFixture(options = {}) {
       list() { return [...workspaces.values()] },
     },
     sandboxPolicy: {
-      resolve() { return { mode: 'workspace-write' } },
-      overrideOf() { return undefined },
+      defaultMode: 'workspace-write',
+      resolve(request) {
+        const id = String(request && request.session && request.session.id || '')
+        return { mode: sandboxModes.get(id) || 'workspace-write' }
+      },
+      overrideOf(session) { return sandboxModes.get(String(session && session.id || '')) },
     },
     approval: {
-      effectivePolicy() { return 'ask' },
-      overrideOf() { return undefined },
-      setPolicy() {},
+      config: { policy: 'ask' },
+      effectivePolicy(session) { return approvalPolicies.get(String(session && session.id || '')) || 'ask' },
+      overrideOf(session) { return approvalPolicies.get(String(session && session.id || '')) },
+      setPolicy(agent, policy) {
+        const id = String(agent && agent.id || '')
+        approvalCalls.push({ sessionId: id, policy })
+        approvalPolicies.set(id, policy)
+      },
     },
     sessionController: {
       async create(request) {
@@ -427,6 +449,8 @@ export async function createFixture(options = {}) {
           const title = titles.get(String(item.sessionId))
           if (title) values.title = title
           if (current) values.modelSelection = { next: current }
+          if (sandboxModes.has(String(item.sessionId))) values.sandboxMode = sandboxModes.get(String(item.sessionId))
+          if (approvalPolicies.has(String(item.sessionId))) values.approvalState = { policy: approvalPolicies.get(String(item.sessionId)), turnOpen: false }
           // Match the host SessionSummary shape: agentAvailable/running/blank are
           // always present, while parentSessionId/origin/cwd stay optional.
           return {
@@ -594,6 +618,8 @@ export async function createFixture(options = {}) {
         const values = { modelSelection: { next: current } }
         const title = titles.get(id)
         if (title) values.title = title
+        if (sandboxModes.has(id)) values.sandboxMode = sandboxModes.get(id)
+        if (approvalPolicies.has(id)) values.approvalState = { policy: approvalPolicies.get(id), turnOpen: false }
         return { kind: 'sequenced', values }
       },
     },
@@ -707,6 +733,7 @@ export async function createFixture(options = {}) {
     agentTools,
     prompts,
     appends,
+    approvalCalls,
     steered,
     followups,
     emit,

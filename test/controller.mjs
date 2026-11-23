@@ -77,7 +77,7 @@ try {
   assert.equal(historicalStatus.ticket.status, historical.status)
   const historicalBrief = ticketBrief(historical, { goal: historical.goal }, fixture.service.controller.state.ticketMeta(requested.ticketId))
   assert.match(historicalBrief, /模式: work/)
-  assert.deepEqual(fixture.visibleTools(chat).sort(), ['ria_chat_co_manage', 'ria_chat_direct', 'ria_chat_executor_config', 'ria_chat_grant', 'ria_chat_models', 'ria_chat_new_session', 'ria_chat_propose', 'ria_chat_read', 'ria_chat_request', 'ria_chat_resume', 'ria_chat_send_image', 'ria_chat_sessions', 'ria_chat_status', 'ria_chat_steer', 'ria_chat_stop_ticket', 'ria_chat_watch'])
+  assert.deepEqual(fixture.visibleTools(chat).sort(), ['ria_chat_co_manage', 'ria_chat_direct', 'ria_chat_executor_config', 'ria_chat_grant', 'ria_chat_models', 'ria_chat_new_session', 'ria_chat_propose', 'ria_chat_read', 'ria_chat_request', 'ria_chat_resume', 'ria_chat_send_image', 'ria_chat_session_config', 'ria_chat_sessions', 'ria_chat_status', 'ria_chat_steer', 'ria_chat_stop_ticket', 'ria_chat_watch'])
   // WeChat Claw resolves its peer session through these two callbacks. In state
   // they must point at the Chat, not at the retired legacy manager.
   assert.equal(fixture.service.wechatClaw.getRiaId(), chat)
@@ -518,7 +518,7 @@ try {
   const chat = second.service.controller.state.chatSessionId
   assert.ok(chat)
   assert.equal(second.service.store.riaSessionId, chat)
-  assert.deepEqual(second.visibleTools(chat).sort(), ['ria_chat_co_manage', 'ria_chat_direct', 'ria_chat_executor_config', 'ria_chat_grant', 'ria_chat_models', 'ria_chat_new_session', 'ria_chat_propose', 'ria_chat_read', 'ria_chat_request', 'ria_chat_resume', 'ria_chat_send_image', 'ria_chat_sessions', 'ria_chat_status', 'ria_chat_steer', 'ria_chat_stop_ticket', 'ria_chat_watch'])
+  assert.deepEqual(second.visibleTools(chat).sort(), ['ria_chat_co_manage', 'ria_chat_direct', 'ria_chat_executor_config', 'ria_chat_grant', 'ria_chat_models', 'ria_chat_new_session', 'ria_chat_propose', 'ria_chat_read', 'ria_chat_request', 'ria_chat_resume', 'ria_chat_send_image', 'ria_chat_session_config', 'ria_chat_sessions', 'ria_chat_status', 'ria_chat_steer', 'ria_chat_stop_ticket', 'ria_chat_watch'])
   await second.service.startup()
   const parked = second.service.store.ticket(workingTicketId)
   assert.equal(parked.status, 'blocked')

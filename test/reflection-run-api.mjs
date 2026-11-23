@@ -14,6 +14,8 @@ try {
   const service = Object.create(RiaService.prototype)
   service.stateDir = dir
   service.reflections = new Map()
+  const events = []
+  service.routerEvents = { append: event => events.push(event) }
   service.log = () => {}
   service.store = { reflectionSettings: () => ({ enabled: false }) }
   service.schedule = null
@@ -52,17 +54,21 @@ try {
 
   const second = await service.startReflectionRun({ forDate: '2026-11-20' })
   assert.equal(second.already_running, true)
+  assert.equal(second.alreadyActive, true)
   assert.equal(second.runId, 'ticket_reflect_1')
   assert.equal(creates, 1, 'duplicate forDate must not create another ticket')
+  assert.equal(events.filter(event => event.event === 'reflection.run.already_active').length, 1,
+    'duplicate trigger must record exactly one already_active event')
+
+  // A terminal active ticket must be cleared before a different date can start.
+  tickets[0].status = 'done'
+  assert.equal(service.reflectionStatusSummary().activeRunId, null, 'terminal ticket is not an active run')
 
   nextStatus = { ok: false, code: 'advisor_unavailable', message: 'no reflection executor' }
   const failed = await service.startReflectionRun({ forDate: '2026-11-21' })
   assert.equal(failed.ok, false)
   assert.equal(failed.code, 'advisor_unavailable')
   assert.match(failed.message, /no reflection executor/)
-
-  tickets[0].status = 'done'
-  assert.equal(service.reflectionStatusSummary().activeRunId, null, 'terminal ticket is not an active run')
 
   const source = readFileSync(new URL('../lib/index.js', import.meta.url), 'utf8')
   const start = source.indexOf("url.pathname.endsWith('/reflection/run')")
@@ -71,7 +77,7 @@ try {
   const handler = source.slice(start, end)
   assert.match(handler, /startReflectionRun/)
   assert.doesNotMatch(handler, /sessionController[.]prompt/, 'handler must not prompt Chat')
-  assert.match(handler, /already_running/)
+  assert.match(handler, /202/)
   assert.match(handler, /503/)
   console.log('reflection run api ok')
 } finally { rmSync(dir, { recursive: true, force: true }) }

@@ -332,7 +332,7 @@ export async function createFixture(options = {}) {
               : (options.llmReply || JSON.stringify({ action: 'block', block: { reason: 'no reply configured' } }))
             yield { type: 'text-delta', text: String(reply) }
             yield { type: 'usage', usage: { input: 10, output: String(reply).length, total: 10 + String(reply).length } }
-            yield { type: 'finish', reason: 'stop' }
+            yield { type: 'finish', reason: options.llmFinishReason || 'stop' }
           },
           listProviders() {
             modelCalls.listProviders += 1

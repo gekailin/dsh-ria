@@ -7,6 +7,8 @@ import { SqliteTicketAdapter } from '../lib/state/sqlite/adapter.mjs'
 
 const TICKET_LOG = 'tickets.log.jsonl'
 
+// legacy: offline rollback/export path; reads ria.json/state.json only to
+// rebuild a JSON-mode snapshot. Live runtime does not use this reader.
 export function exportTickets({ stateDir, dbPath = join(stateDir, 'ria.sqlite') }) {
   const db = openDatabase(dbPath, { readOnly: true })
   try {

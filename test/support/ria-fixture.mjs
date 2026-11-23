@@ -674,11 +674,21 @@ export async function createFixture(options = {}) {
     const tools = toolsFor(sessionId)
     const definition = tools && tools.get(name)
     if (!agent || !definition) throw new Error('tool not installed for ' + String(sessionId) + ': ' + name)
-    return await definition.execute(args, {
+    const result = await definition.execute(args, {
       agent,
       signal: new AbortController().signal,
       concludeTurn() { concluded += 1 },
     })
+    // Production reports are evidence only. The real host emits turn/end after
+    // the executor finishes; the fixture models that boundary for final reports
+    // so existing callAs-based suites observe the same settlement.
+    if (name === 'ria_executor_report' && result && result.ok && ['done', 'blocked', 'failed'].includes(args && args.status)) {
+      await service.controller.settleTicketFromExecutorEvent(String(sessionId), {
+        type: 'turn/end',
+        data: { ticketId: args && args.ticketId, turn: 1, reason: { kind: 'completed' } },
+      })
+    }
+    return result
   }
   const call = async (name, args) => await callAs(riaAgent.id, name, args)
   const cleanup = (cleanupOptions = {}) => {

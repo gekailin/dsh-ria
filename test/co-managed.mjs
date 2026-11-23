@@ -146,9 +146,9 @@ async function setup() {
       type: 'turn/end', time: Date.now(), data: { turn: 3, reason: { kind: 'error', message: 'provider blew up' } },
     })
     const failed = fixture.service.store.ticket(failedTicket)
-    assert.equal(failed.status, 'blocked')
-    assert.equal(failed.waitingOn, 'environment')
+    assert.equal(failed.status, 'failed')
     assert.equal(failed.failure.code, 'turn_failed')
+    assert.match(failed.failure.message, /provider blew up/)
     assert.equal(state.executor('session-cm').currentTicketId, null)
     console.log('co-managed turn failure ok')
   } finally { fixture.cleanup() }

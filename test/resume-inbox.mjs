@@ -152,8 +152,9 @@ await run('done-retry exhaustion blocks and notifies, without losing resume', as
     return original(request, signal)
   }
   const done = await h.fixture.callAs(h.executor, 'ria_executor_report', { ticketId: h.ticketId, status: 'done', summary: 'finish', evidence: ['test'] })
-  assert.equal(done.ok, false)
-  assert.equal(done.code, 'steer_undelivered')
+  // Report records; settlement at turn/end blocks on undelivered done-retry.
+  assert.equal(done.ok, true, JSON.stringify(done))
+  assert.equal(done.recorded, true)
   assert.equal(attempts.length, 2, 'reuse STEER_MAX_DELIVERY_ATTEMPTS=2')
   assert.equal(attempts[0].requestId, attempts[1].requestId)
   assert.deepEqual(attempts[0].content, attempts[1].content)

@@ -47,7 +47,7 @@ const turnEnd = (fixture, executorId, turn, reason) => fixture.service.onSession
 const noticesAbout = (fixture, chat, ticketId) => fixture.prompts
   .filter(prompt => String(prompt.sessionId) === chat && promptText(prompt).includes(ticketId))
 
-// 1. reason.kind=error -> blocked(environment), turn_failed, executor released,
+// 1. reason.kind=error -> failed with the raw error text, executor released,
 //    turn.failed event, exactly one Chat notice.
 {
   const { fixture, chat } = await setup()
@@ -61,14 +61,11 @@ const noticesAbout = (fixture, chat, ticketId) => fixture.prompts
     })
 
     const ticket = fixture.service.store.ticket(ticketId)
-    assert.equal(ticket.status, 'blocked')
-    assert.equal(ticket.waitingOn, 'environment')
-    assert.equal(ticket.failure.code, 'turn_failed')
-    assert.equal(ticket.failure.at, ticket.updatedAt)
-    assert.match(ticket.blockedReason, /error/)
-    assert.match(ticket.blockedReason, /idle-timeout/)
-    assert.match(ticket.blockedReason, /200000ms/)
-    assert.equal(fixture.service.controller.state.ticketMeta(ticketId).phase, 'blocked')
+    assert.equal(ticket.status, 'failed')
+    assert.equal(ticket.failure.code, 'idle-timeout')
+    assert.match(ticket.failure.message, /idle-timeout/)
+    assert.match(ticket.failure.message, /200000ms/)
+    assert.equal(fixture.service.controller.state.ticketMeta(ticketId).phase, 'failed')
 
     const executor = fixture.service.controller.state.executor(executorId)
     assert.equal(executor.status, 'idle')
@@ -84,6 +81,7 @@ const noticesAbout = (fixture, chat, ticketId) => fixture.prompts
     assert.equal(failed.payload.kind, 'error')
     assert.match(failed.payload.detail, /200000ms/)
     assert.equal(failed.payload.blocked, true)
+    assert.equal(failed.payload.status, 'failed')
     assert.equal(failed.payload.failureCode, 'turn_failed')
 
     await flush()
@@ -95,14 +93,14 @@ const noticesAbout = (fixture, chat, ticketId) => fixture.prompts
     // The very same event must not block twice or notify twice.
     turnEnd(fixture, executorId, 3, { kind: 'error', error: { message: 'late duplicate' } })
     await flush()
-    assert.equal(fixture.service.store.ticket(ticketId).status, 'blocked')
+    assert.equal(fixture.service.store.ticket(ticketId).status, 'failed')
     assert.equal(noticesAbout(fixture, chat, ticketId).length, 1)
   } finally {
     fixture.cleanup()
   }
 }
 
-// 2. reason.kind=aborted -> blocked(environment), turn_aborted, same four effects.
+// 2. reason.kind=aborted(user) -> blocked(waitingOn=user), never failed/done.
 {
   const { fixture, chat } = await setup()
   try {
@@ -112,8 +110,8 @@ const noticesAbout = (fixture, chat, ticketId) => fixture.prompts
 
     const ticket = fixture.service.store.ticket(ticketId)
     assert.equal(ticket.status, 'blocked')
-    assert.equal(ticket.waitingOn, 'environment')
-    assert.equal(ticket.failure.code, 'turn_aborted')
+    assert.equal(ticket.waitingOn, 'user')
+    assert.equal(ticket.failure, null)
     assert.match(ticket.blockedReason, /aborted\(user\)/)
     assert.equal(fixture.service.controller.state.executor(executorId).status, 'idle')
     assert.equal(fixture.service.controller.state.executor(executorId).currentTicketId, null)
@@ -150,8 +148,7 @@ const noticesAbout = (fixture, chat, ticketId) => fixture.prompts
   }
 }
 
-// 4. Regression: a completed turn keeps the pre-fix behaviour exactly:
-//    ticket working, executor still bound, no turn.failed, no notification.
+// 4. A completed turn without a report settles done and records no_report.
 {
   const { fixture, chat } = await setup()
   try {
@@ -160,17 +157,16 @@ const noticesAbout = (fixture, chat, ticketId) => fixture.prompts
     turnEnd(fixture, executorId, 1, { kind: 'completed' })
 
     const ticket = fixture.service.store.ticket(ticketId)
-    assert.equal(ticket.status, 'working')
-    assert.equal(ticket.waitingOn, 'executor')
+    assert.equal(ticket.status, 'done')
+    assert.equal(ticket.waitingOn, 'none')
     assert.equal(ticket.failure, null)
+    assert.equal(fixture.service.controller.state.ticketMeta(ticketId).no_report, true)
     const executor = fixture.service.controller.state.executor(executorId)
-    assert.equal(executor.status, 'working')
-    assert.equal(executor.currentTicketId, ticketId)
+    assert.equal(executor.status, 'idle')
+    assert.equal(executor.currentTicketId, null)
     assert.equal(fixture.service.controller.turnStartedAt.has(executorId), false, 'the marker always closes')
     const events = fixture.service.routerEvents.query({ ticketId }).events
     assert.equal(events.some(item => item.event === 'turn.failed'), false)
-    await flush()
-    assert.equal(noticesAbout(fixture, chat, ticketId).length, 0)
   } finally {
     fixture.cleanup()
   }
@@ -309,11 +305,11 @@ const noticesAbout = (fixture, chat, ticketId) => fixture.prompts
     assert.match(executorOld.stuckReason, /工单记录无更新/)
     assert.ok(Math.abs(executorOld.lastEventAgeMinutes - viewOld.lastEventAgeMinutes) < 0.01)
 
-    // A blocked ticket is not a stuck suspect even with an old event.
+    // A failed terminal ticket is not a stuck suspect even with an old event.
     turnEnd(fixture, executorId, 4, { kind: 'error', error: { message: 'boom' } })
     const viewBlocked = await viewOf()
     const executorBlocked = await executorOf()
-    assert.equal(viewBlocked.status, 'blocked')
+    assert.equal(viewBlocked.status, 'failed')
     assert.equal(viewBlocked.stuckSuspect, false)
     assert.equal(executorBlocked.stuckSuspect, false)
     assert.equal(executorBlocked.status, 'idle')

@@ -40,8 +40,10 @@ try {
   await fixture.callAs(chat, 'ria_chat_steer', { ticketId: second.ticketId, message: 'never delivered' })
   fixture.setPromptFailure(new Error('executor unavailable'))
   const failedDone = await fixture.callAs(executor, 'ria_executor_report', { ticketId: second.ticketId, status: 'done', summary: 'finished', evidence: ['test'] })
-  assert.equal(failedDone.ok, false)
-  assert.equal(failedDone.code, 'steer_undelivered')
+  // Report only records; turn/end settlement blocks when the done-retry cannot
+  // deliver the pending manager inbox.
+  assert.equal(failedDone.ok, true, JSON.stringify(failedDone))
+  assert.equal(failedDone.recorded, true)
   assert.equal(fixture.service.store.ticket(second.ticketId).status, 'blocked')
   assert.ok(events().some(item => item.event === 'steer.undelivered' && item.ticketId === second.ticketId && item.payload.trigger === 'done'))
   fixture.setPromptFailure(undefined)

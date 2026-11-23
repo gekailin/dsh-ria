@@ -25,14 +25,14 @@
 
 ### 协管：一个概念、一个入口
 
-`state.coManagement` 是协管唯一注册源，每条含 `sessionId/title/cwd/tags/roleNote/relay{relayReplies,relayQuestions,rateLimit}/allowDispatch/dedicated/addedAt`。旧 `co-management.json` 只在启动迁移时读取并备份为 `.bak.<ts>`，之后只读；`executors` 不再持久化 `kind=co-managed`（运行时由 coManagement 派生候选）。
+`state.coManagement` 是协管唯一注册源，每条含 `sessionId/title/cwd/tags/roleNote/relay{relayReplies,relayQuestions,rateLimit}/allowDispatch/addedAt`。旧 `co-management.json` 只在启动迁移时读取并备份为 `.bak.<ts>`，之后只读；`executors` 不再持久化 `kind=co-managed`（运行时由 coManagement 派生候选）。`remove` 只把该条 `status` 标为 `inactive`，记录与执行器条目保留；同一 `sessionId` 重新 add/set 恢复 `active`，`autoTags` 自然保留。
 
 | 工具 | 状态 | 动作 |
 |---|---|---|
 | `ria_chat_co_manage` | 正式 | add / set / remove / list（观察转述 + 派活执行） |
 | `ria_chat_watch` | deprecated 别名 | add/remove/list/status → co_manage，调用 warn |
 
-派活过滤：`projectCwd` 必须位于该条 `cwd` 内；`allowDispatch=false` 不进入自动候选；`dedicated=true` 只接受 tags 相交的自动票；WorkOrder 首行 `[WorkOrder #<ticketId>]`。
+派活过滤：`projectCwd` 必须位于该条 `cwd` 内；`allowDispatch=false` 不进入自动候选；WorkOrder 首行 `[WorkOrder #<ticketId>]`。
 
 ## 3. events.jsonl = 只追加日志
 

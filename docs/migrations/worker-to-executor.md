@@ -73,7 +73,24 @@ npm run migrate:worker-to-executor -- --state-dir /path/to/state --backup-root /
   3. 转发到新 handler。
 - 旧名不作为 canonical WorkOrder token；计划文本应使用新名。`test/workorder-tool-names.mjs` 仍把旧 token 当作过期名做负面校验。
 
-## 5. 历史记录
+## 5. executorLabel 与会话标题
+
+- `executorLabel` 以当前 Session 标题为准：读取配置时优先使用实时标题并回写；启动时 `syncExecutorLabels()` 会批量对齐，缺失标题时回退到已有 label 或 `Ria Executor <n>`。
+- 自建 Executor 的命名模板是 `Ria Executor N` / `Ria Reflection Executor N`。
+- 一次性对齐现有 state：
+
+```bash
+# 只读预演
+node scripts/align-executor-labels.mjs --dry-run
+
+# 落盘（先备份 state.json，再原子写；第二次运行 no-op）
+node scripts/align-executor-labels.mjs
+```
+
+- 对齐脚本只写 `state.json` 的 `executorLabel` 字段；会话标题读取 DSH projection cache（只读）。它不打开、不修改 `events.jsonl`。
+- **events.jsonl 历史行保持旧 `worker*` 键，不做改写（用户已确认）**；executorLabel 的校正只作用于 state.json 当前态，历史事件仅由读取端兼容读出。
+
+## 6. 历史记录
 
 以下内容按“历史不可改写”原则保留：
 
@@ -81,7 +98,7 @@ npm run migrate:worker-to-executor -- --state-dir /path/to/state --backup-root /
 - `ria-runs/`、`reports/`：运行时产物与验收报告，不属于活代码/活数据。
 - 既有 ticket 的 goal/summary/evidence、memory/lessons 文本：迁移不触碰。
 
-## 6. 验证
+## 7. 验证
 
 ```bash
 npm test
@@ -90,7 +107,7 @@ npm run migrate:worker-to-executor -- --dry-run
 
 迁移测试：`test/worker-executor-migration.mjs`；工具别名测试：`test/executor-tool-aliases.mjs`。
 
-## 7. `grep -rni worker` 残留逐条说明
+## 8. `grep -rni worker` 残留逐条说明
 
 下表覆盖版本库内活代码/文档/测试的每一条残留（按文件聚合，列出具体行号）。
 运行时历史 `ria-runs/`、`reports/` 与历史 fixture 按类别说明；本文件自身也是迁移文档，故整体归入“本迁移文档”。

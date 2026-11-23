@@ -68,9 +68,9 @@ try {
   const store = controller.state
   const chat = store.chatSessionId
 
-  // Same-project candidate + Executor vocabulary/dedicated note must reach the LLM.
+  // Same-project candidate + Executor tag vocabulary must reach the LLM.
   const executor = await controller.ensureExecutor('global', null, workspace)
-  store.addExecutor(executor.sessionId, { status: 'idle', currentTicketId: null, tags: ['frontend'], roleNote: '数据库事务专用', dedicated: true })
+  store.addExecutor(executor.sessionId, { status: 'idle', currentTicketId: null, tags: ['frontend'], roleNote: '数据库事务专用' })
   reuseTopic = fixture.service.store.addTopic({ title: '前端候选主题', projectKey: expectedProjectKey })
   const probes = fixture.llmCalls.length
 
@@ -80,7 +80,6 @@ try {
   const prompt = textOf(fixture.llmCalls[probes])
   assert.ok(prompt.includes('前端候选主题'), 'candidate topic title must be injected')
   assert.ok(prompt.includes('frontend'), 'executor tag vocabulary must be injected')
-  assert.ok(prompt.includes('数据库事务专用'), 'dedicated executor role note must be injected')
 
   // create: new Topic with the ticket projectKey and a primary link.
   const created = await fixture.callAs(chat, 'ria_chat_request', { goal: 'CREATE-ME', workspace })

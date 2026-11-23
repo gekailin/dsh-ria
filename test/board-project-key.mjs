@@ -17,7 +17,7 @@ try {
   const store = controller.state
   store.addExecutor('session-board-a', {
     kind: 'managed', executorType: 'work', cwd: workspace, status: 'idle',
-    tags: ['frontend', 'board'], roleNote: '看板 UI', dedicated: true,
+    tags: ['frontend', 'board'], roleNote: '看板 UI',
   })
   store.addExecutor('session-board-b', { kind: 'managed', executorType: 'work', cwd: workspace, status: 'idle' })
   const first = fixture.service.store.addTicket({ status: 'open', waitingOn: 'ria', executor: 'session-board-a', goal: 'board a work', acceptance: 'x' })
@@ -37,7 +37,6 @@ try {
   assert.equal(view.projectTitle, 'ria-board-project-key-test')
   assert.deepEqual(view.executorTags, ['frontend', 'board'])
   assert.equal(view.executorRoleNote, '看板 UI')
-  assert.equal(view.executorDedicated, true)
   const plain = board.tickets.find(ticket => ticket.ticketId === second.ticketId)
   assert.deepEqual(plain.executorTags, [])
   // The compact search index carries the same routing identity.

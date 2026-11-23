@@ -179,10 +179,9 @@ try {
   assert.equal(managedView.model.model, 'model-fast')
   assert.equal(managedView.allowAutoDispatch, false)
   // Non-model executor config still behaves as before.
-  const tagged = await call('ria_chat_executor_config', { action: 'set', executorId: managed.sessionId, tags: ['docs'], dedicated: true })
+  const tagged = await call('ria_chat_executor_config', { action: 'set', executorId: managed.sessionId, tags: ['docs'] })
   assert.equal(tagged.ok, true, JSON.stringify(tagged))
   assert.deepEqual(tagged.executor.tags, ['docs'])
-  assert.equal(tagged.executor.dedicated, true)
 
   // 10. Tool descriptions state the responsibility boundary.
   const chatTools = fixture.agentTools.get(chat)

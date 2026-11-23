@@ -177,7 +177,7 @@ const events = stateDir => readFileSync(join(stateDir, 'events.jsonl'), 'utf8')
     assert.equal(removed.payload.title, 'CM Audit')
     assert.equal(removed.payload.cwd, '/work/proj/audit')
     assert.equal(removed.payload.allowDispatch, false)
-    assert.equal(controller.coManagement.watch('session-cm'), null, 'remove still removes the registration')
+    assert.equal(controller.coManagement.watch('session-cm').status, 'inactive', 'remove marks the registration inactive')
     console.log('co-manage audit events ok')
   } finally { fixture.cleanup() }
 }

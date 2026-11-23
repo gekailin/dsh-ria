@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createFixture } from './support/ria-fixture.mjs'
 import { CoManagement } from '../lib/roles/co-management.mjs'
+import { chatPrompt } from '../lib/prompts/shared.mjs'
 
 const tempDir = () => mkdtempSync(join(tmpdir(), 'ria-co-management-'))
 const dirs = [tempDir()]
@@ -186,6 +187,47 @@ try {
       assert.equal(high, 'rejected')
       assert.ok(notices().some(text => text.includes('需要你决定的提权') && text.includes('level=high')))
 
+      // Canonical co_manage surface: legacy selectors are rejected, all is
+      // remove-only, and remove is an inactivity flag rather than deletion.
+      const legacyParams = [['dedicated', true], ['options', {}], ['allowAutoDispatch', true], ['watchId', 'watch_x'], ['id', 'watch_x']]
+      for (const [field, value] of legacyParams) {
+        const rejected = await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'add', sessionId: 'session-other', [field]: value })
+        assert.equal(rejected.code, 'unknown_parameter', field + ': ' + JSON.stringify(rejected))
+        assert.equal(rejected.field, field)
+      }
+      const allOnAdd = await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'add', sessionId: 'session-other', all: true })
+      assert.equal(allOnAdd.code, 'invalid_argument')
+      assert.equal(allOnAdd.field, 'all')
+
+      const otherAdded = await fixture.callAs(chat, 'ria_chat_co_manage', {
+        action: 'add', sessionId: 'session-other', cwd, tags: ['ops'], allowDispatch: false,
+      })
+      assert.equal(otherAdded.ok, true, JSON.stringify(otherAdded))
+      assert.equal(otherAdded.executor.allowAutoDispatch, false)
+      fixture.service.controller.state.addExecutor('session-other', { autoTags: { learned: 5 }, lastTurn: 5 })
+      const otherRemoved = await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'remove', sessionId: 'session-other' })
+      assert.equal(otherRemoved.removed, true, JSON.stringify(otherRemoved))
+      const listAfterRemove = await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'list' })
+      const inactiveOther = listAfterRemove.executors.find(item => item.sessionId === 'session-other')
+      assert.ok(inactiveOther, 'remove keeps the co-management record')
+      assert.equal(inactiveOther.status, 'inactive')
+      assert.equal(fixture.service.controller.state.executor('session-other').status, 'inactive')
+      assert.deepEqual(fixture.service.controller.state.executor('session-other').autoTags, { learned: 5 })
+      const otherReadded = await fixture.callAs(chat, 'ria_chat_co_manage', {
+        action: 'add', sessionId: 'session-other', allowDispatch: true,
+      })
+      assert.equal(otherReadded.ok, true, JSON.stringify(otherReadded))
+      const listAfterReadd = await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'list' })
+      const activeOther = listAfterReadd.executors.find(item => item.sessionId === 'session-other')
+      assert.equal(activeOther.status, 'active')
+      assert.equal(fixture.service.controller.state.executor('session-other').status, 'idle')
+      assert.deepEqual(fixture.service.controller.state.executor('session-other').autoTags, { learned: 5 }, 're-add preserves autoTags')
+
+      const prompt = chatPrompt()
+      assert.match(prompt, /协管\/接管 X.*allowDispatch=true/)
+      assert.match(prompt, /跟踪\/盯着 X.*allowDispatch=false/)
+      assert.doesNotMatch(prompt, /\/协管/)
+
       // Stale notification only once.
       const beforeStale = notices().length
       fixture.service.controller.coManagement.markStale('session-watch', 'archived')
@@ -200,6 +242,13 @@ try {
       assert.equal('direct' in fixture.service.controller.coManagement, false)
       fixture.service.controller.direct = { sessionId: 'session-watch' }
       assert.equal(fixture.service.controller.coManagement.watch('session-watch').status, 'stale')
+
+      // remove all is still remove-only and marks records inactive instead of
+      // deleting them.
+      const allRemoved = await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'remove', all: true })
+      assert.equal(allRemoved.ok, true, JSON.stringify(allRemoved))
+      const allList = await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'list' })
+      assert.ok(allList.executors.every(item => item.status === 'inactive'))
     } finally {
       fixture.cleanup()
     }

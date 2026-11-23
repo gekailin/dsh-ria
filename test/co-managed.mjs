@@ -57,14 +57,14 @@ async function setup() {
     assert.equal(added.executor.title, 'CM Session')
     assert.equal(added.executor.allowAutoDispatch, true)
     assert.deepEqual((await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'list' })).executors.map(item => item.sessionId), ['session-cm'])
-    const off = await register('session-cm', { allowAutoDispatch: false })
+    const off = await register('session-cm', { allowDispatch: false })
     assert.equal(off.executor.allowAutoDispatch, false)
     assert.equal(state.executor('session-cm').allowAutoDispatch, false)
-    await register('session-cm', { allowAutoDispatch: true })
+    await register('session-cm', { allowDispatch: true })
     assert.equal(state.executor('session-cm').allowAutoDispatch, true)
     const removed = await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'remove', sessionId: 'session-cm' })
     assert.equal(removed.ok, true)
-    assert.equal(state.executor('session-cm'), null)
+    assert.equal(state.executor('session-cm').status, 'inactive')
     const missing = await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'add', sessionId: 'session-does-not-exist' })
     assert.equal(missing.ok, false)
     assert.equal(missing.code, 'session_unavailable')
@@ -98,7 +98,9 @@ async function setup() {
     assert.equal(bound.executorSessionId, 'session-cm')
     assert.equal(bound.executing, true)
     const list = await fixture.callAs(chat, 'ria_chat_watch', { action: 'list' })
-    assert.equal(list.watches.find(item => item.sessionId === 'session-cm').watchId, watchId)
+    const listed = list.watches.find(item => item.sessionId === 'session-cm')
+    assert.equal(listed.sessionId, 'session-cm')
+    assert.equal(Object.hasOwn(listed, 'watchId'), false, 'public view uses sessionId only')
     // Idempotent: a second attach for the same ticket writes the same binding.
     controller.attachTicketWatch(fixture.service.store.ticket(ticketId), state.executor('session-cm'))
     assert.equal(state.ticketMeta(ticketId).executorSessionId, 'session-cm')
@@ -233,7 +235,7 @@ async function setup() {
     // The user watches the session first; registering it later must not replace the watch.
     const manual = await fixture.callAs(chat, 'ria_chat_watch', { action: 'add', sessionId: 'session-cm-other' })
     assert.equal(manual.ok, true, JSON.stringify(manual))
-    const manualWatchId = manual.watch.watchId
+    const manualWatchId = controller.coManagement.watch('session-cm-other').watchId
     assert.notEqual(manual.watch.addedBy.startsWith('ticket:'), true)
     await register('session-cm-other')
     const ticketId = await ticket('use the watched session', '/work/other/proj', 'session-cm-other')

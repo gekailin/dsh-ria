@@ -6,7 +6,7 @@ const planReply = routing => () => JSON.stringify({
   workOrder: { summary: 'plan the work', steps: ['do it'], ...(routing ? { routing } : {}) },
 })
 
-// 1) ria_chat_executor_config carries explicit tags, roleNote and dedicated.
+// 1) ria_chat_executor_config carries explicit tags and roleNote.
 {
   const fixture = await createFixture({ stateDefault: true, advisorPlan: 'stateless', llmReply: planReply() })
   try {
@@ -17,31 +17,28 @@ const planReply = routing => () => JSON.stringify({
     fixture.service.routerEvent = event => { events.push(event) }
     const set = await fixture.callAs(chat, 'ria_chat_executor_config', {
       action: 'set', executorId: executor.sessionId,
-      tags: ['SQLite', '前端 UI'], roleNote: '数据库事务专用', dedicated: true,
+      tags: ['SQLite', '前端 UI'], roleNote: '数据库事务专用',
     })
     assert.equal(set.ok, true, JSON.stringify(set))
     assert.deepEqual(set.executor.tags, ['sqlite', '前端-ui'])
     assert.equal(set.executor.roleNote, '数据库事务专用')
-    assert.equal(set.executor.dedicated, true)
-    assert.deepEqual(set.executor.autoTags, [])
+    assert.deepEqual(set.executor.autoTags, {})
     assert.deepEqual(set.executor.recentTopics, [])
     const configEvents = events.filter(event => event.event === 'executor.config.changed')
-    assert.deepEqual(configEvents.map(event => event.payload.field).sort(), ['dedicated', 'roleNote', 'tags'])
+    assert.deepEqual(configEvents.map(event => event.payload.field).sort(), ['roleNote', 'tags'])
 
     const get = await fixture.callAs(chat, 'ria_chat_executor_config', { action: 'get' })
     const row = get.executors.find(item => item.sessionId === executor.sessionId)
     assert.deepEqual(row.tags, ['sqlite', '前端-ui'])
-    assert.equal(row.dedicated, true)
 
     // Clearing explicit tags is explicit: pass [].
-    const cleared = await fixture.callAs(chat, 'ria_chat_executor_config', { action: 'set', executorId: executor.sessionId, tags: [], dedicated: false })
+    const cleared = await fixture.callAs(chat, 'ria_chat_executor_config', { action: 'set', executorId: executor.sessionId, tags: [] })
     assert.equal(cleared.ok, true)
     assert.deepEqual(cleared.executor.tags, [])
-    assert.equal(cleared.executor.dedicated, false)
 
     assert.equal((await fixture.callAs(chat, 'ria_chat_executor_config', { action: 'set', executorId: executor.sessionId, tags: 'docs' })).code, 'invalid_argument')
     assert.equal((await fixture.callAs(chat, 'ria_chat_executor_config', { action: 'set', executorId: executor.sessionId, roleNote: 'x'.repeat(121) })).code, 'invalid_role_note')
-    assert.equal((await fixture.callAs(chat, 'ria_chat_executor_config', { action: 'set', executorId: executor.sessionId, dedicated: 'yes' })).code, 'invalid_argument')
+    assert.equal((await fixture.callAs(chat, 'ria_chat_executor_config', { action: 'set', executorId: executor.sessionId, dedicated: 'yes' })).code, 'unknown_parameter')
     console.log('executor config identity ok')
   } finally {
     fixture.cleanup()
@@ -58,28 +55,24 @@ const planReply = routing => () => JSON.stringify({
   try {
     const chat = fixture.service.controller.state.chatSessionId
     const added = await fixture.callAs(chat, 'ria_chat_co_manage', {
-      action: 'add', sessionId: 'session-doc', cwd: '/work/docs', tags: ['Docs', '写作'], roleNote: '文档专用', dedicated: true,
+      action: 'add', sessionId: 'session-doc', cwd: '/work/docs', tags: ['Docs', '写作'], roleNote: '文档专用',
     })
     assert.equal(added.ok, true, JSON.stringify(added))
     assert.deepEqual(added.executor.tags, ['docs', '写作'])
     assert.equal(added.executor.roleNote, '文档专用')
-    assert.equal(added.executor.dedicated, true)
     const list = await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'list' })
     const row = list.executors.find(item => item.sessionId === 'session-doc')
     assert.deepEqual(row.tags, ['docs', '写作'])
-    assert.equal(row.dedicated, true)
-    const updated = await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'add', sessionId: 'session-doc', tags: [], dedicated: false })
+    const updated = await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'add', sessionId: 'session-doc', tags: [] })
     assert.deepEqual(updated.executor.tags, [])
-    assert.equal(updated.executor.dedicated, false)
 
     // set only updates an existing co-managed session.
     const set = await fixture.callAs(chat, 'ria_chat_co_manage', {
-      action: 'set', sessionId: 'session-doc', tags: ['API'], roleNote: '接口联调', dedicated: true,
+      action: 'set', sessionId: 'session-doc', tags: ['API'], roleNote: '接口联调',
     })
     assert.equal(set.ok, true, JSON.stringify(set))
     assert.deepEqual(set.executor.tags, ['api'])
     assert.equal(set.executor.roleNote, '接口联调')
-    assert.equal(set.executor.dedicated, true)
     const missingSet = await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'set', sessionId: 'session-missing', tags: ['x'] })
     assert.equal(missingSet.ok, false)
     assert.equal(missingSet.code, 'not_co_managed')
@@ -93,7 +86,10 @@ const planReply = routing => () => JSON.stringify({
     const removed = await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'remove', sessionId: 'session-doc' })
     assert.equal(removed.removed, true)
     const afterRemove = await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'list' })
-    assert.equal(afterRemove.executors.some(item => item.sessionId === 'session-doc'), false)
+    const inactive = afterRemove.executors.find(item => item.sessionId === 'session-doc')
+    assert.ok(inactive, 'remove keeps the record')
+    assert.equal(inactive.status, 'inactive')
+    assert.equal(fixture.service.controller.state.executor('session-doc').status, 'inactive')
     console.log('co-managed identity ok')
   } finally {
     fixture.cleanup()
@@ -123,19 +119,13 @@ const planReply = routing => () => JSON.stringify({
     // Dispatch no longer learns tags; completion is the only learning point.
     const learned = store.executor(w1.sessionId)
     assert.deepEqual(learned.tags, ['frontend'])
-    assert.deepEqual(learned.autoTags, [], 'dispatch must not learn tags')
+    assert.deepEqual(learned.autoTags, {}, 'dispatch must not learn tags')
     const events = fixture.service.routerEvents.query({ ticketId: request.ticketId }).events
     const attempt = events.find(event => event.event === 'dispatch.attempt')
     assert.ok(attempt)
     assert.deepEqual(attempt.payload.routing.ticketTags, ['frontend', 'docs'])
     assert.equal(attempt.payload.routing.matchedExplicitTags.includes('frontend'), true)
     assert.ok(attempt.payload.routing.selectedScore >= 100)
-
-    // Dedicated protection: no ticket tags means w1 is never chosen.
-    store.addExecutor(w1.sessionId, { dedicated: true })
-    const generic = await fixture.callAs(chat, 'ria_chat_request', { goal: 'unrelated chore' })
-    assert.equal(generic.ok, true, JSON.stringify(generic))
-    assert.notEqual(fixture.service.store.ticket(generic.ticketId).executor, w1.sessionId)
 
     // An explicit topicId is linked as the primary topic and audited.
     const topic = fixture.service.store.addTopic({ title: '前端主题' })

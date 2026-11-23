@@ -6,7 +6,7 @@ import { rankCandidateExecutors, isExecutorEligible } from '../lib/core/executor
 assert.deepEqual(normalizeTags([' Frontend ', 'SQLite', 'frontend', 'a  b', 'a_b', 'x/y']),
   ['frontend', 'sqlite', 'a-b', 'xy'])
 assert.equal(normalizeTags(Array.from({ length: 20 }, (_, i) => 't' + i)).length, TAG_LIMIT)
-assert.equal(normalizeTags(Array.from({ length: 20 }, (_, i) => 't' + i), AUTO_TAG_LIMIT).length, AUTO_TAG_LIMIT)
+assert.equal(normalizeTags(Array.from({ length: 120 }, (_, i) => 't' + i), AUTO_TAG_LIMIT).length, AUTO_TAG_LIMIT)
 assert.deepEqual(normalizeTags('frontend'), [])
 assert.deepEqual(normalizeTags(['!!!', '-----', '']), [])
 assert.ok(normalizeTags(['前端', '数据-库', 'state.1']).includes('前端'))
@@ -15,17 +15,17 @@ assert.deepEqual(mergeTags(['A'], ['b', 'a']), ['a', 'b'])
 const now = 1_000_000_000_000
 const base = { status: 'idle', currentTicketId: null, executorType: 'work', allowAutoDispatch: true, seq: 10 }
 
-// Dedicated security: a dedicated sqlite executor must never take a generic or
-// frontend ticket, even if it is the newest idle executor.
+// The retired dedicated switch no longer hard-filters generic tickets: explicit
+// tags only affect affinity scoring, and a matching ticket still prefers w1.
 {
   const executors = [
-    { ...base, sessionId: 'w1', seq: 1, tags: ['sqlite'], dedicated: true, lastUsedAt: now },
+    { ...base, sessionId: 'w1', seq: 1, tags: ['sqlite'], lastUsedAt: now },
     { ...base, sessionId: 'w2', seq: 2, tags: [], lastUsedAt: now - 1000 },
   ]
   const generic = rankCandidateExecutors(executors, { now })
-  assert.deepEqual(generic.map(item => item.executor.sessionId), ['w2'])
+  assert.deepEqual(generic.map(item => item.executor.sessionId), ['w2', 'w1'])
   const frontend = rankCandidateExecutors(executors, { now, ticketTags: ['frontend'] })
-  assert.deepEqual(frontend.map(item => item.executor.sessionId), ['w2'])
+  assert.deepEqual(frontend.map(item => item.executor.sessionId), ['w1', 'w2'])
   const sqlite = rankCandidateExecutors(executors, { now, ticketTags: ['sqlite'] })
   assert.equal(sqlite[0].executor.sessionId, 'w1')
 }

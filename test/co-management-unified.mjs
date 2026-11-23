@@ -17,7 +17,7 @@ try {
   const co = new CoManagement({ stateDir: dir, state, send: async () => {}, notify: () => {} })
   assert.equal(state.data.coManagement.length, 2)
   assert.equal(state.data.coManagement.find(item => item.sessionId === 'session-old').allowDispatch, false)
-  assert.equal(state.data.coManagement.find(item => item.sessionId === 'session-old').dedicated, true)
+  assert.equal(state.data.coManagement.find(item => item.sessionId === 'session-old').dedicated, undefined)
   assert.equal(state.data.coManagement.find(item => item.sessionId === 'session-file').options.relayReplies, false)
   assert.equal(state.executor('session-old').kind, 'co-managed')
   assert.equal(co.watches().length, 2)

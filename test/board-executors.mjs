@@ -46,7 +46,7 @@ try {
   assert.equal(Array.isArray(data.rows), true)
   assert.ok(data.rows.length >= 5)
 
-  const required = ['title', 'sessionId', 'kind', 'status', 'currentTicketId', 'allowAutoDispatch', 'dedicated', 'tags', 'autoTags', 'cwd', 'lastUsedAt', 'lastTurnAt', 'executorLabel', 'selectable', 'excludedReason']
+  const required = ['title', 'sessionId', 'kind', 'status', 'currentTicketId', 'allowAutoDispatch', 'tags', 'autoTags', 'cwd', 'lastUsedAt', 'lastTurnAt', 'executorLabel', 'selectable', 'excludedReason']
   for (const row of data.rows) for (const field of required) assert.ok(Object.hasOwn(row, field), row.sessionId + ' missing ' + field)
   const co = data.rows.find(row => row.sessionId === 'session-probe-cm')
   assert.ok(co, 'co-managed row present')

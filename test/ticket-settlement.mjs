@@ -195,7 +195,7 @@ try {
     assert.equal(result.status, 'done', JSON.stringify(result))
     assert.equal(store.ticket(ticket.ticketId).status, 'done', 'ticket leaves working')
     const completed = controller.state.executor(ex)
-    assert.deepEqual(completed.autoTags, ['dsh-ria', 'code'], 'autoTags from done ticket routingTags')
+    assert.deepEqual(completed.autoTags, { 'dsh-ria': 1, code: 1 }, 'autoTags from done ticket routingTags')
     assert.ok(completed.lastUsedAt > 1000, 'lastUsedAt moves on done')
     assert.ok(completed.autoTaggedTicketIds.includes(ticket.ticketId), 'ledger records the ticket')
   }
@@ -210,7 +210,7 @@ try {
     assert.equal(result.reason, 'progress_report')
     assert.equal(store.ticket(ticket.ticketId).status, 'working')
     const executorNow = controller.state.executor(ex)
-    assert.deepEqual(executorNow.autoTags, [])
+    assert.deepEqual(executorNow.autoTags, {})
     assert.deepEqual(executorNow.autoTaggedTicketIds, [])
     assert.equal(executorNow.lastUsedAt, 2000, 'progress alone does not move lastUsedAt')
   }
@@ -248,17 +248,17 @@ try {
       const result = await settleAs(ex, ticket.ticketId, { kind: 'completed' })
       assert.equal(result.reason, 'progress_report')
       assert.equal(store.ticket(ticket.ticketId).status, 'working')
-      assert.deepEqual(controller.state.executor(ex).autoTags, [])
+      assert.deepEqual(controller.state.executor(ex).autoTags, {})
     }
     recordReport(ticket.ticketId, 'done', { executorId: ex, summary: 'done', evidence: ['exit 0'] })
     recordReport(ticket.ticketId, 'progress', { executorId: ex, summary: 'tail after done' })
     const first = await settleAs(ex, ticket.ticketId, { kind: 'completed' })
     assert.equal(first.status, 'done', JSON.stringify(first))
     const completed = controller.state.executor(ex)
-    const autoTags = completed.autoTags.slice()
+    const autoTags = { ...completed.autoTags }
     const ledger = completed.autoTaggedTicketIds.slice()
     const lastUsedAt = completed.lastUsedAt
-    assert.deepEqual(autoTags, ['multi-tag'])
+    assert.deepEqual(autoTags, { 'multi-tag': 1 })
     assert.equal(ledger.filter(id => id === ticket.ticketId).length, 1, 'done applies once')
     recordReport(ticket.ticketId, 'progress', { executorId: ex, summary: 'late progress' })
     const second = await settleAs(ex, ticket.ticketId, { kind: 'completed' })

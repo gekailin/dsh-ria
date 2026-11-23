@@ -27,7 +27,7 @@ try {
   assert.deepEqual(store.ticketMeta(request.ticketId).routingTags, ['frontend', 'docs'])
 
   // Reset the dispatch-time learning so this test proves the done path.
-  store.addExecutor(executor.sessionId, { autoTags: [], recentTopics: [] })
+  store.addExecutor(executor.sessionId, { autoTags: {}, recentTopics: [] })
   const done = await fixture.callAs(executor.sessionId, 'ria_executor_report', {
     ticketId: request.ticketId, status: 'done', summary: 'completed', evidence: ['test: soft tags'],
   })
@@ -36,9 +36,9 @@ try {
 
   const learned = store.executor(executor.sessionId)
   assert.deepEqual(learned.tags, ['frontend'], 'explicit tags stay untouched')
-  assert.deepEqual(learned.autoTags, ['docs'], 'only non-explicit tags are learned')
+  assert.deepEqual(learned.autoTags, { docs: 1 }, 'only non-explicit tags are learned')
   assert.deepEqual(learned.recentTopics, [topic.topicId])
-  assert.equal(learned.autoTags.includes('frontend'), false)
+  assert.equal(Object.hasOwn(learned.autoTags, 'frontend'), false)
   console.log('executor soft tags on done ok')
 } finally {
   fixture.cleanup()

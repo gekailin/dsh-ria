@@ -59,6 +59,37 @@ const eventsFor = (fixture, ticketId) => fixture.service.routerEvents.query({ ti
   } finally { fixture.cleanup() }
 }
 
+// 2a2) fake clock: two attempts share one 60s deadline.
+{
+  const fixture = await createFixture({ stateDefault: true })
+  try {
+    const controller = fixture.service.controller
+    controller.resolveAdvisorModel = async () => ({ provider: 'provider-ok', model: 'model-fake', reasoningEffort: '' })
+    let now = 1000
+    let calls = 0
+    const delays = []
+    const realNow = Date.now
+    const realSetTimeout = globalThis.setTimeout
+    Date.now = () => now
+    globalThis.setTimeout = (_fn, ms) => { delays.push(ms); return 1 }
+    controller.service.routerLlm = {
+      async *stream() {
+        calls += 1
+        if (calls === 1) now += 40_000
+        throw new Error('fake stream failure')
+      },
+    }
+    try {
+      await assert.rejects(controller.callAdvisorModel({ system: 's', user: 'u', timeoutMs: 60_000 }), error => error.code === 'advisor_model_failed')
+      assert.equal(delays.at(-1), 20_000, 'attempt 2 must get only the remaining budget')
+      assert.ok(delays.slice(0, -1).every(ms => ms === 60_000), 'no attempt may restart the full budget')
+    } finally {
+      Date.now = realNow
+      globalThis.setTimeout = realSetTimeout
+    }
+  } finally { fixture.cleanup() }
+}
+
 // 2b) request path catches timeout and parks the ticket blocked.
 {
   const fixture = await createFixture({ stateDefault: true, advisorPlan: 'stateless' })
@@ -118,7 +149,7 @@ const eventsFor = (fixture, ticketId) => fixture.service.routerEvents.query({ ti
     const planned = eventsFor(fixture, ticket.ticketId).find(item => item.event === 'advisor.plan')
     assert.equal(planned.payload.maxTokens, ADVISOR_MAX_TOKENS)
     assert.equal(planned.payload.finishReason, 'stop')
-    assert.equal(ADVISOR_TIMEOUT_MS, 30_000)
+    assert.equal(ADVISOR_TIMEOUT_MS, 60_000)
   } finally { fixture.cleanup() }
 }
 

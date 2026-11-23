@@ -49,13 +49,38 @@ async function setup() {
 
 // 1) Registration: kind, fields, opt-out and listing.
 {
-  const { fixture, chat, state, register } = await setup()
+  const { fixture, chat, state, controller, register } = await setup()
   try {
     const added = await register()
     assert.equal(added.executor.kind, 'co-managed')
     assert.equal(added.executor.cwd, '/work/proj')
     assert.equal(added.executor.title, 'CM Session')
     assert.equal(added.executor.allowAutoDispatch, true)
+    // An ordinary session registered as co-managed is still an independent
+    // direct target. Managed and role sessions remain excluded.
+    assert.equal(controller.isIndependentSummary({ sessionId: 'session-cm', blank: false, cwd: '/work/proj' }, new Set()), true)
+    const direct = await controller.enableDirect({ sessionId: 'session-cm' })
+    assert.equal(direct.ok, true)
+    assert.equal(controller.direct.sessionId, 'session-cm')
+    controller.direct = undefined
+    const managed = await controller.ensureExecutor('global')
+    assert.equal(controller.isIndependentSummary({ sessionId: managed.sessionId, blank: false, cwd: managed.cwd || '/work/proj' }, new Set()), false)
+    assert.equal(controller.isIndependentSummary({ sessionId: chat, blank: false, cwd: '/work/proj' }, new Set()), false)
+    const advisorBefore = controller.advisor('global')
+    controller.setAdvisor('global', 'session-advisor-independent-test')
+    try {
+      assert.equal(controller.isIndependentSummary({ sessionId: 'session-advisor-independent-test', blank: false, cwd: '/work/proj' }, new Set()), false)
+    } finally {
+      if (advisorBefore) controller.setAdvisor('global', advisorBefore.sessionId)
+      else controller.clearAdvisor('global', 'session-advisor-independent-test')
+    }
+    const roleForBefore = controller.roleFor
+    controller.roleFor = id => id === 'session-sage-independent-test' ? 'sage' : roleForBefore.call(controller, id)
+    try {
+      assert.equal(controller.isIndependentSummary({ sessionId: 'session-sage-independent-test', blank: false, cwd: '/work/proj' }, new Set()), false)
+    } finally {
+      controller.roleFor = roleForBefore
+    }
     assert.deepEqual((await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'list' })).executors.map(item => item.sessionId), ['session-cm'])
     const off = await register('session-cm', { allowDispatch: false })
     assert.equal(off.executor.allowAutoDispatch, false)

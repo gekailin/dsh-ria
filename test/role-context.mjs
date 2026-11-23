@@ -34,6 +34,20 @@ try {
   const hugeEntry = JSON.parse(readFileSync(file, 'utf8').trim().split('\n').find(line => line.includes('ticket_huge')))
   assert.equal(hugeEntry.truncated, true)
 
+  // A single oversized entry is kept with metadata + output summary, not dropped.
+  const hugeRead = readRoleContext(root, { role: 'advisor', ticketId: 'ticket_huge', maxChars: 1200, now: at + 1000 })
+  assert.equal(hugeRead.returned, 1)
+  assert.equal(hugeRead.dropped, 0)
+  assert.equal(hugeRead.truncatedEntries, 1)
+  assert.equal(hugeRead.truncated, true)
+  const kept = hugeRead.entries[0]
+  for (const key of ['at', 'role', 'ticketId', 'phase', 'model', 'attempt', 'degraded', 'error']) assert.ok(key in kept, key)
+  assert.equal(kept.ticketId, 'ticket_huge')
+  assert.equal(kept.phase, 'advisor.plan')
+  assert.equal(kept.truncated, true)
+  assert.ok(typeof kept.output === 'string' && kept.output.length > 0)
+  assert.ok(JSON.stringify(kept).length <= 1200)
+
   // Filters, limit and maxChars.
   const read = readRoleContext(root, { role: 'router', ticketId: 'ticket_test', limit: 20, maxChars: 20000, now: at + 1000 })
   assert.equal(read.total, 1)
@@ -57,7 +71,10 @@ try {
 
   // Write failure is swallowed.
   assert.equal(appendRoleContextAsync('/dev/null', { role: 'router' }, { log: () => {} }), null)
-  assert.match(reflectionInstruction({ runId: 'r', forDate: '2026-11-20', windowStart: 1, windowEnd: 2, deadlineAt: 3 }), /ria_reflect_read_role_context/)
+  const instruction = reflectionInstruction({ runId: 'r', forDate: '2026-11-20', windowStart: 1, windowEnd: 2, deadlineAt: 3 })
+  assert.match(instruction, /ria_reflect_read_role_context/)
+  assert.doesNotMatch(instruction, /复制到 reflections|把报告复制到/)
+  assert.match(instruction, /canonical 由宿主/)
 
   // Tool handler returns the filtered payload.
   const fake = Object.create(RiaService.prototype)

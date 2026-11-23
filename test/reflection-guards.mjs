@@ -71,7 +71,9 @@ try {
     const marker = readFileSync(failed.markerPath, 'utf8')
     assert.match(marker, /EROFS/)
     assert.match(marker, /sourceSha256/)
-    assert.ok(events.length >= 0)
+    const failedEvents = fixture.service.routerEvents.query({ ticketId: request.ticketId }).events
+    assert.ok(failedEvents.some(event => event.event === 'reflection.canonical.failed' && event.ticketId === request.ticketId),
+      'canonical failure must emit reflection.canonical.failed')
   } finally { fixture.cleanup() }
   console.log('reflection guards ok')
 } finally { rmSync(root, { recursive: true, force: true }) }

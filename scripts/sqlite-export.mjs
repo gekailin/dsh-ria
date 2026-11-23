@@ -35,7 +35,7 @@ export function exportTickets({ stateDir, dbPath = join(stateDir, 'ria.sqlite') 
  */
 export function writeExport({ stateDir, dbPath = join(stateDir, 'ria.sqlite'), now = Date.now() }) {
   const exported = exportTickets({ stateDir, dbPath })
-  writeMirrorSnapshot({ stateDir, snapshot: exported, storage: 'json' })
+  writeMirrorSnapshot({ stateDir, snapshot: exported, storage: 'json', writeRia: true })
   return {
     ok: true,
     mode: 'rollback',

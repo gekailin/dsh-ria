@@ -147,7 +147,8 @@ function setup() {
     assert.equal(runtime.flush(), true)
     assert.equal(f.read('state.json').tickets, undefined, 'state.json no longer stores ticket meta')
     assert.ok(external.record('first').meta, 'DB still owns ticket meta')
-    assert.deepEqual(f.read('ria.json').tickets, runtime.hotTickets())
+    assert.ok(f.read('ria.json').tickets.some(ticket => ticket.ticketId === 'json-only'), 'ria.json remains the read-only compatibility copy')
+    assert.ok(!f.read('ria.json').tickets.some(ticket => ticket.ticketId === 'first'), 'new DB tickets are not mirrored back to ria.json')
     assert.equal(runtime.dirty, false)
     assert.equal(f.dbState().dirty, false)
   } finally { await f.cleanup() }
@@ -184,7 +185,7 @@ function setup() {
     assert.equal(runtime.stats().lastError, null)
     assert.deepEqual(f.external.record('first').meta.attachments, ['latest'])
     assert.equal(f.read('state.json').reports.at(-1).reportId, 'report-new')
-    assert.equal(f.read('ria.json').settings.blockDirectUserMessages, false)
+    assert.equal(f.read('state.json').settings.blockDirectUserMessages, false, 'control settings live in state.json')
   } finally { await f.cleanup() }
 }
 
@@ -219,7 +220,8 @@ function setup() {
     assert.equal(runtime.flush(), true)
     assert.deepEqual(f.external.record('first').meta.attachments, ['newer-write'])
     assert.equal(f.read('state.json').reports.at(-1).reportId, 'during-export')
-    assert.deepEqual(f.read('ria.json').tickets, runtime.hotTickets())
+    assert.ok(f.read('ria.json').tickets.some(ticket => ticket.ticketId === 'json-only'), 'ria.json remains the read-only compatibility copy')
+    assert.ok(!f.read('ria.json').tickets.some(ticket => ticket.ticketId === 'first'), 'new DB tickets are not mirrored back to ria.json')
   } finally { await f.cleanup() }
 }
 
@@ -264,11 +266,11 @@ function setup() {
     let failed = false
     runtime.exportMirror = (snapshot, guard) => writeMirrorSnapshot({ stateDir: f.dir, snapshot, ...guard,
       write(file, text, options) {
-        if (!failed && basename(file) === 'ria.json') { failed = true; throw new Error('last file failed') }
+        if (!failed && basename(file) === 'tickets.log.jsonl') { failed = true; throw new Error('mirror file failed') }
         writeAtomic(file, text, options)
       },
     })
-    assert.throws(() => runtime.flush(), /last file failed/)
+    assert.throws(() => runtime.flush(), /mirror file failed/)
     assert.equal(runtime.dirty, true)
     const offline = exportTickets({ stateDir: f.dir })
     assert.ok(offline.archives.some(item => item.ticket.ticketId === record.ticket.ticketId))
@@ -279,7 +281,7 @@ function setup() {
     const archiveLines = readFileSync(join(f.dir, 'tickets.log.jsonl'), 'utf8').trim().split('\n').map(JSON.parse)
     assert.ok(archiveLines.some(item => item.ticket.ticketId === record.ticket.ticketId))
     assert.deepEqual(f.external.record(record.ticket.ticketId).meta.projectId, 'archived-meta')
-    assert.ok(f.read('ria.json').ticketMirror.generation >= 0)
+    assert.equal(f.read('ria.json').ticketMirror, undefined, 'ria.json is no longer a live mirror')
     assert.equal(f.read('state.json').ticketMirror, undefined, 'state.json has no mirror generation')
   } finally { await f.cleanup() }
 }
@@ -315,7 +317,7 @@ function setup() {
     assert.equal(runtime2.flush(), true)
     assert.equal(runtime2.dirty, false)
     assert.equal(f.read('state.json').reports.at(-1).reportId, 'report-reopen')
-    assert.equal(f.read('ria.json').settings.blockDirectUserMessages, false)
+    assert.equal(f.read('state.json').settings.blockDirectUserMessages, false, 'control settings live in state.json')
     assert.ok(f.external.record('first').meta)
   } finally {
     if (runtime2) await runtime2.close()
@@ -363,7 +365,7 @@ function setup() {
     assert.equal(f.external.record('second').meta, null)
     assert.equal(runtime.flush(), true)
     assert.equal(f.external.record('second').meta, null)
-    assert.equal(f.read('ria.json').tickets.find(item => item.ticketId === 'second').ticketId, 'second')
+    assert.ok(!f.read('ria.json').tickets.some(item => item.ticketId === 'second'), 'ria.json compatibility copy is not rewritten')
   } finally { await f.cleanup() }
 }
 

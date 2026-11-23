@@ -95,7 +95,6 @@ try {
   const workRequest = await fixture.callAs(chat, 'ria_chat_request', {
     goal: '修一个普通 bug',
     acceptance: '测试通过',
-    mode: 'work',
   })
   assert.equal(workRequest.ok, true)
   await fixture.callAs(advisor, 'ria_ticket_plan', {
@@ -125,7 +124,6 @@ try {
   const mismatchRequest = await fixture.callAs(chat, 'ria_chat_request', {
     goal: '又一个普通工单',
     acceptance: 'x',
-    mode: 'work',
   })
   await fixture.callAs(advisor, 'ria_ticket_plan', { ticketId: mismatchRequest.ticketId, summary: 'x', steps: ['x'] })
   const mismatch = await fixture.callAs(advisor, 'ria_ticket_dispatch', {

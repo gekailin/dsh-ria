@@ -103,7 +103,8 @@ function byKey(models, provider, model) {
     for (const limit of [0, 201, 1.5, 'many']) {
       const bad = await fixture.callAs(chat, 'ria_chat_models', { limit })
       assert.equal(bad.ok, false)
-      assert.equal(bad.code, 'invalid_limit')
+      assert.equal(bad.code, 'invalid_argument')
+      assert.equal(bad.field, 'limit')
     }
   } finally {
     fixture.cleanup()

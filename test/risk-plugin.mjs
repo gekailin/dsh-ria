@@ -35,7 +35,8 @@ try {
     escalationPolicy: 'nope',
   })
   assert.equal(invalid.ok, false)
-  assert.equal(invalid.code, 'invalid_escalation_policy')
+  assert.equal(invalid.code, 'invalid_argument')
+  assert.equal(invalid.field, 'escalationPolicy')
 
   // End-to-end decision uses the ticket policy.
   const controller = fixture.service.controller

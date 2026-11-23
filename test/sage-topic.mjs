@@ -57,7 +57,9 @@ try {
   await assert.rejects(() => fixture.callAs(chat, 'ria_sage_topic', { action: 'list' }), /tool not installed|forbidden/)
 
   // 7. Unknown action and missing topic id are readable errors.
-  assert.equal((await call({ action: 'nope' })).code, 'invalid_action')
+  const badAction = await call({ action: 'nope' })
+  assert.equal(badAction.code, 'invalid_argument')
+  assert.equal(badAction.field, 'action')
   assert.equal((await call({ action: 'archive' })).code, 'topic_id_required')
   assert.equal((await call({ action: 'update', topicId: 'topic_missing_x', title: 'x' })).code, 'topic_missing')
 

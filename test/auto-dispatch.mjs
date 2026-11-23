@@ -105,7 +105,8 @@ await withFixture(async fixture => {
     const invalid = await fixture.callAs(chat, 'ria_chat_executor_config', {
       action: 'set', executorId: explicitOnly.sessionId, allowAutoDispatch: value,
     })
-    assert.equal(invalid.code, 'invalid_allow_auto_dispatch')
+    assert.equal(invalid.code, 'invalid_argument')
+    assert.equal(invalid.field, 'allowAutoDispatch')
     assert.equal(controller.state.executor(explicitOnly.sessionId).allowAutoDispatch, true)
   }
 })

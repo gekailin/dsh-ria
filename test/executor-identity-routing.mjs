@@ -39,9 +39,9 @@ const planReply = routing => () => JSON.stringify({
     assert.deepEqual(cleared.executor.tags, [])
     assert.equal(cleared.executor.dedicated, false)
 
-    assert.equal((await fixture.callAs(chat, 'ria_chat_executor_config', { action: 'set', executorId: executor.sessionId, tags: 'docs' })).code, 'invalid_tags')
+    assert.equal((await fixture.callAs(chat, 'ria_chat_executor_config', { action: 'set', executorId: executor.sessionId, tags: 'docs' })).code, 'invalid_argument')
     assert.equal((await fixture.callAs(chat, 'ria_chat_executor_config', { action: 'set', executorId: executor.sessionId, roleNote: 'x'.repeat(121) })).code, 'invalid_role_note')
-    assert.equal((await fixture.callAs(chat, 'ria_chat_executor_config', { action: 'set', executorId: executor.sessionId, dedicated: 'yes' })).code, 'invalid_dedicated')
+    assert.equal((await fixture.callAs(chat, 'ria_chat_executor_config', { action: 'set', executorId: executor.sessionId, dedicated: 'yes' })).code, 'invalid_argument')
     console.log('executor config identity ok')
   } finally {
     fixture.cleanup()
@@ -89,7 +89,7 @@ const planReply = routing => () => JSON.stringify({
     const managed = await fixture.service.controller.ensureExecutor('global')
     assert.equal((await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'set', sessionId: managed.sessionId, tags: ['x'] })).code, 'not_co_managed')
 
-    assert.equal((await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'add', sessionId: 'session-doc', tags: {} })).code, 'invalid_tags')
+    assert.equal((await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'add', sessionId: 'session-doc', tags: {} })).code, 'invalid_argument')
     const removed = await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'remove', sessionId: 'session-doc' })
     assert.equal(removed.removed, true)
     const afterRemove = await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'list' })

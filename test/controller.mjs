@@ -55,23 +55,27 @@ try {
   assert.equal(ensured.sessionId, chat)
   // Dispatch is ticket-only: the direct session talk channel is gone.
   assert.equal(fixture.visibleTools(chat).includes('chat_talk'), false)
-  // ria_chat_request is work-only. A legacy `mode` argument is ignored rather
-  // than rejected, so older prompts keep working.
-  const modeIgnored = await fixture.callAs(chat, 'ria_chat_request', { goal: 'legacy mode ignored', mode: 'answer' })
-  assert.equal(modeIgnored.ok, true, JSON.stringify(modeIgnored))
-  assert.equal(modeIgnored.mode, 'work')
-  assert.equal(fixture.service.controller.state.ticketMeta(modeIgnored.ticketId).mode, 'work')
+  // ria_chat_request is work-only and strict: a legacy `mode` argument is
+  // rejected instead of silently ignored.
+  const modeRejected = await fixture.callAs(chat, 'ria_chat_request', { goal: 'legacy mode rejected', mode: 'answer' })
+  assert.equal(modeRejected.ok, false, JSON.stringify(modeRejected))
+  assert.equal(modeRejected.code, 'unknown_parameter')
+  assert.equal(modeRejected.field, 'mode')
+  const requested = await fixture.callAs(chat, 'ria_chat_request', { goal: 'legacy mode rejected' })
+  assert.equal(requested.ok, true, JSON.stringify(requested))
+  assert.equal(requested.mode, 'work')
+  assert.equal(fixture.service.controller.state.ticketMeta(requested.ticketId).mode, 'work')
   // Historical meta.mode='answer' tickets stay readable and read as work: the
   // view exposes no mode, status is unchanged, and the advisor brief says work.
-  fixture.service.controller.state.setTicketMeta(modeIgnored.ticketId, { mode: 'answer' })
-  const historical = fixture.service.store.ticket(modeIgnored.ticketId)
+  fixture.service.controller.state.setTicketMeta(requested.ticketId, { mode: 'answer' })
+  const historical = fixture.service.store.ticket(requested.ticketId)
   const historicalView = fixture.service.controller.ticketView(historical)
-  assert.equal(historicalView.ticketId, modeIgnored.ticketId)
+  assert.equal(historicalView.ticketId, requested.ticketId)
   assert.equal('mode' in historicalView, false)
-  const historicalStatus = await fixture.callAs(chat, 'ria_chat_status', { ticketId: modeIgnored.ticketId })
+  const historicalStatus = await fixture.callAs(chat, 'ria_chat_status', { ticketId: requested.ticketId })
   assert.equal(historicalStatus.found, true)
   assert.equal(historicalStatus.ticket.status, historical.status)
-  const historicalBrief = ticketBrief(historical, { goal: historical.goal }, fixture.service.controller.state.ticketMeta(modeIgnored.ticketId))
+  const historicalBrief = ticketBrief(historical, { goal: historical.goal }, fixture.service.controller.state.ticketMeta(requested.ticketId))
   assert.match(historicalBrief, /模式: work/)
   assert.deepEqual(fixture.visibleTools(chat).sort(), ['ria_chat_co_manage', 'ria_chat_direct', 'ria_chat_executor_config', 'ria_chat_grant', 'ria_chat_models', 'ria_chat_new_session', 'ria_chat_propose', 'ria_chat_read', 'ria_chat_request', 'ria_chat_resume', 'ria_chat_send_image', 'ria_chat_sessions', 'ria_chat_status', 'ria_chat_steer', 'ria_chat_stop_ticket', 'ria_chat_watch'])
   // WeChat Claw resolves its peer session through these two callbacks. In state

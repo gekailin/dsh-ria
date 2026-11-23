@@ -195,7 +195,10 @@ try {
     assert.ok(item.summary.endsWith('…'), item.summary)
     assert.equal(/[\r\n]/.test(item.summary), false)
   }
-  const bulk = await eventsAs({ sessionId: 'session-retro-bulk', limit: 999 })
+  const overLimit = await eventsAs({ sessionId: 'session-retro-bulk', limit: 999 })
+  assert.equal(overLimit.code, 'invalid_argument')
+  assert.equal(overLimit.field, 'limit')
+  const bulk = await eventsAs({ sessionId: 'session-retro-bulk', limit: 200 })
   assert.equal(bulk.count, 200)
   assert.equal(bulk.more, true)
   assert.equal(bulk.nextThroughSeq, 5)

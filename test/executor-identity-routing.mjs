@@ -120,10 +120,10 @@ const planReply = routing => () => JSON.stringify({
     assert.equal(request.ok, true, JSON.stringify(request))
     assert.equal(fixture.service.store.ticket(request.ticketId).executor, w1.sessionId)
     assert.deepEqual(store.ticketMeta(request.ticketId).routingTags, ['frontend', 'docs'])
-    // Explicit tags never leak into the learned autoTags.
+    // Dispatch no longer learns tags; completion is the only learning point.
     const learned = store.executor(w1.sessionId)
     assert.deepEqual(learned.tags, ['frontend'])
-    assert.deepEqual(learned.autoTags, ['docs'])
+    assert.deepEqual(learned.autoTags, [], 'dispatch must not learn tags')
     const events = fixture.service.routerEvents.query({ ticketId: request.ticketId }).events
     const attempt = events.find(event => event.event === 'dispatch.attempt')
     assert.ok(attempt)
@@ -155,7 +155,8 @@ const planReply = routing => () => JSON.stringify({
   }
 }
 
-// 4) Advisor routing.requireTagMatch forces a fresh Executor when no tags match.
+// 4) requireTagMatch with no matching tags must not seed a new Executor.
+//    First dispatch is explicit or requireTagMatch=false; completion teaches tags.
 {
   const fixture = await createFixture({ stateDefault: true, advisorPlan: 'stateless', llmReply: planReply({ tags: ['rust'], requireTagMatch: true }) })
   try {
@@ -168,11 +169,13 @@ const planReply = routing => () => JSON.stringify({
     const meta = controller.state.ticketMeta(request.ticketId)
     assert.equal(meta.requireTagMatch, true)
     assert.deepEqual(meta.routingTags, ['rust'])
-    assert.notEqual(fixture.service.store.ticket(request.ticketId).executor, tagged.sessionId)
+    const ticket = fixture.service.store.ticket(request.ticketId)
+    assert.equal(ticket.status, 'blocked')
+    assert.equal(ticket.waitingOn, 'environment')
     const events = fixture.service.routerEvents.query({ ticketId: request.ticketId }).events
-    const attempt = events.find(event => event.event === 'dispatch.attempt')
-    assert.equal(attempt.payload.routing.createdNew, true)
-    console.log('requireTagMatch routing ok')
+    assert.ok(events.some(event => event.event === 'dispatch.blocked'))
+    assert.equal(events.some(event => event.event === 'dispatch.attempt'), false, 'no fresh unseeded Executor is dispatched')
+    console.log('requireTagMatch first-dispatch guard ok')
   } finally {
     fixture.cleanup()
   }

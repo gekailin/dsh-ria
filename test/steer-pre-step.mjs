@@ -93,9 +93,9 @@ try {
   const fourth = newTicket('single delivery owner')
   fixture.setRunning(executor, true)
   const queued = await fixture.callAs(chat, 'ria_chat_steer', { ticketId: fourth.ticketId, message: 'deliver at next boundary' })
-  const retiredTool = ['executor', 'checkpoint'].join('_')
-  assert.equal(fixture.visibleTools(executor).includes(retiredTool), false)
-  await assert.rejects(fixture.callAs(executor, retiredTool, { ticketId: fourth.ticketId }), /tool not installed/)
+  const absentTool = 'ria_nonexistent_probe'
+  assert.equal(fixture.visibleTools(executor).includes(absentTool), false)
+  await assert.rejects(fixture.callAs(executor, absentTool, { ticketId: fourth.ticketId }), /tool not installed/)
   assert.equal(controller.state.pendingInbox(fourth.ticketId, executor).length, 1)
   assert.equal(events().filter(item => item.event === 'steer.delivered' && item.ticketId === fourth.ticketId).length, 0)
   const owned = await preStep()

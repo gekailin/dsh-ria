@@ -253,11 +253,11 @@ try {
 
   const executor = dispatch.executorSessionId
   assert.deepEqual(fixture.visibleTools(executor).sort(), ['bash', 'edit', 'read', 'ria_executor_report', 'run_code', 'write'])
-  // The retired polling tool is absent; use the host's ordinary missing-tool
-  // error, never a compatibility handler that could consume pending messages.
-  const retiredTool = ['executor', 'checkpoint'].join('_')
-  assert.equal(fixture.visibleTools(executor).includes(retiredTool), false)
-  await assert.rejects(fixture.callAs(executor, retiredTool, { ticketId: created.ticketId }), /tool not installed/)
+  // An absent tool must use the host's ordinary missing-tool error, never a
+  // compatibility handler that could consume pending messages.
+  const absentTool = 'ria_nonexistent_probe'
+  assert.equal(fixture.visibleTools(executor).includes(absentTool), false)
+  await assert.rejects(fixture.callAs(executor, absentTool, { ticketId: created.ticketId }), /tool not installed/)
   assert.equal(fixture.service.controller.state.workOrder(created.ticketId).summary, 'read the notes and write a paragraph')
   const executorMeta = fixture.service.controller.state.executor(executor)
   assert.match(executorMeta.cwd, /executors$/)

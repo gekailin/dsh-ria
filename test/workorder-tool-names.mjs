@@ -29,7 +29,7 @@ const templates = {
 for (const [name, text] of Object.entries(templates)) {
   const tools = candidateWorkOrderTools(text)
   for (const tool of tools) assert.ok(RIA_TOOL_NAME_SET.has(tool), name + ' cites unregistered tool ' + tool)
-  assert.equal(/(?<![A-Za-z0-9_])executor_checkpoint(?![A-Za-z0-9_])/.test(text), false, name + ' mentions executor_checkpoint')
+  assert.equal(/(?<![A-Za-z0-9_])ria_nonexistent_probe(?![A-Za-z0-9_])/.test(text), false, name + ' mentions a nonexistent ria tool')
   assert.equal(/(?<![A-Za-z0-9_])worker_report(?![A-Za-z0-9_])/.test(text), false, name + ' mentions old worker_report')
 }
 
@@ -62,13 +62,13 @@ for (const [name, text] of Object.entries(templates)) {
     const plan = await fixture.callAs(advisor, 'ria_ticket_plan', {
       ticketId: request.ticketId,
       summary: 'use a removed tool',
-      steps: ['Run executor_checkpoint', 'Then call ria_worker_report'],
+      steps: ['Run ria_nonexistent_probe', 'Then call ria_worker_report'],
     })
     assert.equal(plan.ok, true, JSON.stringify(plan))
     const events = fixture.service.routerEvents.query({ ticketId: request.ticketId, limit: 100 }).events
     const warning = events.find(event => event.event === 'workorder.unknown_tool')
     assert.ok(warning, JSON.stringify(events))
-    assert.equal(warning.payload.tool, 'executor_checkpoint')
+    assert.equal(warning.payload.tool, 'ria_nonexistent_probe')
     assert.equal(warning.payload.source, 'ticket_plan.workorder')
     assert.equal(warning.payload.ticketId, request.ticketId)
     const dispatched = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: request.ticketId })

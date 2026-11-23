@@ -70,17 +70,16 @@ const events = stateDir => readFileSync(join(stateDir, 'events.jsonl'), 'utf8')
     assert.equal(bound.executing, true)
     assert.equal(controller.executingTicketsFor('session-cm').length, 1)
 
-    // The board exposes a read-only co-management group; it never joins the
-    // ticket page/counters.
     // Unrelated meta must survive release: it clears exactly two keys.
     state.setTicketMeta(ticketId, { projectCwd: '/work/proj/sub', marker: 'keep-me' })
-    const board = await fixture.service.boardData({})
-    const group = board.coManagement.find(item => item.sessionId === 'session-cm')
-    assert.ok(group, 'board exposes the current co-management registration')
+    const diagnostics = fixture.service.executorDiagnostics({})
+    const group = diagnostics.rows.find(item => item.sessionId === 'session-cm')
+    assert.ok(group, 'executor diagnostics exposes the co-management registration')
     assert.equal(group.title, 'CM Regression')
     assert.equal(group.cwd, '/work/proj')
-    assert.equal(group.allowDispatch, true)
-    assert.deepEqual(group.executingTicketIds, [ticketId])
+    assert.equal(group.kind, 'co-managed')
+    assert.equal(group.allowAutoDispatch, true)
+    const board = await fixture.service.boardData({})
     assert.equal(board.counts.total, fixture.service.store.tickets().length, 'co-management does not change ticket counts')
     assert.equal(board.tickets.length, board.counts.total, 'board page still contains only tickets')
 

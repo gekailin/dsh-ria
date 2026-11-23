@@ -1,5 +1,11 @@
 # TODO
 
+## 存储三层化（phase A 已落地，B/C 待做）
+
+- **Phase A 已完成**：`ria.json` 不再被 mirror 写入（保留只读一版作为回滚材料）；`settings`/`grants`/`recentWorkers`/`ticketFeedback`/`riaSessionId`/`riaPreset`/`version`/`createdAt`/`lastHumanMessageAt`/`storage` 启动时一次性迁入 `state.json`（幂等、备份 `ria.json.bak-*`）；RiaStore 读优先 state，缺字段才回退 ria.json。
+- **待做 Phase B**：`requests`/`reports`/`workOrders`/`inbox`/`ticketFeedback`/`lessonCandidates` 改 append `events.jsonl` + 启动尾部重建；轮转策略。
+- **待做 Phase C**：sqlite-verify/board 等读点适配；度量；三層定位文档；下个版本删除 `ria.json`。
+
 ## 一次性迁移与 deprecated 别名清理（v2 → state）
 
 - **已完成**：一次性命名/领域迁移代码、启动调用、迁移脚本与单测已删除；运行态读已纯 SQL，domain 读不再回退 legacy JSON。

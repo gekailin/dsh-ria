@@ -13,7 +13,7 @@ try {
     schemaVersion: 5, version: 9, riaSessionId: 'ria-old', riaPreset: 'ptc', createdAt: 10,
     lastHumanMessageAt: 11, storage: 'json', tickets: [{ ticketId: 't1', status: 'open', goal: 'g' }],
     topics: [], links: [], settings: { blockDirectUserMessages: true }, grants: [{ grantId: 'g1' }],
-    recentWorkers: { w1: { sessionId: 'w1' } }, ticketFeedback: [{ feedbackId: 'f1', kind: 'x' }],
+    recentExecutors: { w1: { sessionId: 'w1' } }, ticketFeedback: [{ feedbackId: 'f1', kind: 'x' }],
   }
   writeFileSync(join(dir, 'ria.json'), JSON.stringify(ria))
   writeFileSync(join(dir, 'state.json'), JSON.stringify({ executors: {}, meta: { executorSeq: 0, reflectionSeq: 0 } }))
@@ -23,7 +23,7 @@ try {
   assert.ok(first.moved.includes('settings'))
   assert.ok(existsSync(first.backup))
   const state = JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8'))
-  for (const key of ['settings', 'grants', 'recentWorkers', 'ticketFeedback', 'riaSessionId', 'riaPreset', 'version', 'createdAt', 'lastHumanMessageAt', 'storage']) {
+  for (const key of ['settings', 'grants', 'recentExecutors', 'ticketFeedback', 'riaSessionId', 'riaPreset', 'version', 'createdAt', 'lastHumanMessageAt', 'storage']) {
     assert.ok(Object.hasOwn(state, key), 'state.json has ' + key)
   }
   assert.equal(hash(join(dir, 'ria.json')), riaHash, 'migration never rewrites ria.json')

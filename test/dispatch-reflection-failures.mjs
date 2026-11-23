@@ -17,7 +17,7 @@ const reflectionPlan = async (fixture, controller) => {
 }
 
 // 1) Reflection tickets must ignore requireTagMatch with an untagged pool;
-// ensureReflectionWorker creates an untagged reflection Worker.
+// ensureReflectionExecutor creates an untagged reflection Executor.
 {
   const fixture = await createFixture({ stateDefault: true })
   try {
@@ -26,13 +26,13 @@ const reflectionPlan = async (fixture, controller) => {
     controller.state.setTicketMeta(request.ticketId, { routingTags: ['reflect'], requireTagMatch: true })
     const dispatched = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: request.ticketId })
     assert.equal(dispatched.ok, true, JSON.stringify(dispatched))
-    assert.equal(controller.state.worker(dispatched.workerSessionId).executorType, 'reflection')
-    assert.deepEqual(controller.state.worker(dispatched.workerSessionId).tags || [], [])
+    assert.equal(controller.state.executor(dispatched.executorSessionId).executorType, 'reflection')
+    assert.deepEqual(controller.state.executor(dispatched.executorSessionId).tags || [], [])
   } finally { fixture.cleanup() }
 }
 
-// 2) The same requirement with a tagged reflection Worker already in the pool.
-// A reflection run now always gets a fresh Worker, so the tagged idle Worker is
+// 2) The same requirement with a tagged reflection Executor already in the pool.
+// A reflection run now always gets a fresh Executor, so the tagged idle Executor is
 // not reused; the new one is still untagged and passes the tag-exemption check.
 {
   const fixture = await createFixture({
@@ -44,7 +44,7 @@ const reflectionPlan = async (fixture, controller) => {
   })
   try {
     const controller = fixture.service.controller
-    controller.state.addWorker('session-reflect-tagged', {
+    controller.state.addExecutor('session-reflect-tagged', {
       kind: 'managed', executorType: 'reflection', status: 'idle', scope: 'global',
       cwd: '/tmp/ria-reflect-tagged', tags: ['reflect'], allowAutoDispatch: true,
     })
@@ -52,8 +52,8 @@ const reflectionPlan = async (fixture, controller) => {
     controller.state.setTicketMeta(request.ticketId, { routingTags: ['reflect'], requireTagMatch: true })
     const dispatched = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: request.ticketId })
     assert.equal(dispatched.ok, true, JSON.stringify(dispatched))
-    assert.notEqual(dispatched.workerSessionId, 'session-reflect-tagged')
-    const created = controller.state.worker(dispatched.workerSessionId)
+    assert.notEqual(dispatched.executorSessionId, 'session-reflect-tagged')
+    const created = controller.state.executor(dispatched.executorSessionId)
     assert.equal(created.executorType, 'reflection')
     assert.deepEqual(created.tags || [], [])
   } finally { fixture.cleanup() }
@@ -94,7 +94,7 @@ const reflectionPlan = async (fixture, controller) => {
   } finally { fixture.cleanup() }
 }
 
-// 4) A worker that passed candidate selection but fails the final recheck must
+// 4) A executor that passed candidate selection but fails the final recheck must
 // produce dispatch.blocked with code/message instead of silently returning.
 {
   const fixture = await createFixture({ stateDefault: true })
@@ -106,9 +106,9 @@ const reflectionPlan = async (fixture, controller) => {
     const advisor = controller.advisor('global').sessionId
     const plan = await fixture.callAs(advisor, 'ria_ticket_plan', { ticketId: request.ticketId, summary: 'work', steps: ['work'] })
     assert.equal(plan.ok, true, JSON.stringify(plan))
-    const idle = await controller.ensureWorker('global')
-    controller.ensureWorker = async () => {
-      controller.state.addWorker(idle.sessionId, { status: 'working', currentTicketId: 'ticket_other' })
+    const idle = await controller.ensureExecutor('global')
+    controller.ensureExecutor = async () => {
+      controller.state.addExecutor(idle.sessionId, { status: 'working', currentTicketId: 'ticket_other' })
       return idle
     }
     const events = []

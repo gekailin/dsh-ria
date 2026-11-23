@@ -19,7 +19,7 @@ async function dispatch(fixture, chat, goal = 'ship the thing') {
   assert.equal(plan.ok, true)
   const sent = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: made.ticketId })
   assert.equal(sent.ok, true)
-  return { ticketId: made.ticketId, executorId: sent.workerSessionId }
+  return { ticketId: made.ticketId, executorId: sent.executorSessionId }
 }
 
 function expire(fixture, ticketId) {
@@ -29,7 +29,7 @@ function expire(fixture, ticketId) {
   return ticket
 }
 
-// 1. The real confirmation signal is the worker turn/start. state handles that
+// 1. The real confirmation signal is the executor turn/start. state handles that
 // event itself; it must confirm the attempt instead of only returning true and
 // letting the legacy hook skip. An expired attempt that really started must
 // never be parked as dispatch_unconfirmed.

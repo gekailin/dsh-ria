@@ -51,7 +51,7 @@ try {
     const request = await controller.requestTicket({ goal: 'canonical full', acceptance: 'report' }, { agent: { id: controller.state.chatSessionId } }, { mode: 'reflection' })
     controller.state.setTicketMeta(request.ticketId, { reflectionForDate: '2026-11-23' })
     const source = Buffer.from('# full report\n\n' + 'x'.repeat(9000) + '\n')
-    const sourcePath = join(fixture.stateDir, 'worker-full.md'); writeFileSync(sourcePath, source)
+    const sourcePath = join(fixture.stateDir, 'executor-full.md'); writeFileSync(sourcePath, source)
     fixture.service.reflections = fixture.service.reflections || new Map()
     fixture.service.reflections.set(request.ticketId, { reportFinal: sourcePath })
     const result = fixture.service.writeReflectionCanonicalFromTicket(request.ticketId, { summary: 'short' })

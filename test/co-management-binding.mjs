@@ -59,7 +59,7 @@ const events = stateDir => readFileSync(join(stateDir, 'events.jsonl'), 'utf8')
     const ticketId = await makeTicket('keep the registration', '/work/proj/sub')
     const sent = await dispatch(ticketId)
     assert.equal(sent.ok, true, JSON.stringify(sent))
-    assert.equal(sent.workerSessionId, 'session-cm')
+    assert.equal(sent.executorSessionId, 'session-cm')
     const during = controller.coManagement.watch('session-cm')
     assert.equal(during.watchId, before.watchId, 'dispatch does not replace the registration')
     assert.equal(during.titleSnapshot, 'CM Regression')
@@ -107,7 +107,7 @@ const events = stateDir => readFileSync(join(stateDir, 'events.jsonl'), 'utf8')
 }
 
 // (b) Two tickets for one co-manager: the second is rejected by the existing
-// busy rule, and busy is read from ticket meta rather than the worker row.
+// busy rule, and busy is read from ticket meta rather than the executor row.
 {
   const { fixture, controller, state, chat, register, makeTicket, dispatch } = await setup()
   try {
@@ -119,19 +119,19 @@ const events = stateDir => readFileSync(join(stateDir, 'events.jsonl'), 'utf8')
     assert.equal(executing.length, 1)
     assert.equal(String(executing[0].ticketId), firstId)
 
-    // A stale/idle worker row must not make the session selectable while the
+    // A stale/idle executor row must not make the session selectable while the
     // ticket meta still says executing=true.
-    state.addWorker('session-cm', { status: 'idle', currentTicketId: null })
-    assert.equal(state.worker('session-cm').currentTicketId, null)
-    assert.equal(controller.isWorkerSelectable(state.worker('session-cm'), {
+    state.addExecutor('session-cm', { status: 'idle', currentTicketId: null })
+    assert.equal(state.executor('session-cm').currentTicketId, null)
+    assert.equal(controller.isExecutorSelectable(state.executor('session-cm'), {
       projectCwd: '/work/proj/a', executorType: 'work', automatic: false,
     }), false, 'busy comes from the executing ticket meta')
 
     const secondId = await makeTicket('second ticket', '/work/proj/a')
     const second = await dispatch(secondId)
     assert.equal(second.ok, false, JSON.stringify(second))
-    assert.equal(second.code, 'specified_worker_unavailable')
-    assert.equal(second.cause, 'worker_busy')
+    assert.equal(second.code, 'specified_executor_unavailable')
+    assert.equal(second.cause, 'executor_busy')
     const parked = fixture.service.store.ticket(secondId)
     assert.equal(parked.status, 'blocked')
     assert.equal(parked.waitingOn, 'user')
@@ -140,8 +140,8 @@ const events = stateDir => readFileSync(join(stateDir, 'events.jsonl'), 'utf8')
     const stopped = await fixture.callAs(chat, 'ria_chat_stop_ticket', { ticketId: firstId, reason: 'release the executor' })
     assert.equal(stopped.ok, true, JSON.stringify(stopped))
     assert.equal(controller.executingTicketsFor('session-cm').length, 0)
-    assert.equal(state.worker('session-cm').status, 'idle')
-    assert.equal(controller.isWorkerSelectable(state.worker('session-cm'), {
+    assert.equal(state.executor('session-cm').status, 'idle')
+    assert.equal(controller.isExecutorSelectable(state.executor('session-cm'), {
       projectCwd: '/work/proj/a', executorType: 'work', automatic: false,
     }), true, 'clearing the binding frees the session')
     console.log('co-management concurrent busy from ticket meta ok')

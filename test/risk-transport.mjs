@@ -114,26 +114,26 @@ try {
   await fixture.callAs(advisor, 'ria_ticket_plan', { ticketId: made.ticketId, summary: 'transport probes', steps: ['probe'] })
   const dispatched = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: made.ticketId })
   const ticketId = made.ticketId
-  const worker = dispatched.workerSessionId
-  const workerCwd = fixture.service.controller.state.worker(worker).cwd
-  const bashCode = command => 'await tools.bash(' + JSON.stringify({ command, workdir: workerCwd }) + ')'
+  const executor = dispatched.executorSessionId
+  const executorCwd = fixture.service.controller.state.executor(executor).cwd
+  const bashCode = command => 'await tools.bash(' + JSON.stringify({ command, workdir: executorCwd }) + ')'
   const ticket = () => fixture.service.store.ticket(ticketId)
   const cache = (callId, code) => fixture.emit(
     'tools/pre-execute',
-    { agent: { id: worker }, name: 'run_code', callId, arguments: code === undefined ? {} : { code } },
+    { agent: { id: executor }, name: 'run_code', callId, arguments: code === undefined ? {} : { code } },
     async () => ({ kind: 'enter' }),
   )
   const asked = (id, callId, reason = 'transport probe') => fixture.service.onSessionEvent(
-    { header: { id: worker } },
+    { header: { id: executor } },
     { type: 'approval/asked', time: Date.now(), data: { id, toolName: 'run_code', callId, reason } },
   )
   const request = (callId, next) => fixture.emit(
     'approval/request',
-    { agent: { id: worker }, toolName: 'run_code', callId, reason: 'transport probe', signal: new AbortController().signal },
+    { agent: { id: executor }, toolName: 'run_code', callId, reason: 'transport probe', signal: new AbortController().signal },
     next,
   )
   const decided = (id, outcome = 'allowed-once') => fixture.service.onSessionEvent(
-    { header: { id: worker } },
+    { header: { id: executor } },
     { type: 'approval/decided', time: Date.now(), data: { id, outcome } },
   )
   const next = async () => 'rejected'
@@ -221,7 +221,7 @@ try {
   // Existing outer-tool classification still works unchanged.
   await cache('bash-low', "ignored")
   fixture.service.onSessionEvent(
-    { header: { id: worker } },
+    { header: { id: executor } },
     { type: 'approval/asked', time: Date.now(), data: { id: 'apr_bash_low', toolName: 'bash', callId: 'bash-low', reason: 'ordinary bash' } },
   )
   // No bash args were cached under this call id, so it must stay unknown.

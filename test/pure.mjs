@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { RiaStore } from '../lib/index.js'
 import { StateStore } from '../lib/store/store.mjs'
-import { advisorPrompt, chatPrompt, ticketBrief, workerPrompt } from '../lib/core/prompts.mjs'
+import { advisorPrompt, chatPrompt, ticketBrief, executorPrompt } from '../lib/core/prompts.mjs'
 import { createFixture } from './support/ria-fixture.mjs'
 
 const read = rel => readFileSync(new URL(rel, import.meta.url), 'utf8')
@@ -74,8 +74,8 @@ assert.match(advisorPrompt(), /plan of record/)
 assert.match(advisorPrompt(), /没有 WorkOrder 的工单不得进入 working/)
 assert.match(chatPrompt(), /Advisor（参谋）/)
 assert.doesNotMatch(chatPrompt(), /Thinker/)
-assert.doesNotMatch(workerPrompt({}), /Thinker/)
-assert.match(workerPrompt({}), /只对 Ria\/Advisor 负责/)
+assert.doesNotMatch(executorPrompt({}), /Thinker/)
+assert.match(executorPrompt({}), /只对 Ria\/Advisor 负责/)
 assert.match(ticketBrief({ ticketId: 't', goal: 'g' }, {}, {}), /阶段: advisor/)
 
 // --- the removed surfaces stay removed ----------------------------------

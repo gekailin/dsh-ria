@@ -32,7 +32,7 @@ const permissions = {
   approvalOverride: undefined,
   available: true,
 }
-const worker = {
+const executor = {
   id: 'session-w',
   session: {
     append(type, data) {
@@ -46,7 +46,7 @@ const ctx = {
     async resolveAgent(sessionId) {
       if (!permissions.available) return { error: { code: 'session/not-found', message: 'not found' } }
       assert.equal(sessionId, 'session-w')
-      return { agent: worker }
+      return { agent: executor }
     },
   },
   sandboxPolicy: {
@@ -57,7 +57,7 @@ const ctx = {
     effectivePolicy() { return permissions.approvalOverride ?? permissions.approvalPolicy },
     overrideOf() { return permissions.approvalOverride },
     setPolicy(agent, policy) {
-      assert.equal(agent, worker)
+      assert.equal(agent, executor)
       permissions.approvalOverride = policy
     },
   },
@@ -67,7 +67,7 @@ const service = new GrantService({
   ctx,
   store,
   stateDir,
-  isWorker: async sessionId => sessionId === 'session-w',
+  isExecutor: async sessionId => sessionId === 'session-w',
   log() {},
 })
 
@@ -192,19 +192,19 @@ assert.ok(audit.some(item => item.event === 'grant/restored' && item.grantId ===
 
 // Ticket-scoped grants move with an explicitly reassigned executor, without a new TTL.
 {
-  const states = new Map(['worker-a', 'worker-b'].map(id => [id, { sandbox: 'workspace-write', approval: 'ask' }]))
+  const states = new Map(['executor-a', 'executor-b'].map(id => [id, { sandbox: 'workspace-write', approval: 'ask' }]))
   const agents = new Map([...states].map(([id, state]) => [id, { id, session: { id,
     append(type, data) { if (type === 'sandbox/mode') state.sandbox = data.mode },
   } }]))
   const records = []
-  const ticket = { ticketId: 'moving-ticket', executor: 'worker-a', status: 'working' }
+  const ticket = { ticketId: 'moving-ticket', executor: 'executor-a', status: 'working' }
   const movingStore = { riaSessionId: 'ria', grants: () => records,
     grant: id => records.find(item => item.grantId === id), ticket: id => id === ticket.ticketId ? ticket : null,
     addGrant(item) { records.push(item); return item },
     updateGrant(id, patch) { Object.assign(this.grant(id), patch); return this.grant(id) },
     removeGrant(id) { records.splice(records.findIndex(item => item.grantId === id), 1) },
   }
-  const moving = new GrantService({ stateDir, store: movingStore, isWorker: id => agents.has(id), ctx: {
+  const moving = new GrantService({ stateDir, store: movingStore, isExecutor: id => agents.has(id), ctx: {
     sessionController: { resolveAgent: async id => ({ agent: agents.get(id) }) },
     sandboxPolicy: { resolve: ({ session }) => ({ mode: states.get(session.id).sandbox }), overrideOf: session => states.get(session.id).sandbox },
     approval: { effectivePolicy: session => states.get(session.id).approval, overrideOf: session => states.get(session.id).approval,
@@ -213,23 +213,23 @@ assert.ok(audit.some(item => item.event === 'grant/restored' && item.grantId ===
   try {
     const grant = await moving.set({ ticketId: ticket.ticketId, sandboxMode: 'danger-full-access', approvalPolicy: 'never', ttlSeconds: 60, userConfirmed: true })
     assert.equal(grant.scopeKey, 'ticket:' + ticket.ticketId)
-    assert.equal(grant.sessionId, 'worker-a')
-    ticket.executor = 'worker-b'
+    assert.equal(grant.sessionId, 'executor-a')
+    ticket.executor = 'executor-b'
     const rebound = await moving.onTicketChanged(ticket)
     assert.equal(rebound[0].grantId, grant.grantId)
     assert.equal(rebound[0].expiresAt, grant.expiresAt)
-    assert.equal(rebound[0].sessionId, 'worker-b')
-    assert.equal(states.get('worker-a').sandbox, 'workspace-write')
-    assert.equal(states.get('worker-a').approval, 'ask')
-    assert.equal(states.get('worker-b').sandbox, 'danger-full-access')
-    assert.equal(states.get('worker-b').approval, 'never')
-    assert.equal(moving.activeForTicket(ticket.ticketId, 'worker-b').length, 1)
-    assert.equal(moving.activeForTicket('other-ticket', 'worker-b').length, 0)
+    assert.equal(rebound[0].sessionId, 'executor-b')
+    assert.equal(states.get('executor-a').sandbox, 'workspace-write')
+    assert.equal(states.get('executor-a').approval, 'ask')
+    assert.equal(states.get('executor-b').sandbox, 'danger-full-access')
+    assert.equal(states.get('executor-b').approval, 'never')
+    assert.equal(moving.activeForTicket(ticket.ticketId, 'executor-b').length, 1)
+    assert.equal(moving.activeForTicket('other-ticket', 'executor-b').length, 0)
     movingStore.grant(grant.grantId).expiresAt = Date.now() - 1
     await moving.reconcile()
     assert.equal(records.length, 0)
-    assert.equal(states.get('worker-b').sandbox, 'workspace-write')
-    assert.equal(states.get('worker-b').approval, 'ask')
+    assert.equal(states.get('executor-b').sandbox, 'workspace-write')
+    assert.equal(states.get('executor-b').approval, 'ask')
     const migrationAudit = readFileSync(join(stateDir, 'audit.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line))
     assert.ok(migrationAudit.some(item => item.event === 'grant/moved' && item.ticketId === ticket.ticketId && item.grantId === grant.grantId))
     assert.ok(migrationAudit.some(item => item.event === 'grant/restored' && item.ticketId === ticket.ticketId && item.grantId === grant.grantId && item.trigger === 'expired'))

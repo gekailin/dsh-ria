@@ -1,5 +1,5 @@
 export function reflectionReportMarkdown(run, status = 'complete', options = {}) {
-  const workerSessionId = run.workerSessionId || 'session-test-worker'
+  const executorSessionId = run.executorSessionId || 'session-test-executor'
   const heading = value => (options.omitHeading === value ? null : '## ' + value)
   const iteration = options.iteration === undefined ? '无' : options.iteration
   const lines = [
@@ -13,7 +13,7 @@ export function reflectionReportMarkdown(run, status = 'complete', options = {})
     'trigger: ' + run.trigger,
     'runId: ' + run.runId,
     'attempt: ' + run.attempt,
-    'workerSessionId: ' + workerSessionId,
+    'executorSessionId: ' + executorSessionId,
     'status: ' + status,
     'sessionsReviewed: 1',
     'sessionsSkipped: 0',

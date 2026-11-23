@@ -6,7 +6,7 @@ function open(store, overrides = {}) {
   return store.addTicket({
     goal: 'finish the report',
     acceptance: 'tests pass',
-    executor: 'session-worker',
+    executor: 'session-executor',
     ...overrides,
   })
 }
@@ -57,7 +57,7 @@ function finish(store, ticketId, summary = 'done') {
     assert.equal(typeof closed.closedAt, 'number')
     assert.equal(kept.status, 'open')
     assert.equal(kept.goal, targetGoal)
-    assert.equal(kept.executor, 'session-worker')
+    assert.equal(kept.executor, 'session-executor')
     const entry = kept.history.find(item => item.kind === 'merge')
     assert.equal(entry.from, source.ticketId)
     assert.equal(entry.to, target.ticketId)
@@ -188,8 +188,8 @@ function finish(store, ticketId, summary = 'done') {
     const store = fixture.service.store
     const source = open(store)
     const target = open(store)
-    const moved = store.addDelivery({ targetSessionId: 'session-worker', requestId: 'req_keep', ticketId: source.ticketId, content: [{ type: 'text', text: 'hi' }] })
-    const other = store.addDelivery({ targetSessionId: 'session-worker', requestId: 'req_other', ticketId: target.ticketId, content: [{ type: 'text', text: 'other' }] })
+    const moved = store.addDelivery({ targetSessionId: 'session-executor', requestId: 'req_keep', ticketId: source.ticketId, content: [{ type: 'text', text: 'hi' }] })
+    const other = store.addDelivery({ targetSessionId: 'session-executor', requestId: 'req_other', ticketId: target.ticketId, content: [{ type: 'text', text: 'other' }] })
     const result = store.mergeTicket(source.ticketId, target.ticketId)
     assert.equal(result.ok, true)
     assert.equal(result.movedDeliveries, 1)
@@ -208,9 +208,9 @@ function finish(store, ticketId, summary = 'done') {
     const store = fixture.service.store
     const source = open(store)
     const target = open(store)
-    source.attempts.push({ at: 1, executor: 'session-worker', outcome: 'failed', reason: 'first try' })
-    source.attempts.push({ at: 2, executor: 'session-worker', outcome: 'blocked', reason: 'waiting' })
-    target.attempts.push({ at: 3, executor: 'session-worker', outcome: 'completed', reason: 'target history' })
+    source.attempts.push({ at: 1, executor: 'session-executor', outcome: 'failed', reason: 'first try' })
+    source.attempts.push({ at: 2, executor: 'session-executor', outcome: 'blocked', reason: 'waiting' })
+    target.attempts.push({ at: 3, executor: 'session-executor', outcome: 'completed', reason: 'target history' })
     const sourceAttempts = JSON.parse(JSON.stringify(source.attempts))
     const targetCount = target.attempts.length
     const result = store.mergeTicket(source.ticketId, target.ticketId)
@@ -219,7 +219,7 @@ function finish(store, ticketId, summary = 'done') {
     const kept = store.ticket(target.ticketId)
     assert.equal(kept.attempts.length, targetCount + 1)
     assert.equal(kept.attempts.at(-1).reason, 'merged from ' + source.ticketId)
-    assert.equal(kept.attempts.at(-1).executor, 'session-worker')
+    assert.equal(kept.attempts.at(-1).executor, 'session-executor')
     assert.equal(kept.attempts.at(-1).outcome, 'completed')
   } finally {
     fixture.cleanup()

@@ -49,7 +49,7 @@ export async function createFixture(options = {}) {
   const summaries = []
   const modelCalls = { listProviders: 0, listModels: 0 }
   const titles = new Map([
-    ['session-worker', 'Worker One'],
+    ['session-executor', 'Executor One'],
     ['session-no-image', 'Text Only'],
   ])
   const routes = []
@@ -70,7 +70,7 @@ export async function createFixture(options = {}) {
   let cancelFailure = options.cancelFailure
   const models = new Map()
   models.set(riaId, { provider: 'provider-ok', model: 'model-vision' })
-  models.set('session-worker', { provider: 'provider-ok', model: 'model-vision' })
+  models.set('session-executor', { provider: 'provider-ok', model: 'model-vision' })
   models.set('session-no-image', { provider: 'provider-text', model: 'model-text-only' })
   for (const item of options.extraSessions || []) {
     if (item.agentAvailable === false) continue
@@ -80,7 +80,7 @@ export async function createFixture(options = {}) {
 
   const restrictions = new Map()
   // Delegation tools are host-global and mounted by the profile preset; tests
-  // that exercise the Worker deny-list inject the ones their profile exposes.
+  // that exercise the Executor deny-list inject the ones their profile exposes.
   const globalTools = ['bash', 'read', 'write', 'edit', 'run_code', ...(options.extraGlobalTools || [])]
   const toolsApi = (id, tools) => ({
     register(definition) {
@@ -116,7 +116,7 @@ export async function createFixture(options = {}) {
       const visible = new Map()
       // Model dsh-tools: an unscoped view is deployment-global and excludes
       // this agent's scoped registrations. Only a view for this agent includes
-      // them, which is what the Advisor/Worker restriction code must request.
+      // them, which is what the Advisor/Executor restriction code must request.
       const ownScope = scope !== undefined && String(scope.id) === String(id)
       for (const name of globalTools) {
         if (filter && Array.isArray(filter.allow) && !filter.allow.includes(name)) continue
@@ -440,7 +440,7 @@ export async function createFixture(options = {}) {
         return {
           items: [
             withModel({ sessionId: riaId, running: false, blank: false, updatedAt: 1, cwd: stateDir }),
-            withModel({ sessionId: 'session-worker', running: true, blank: false, updatedAt: 2, cwd: stateDir, projections: { values: { title: 'Worker One' } } }),
+            withModel({ sessionId: 'session-executor', running: true, blank: false, updatedAt: 2, cwd: stateDir, projections: { values: { title: 'Executor One' } } }),
             withModel({ sessionId: 'session-no-image', running: false, blank: false, updatedAt: 3, cwd: stateDir, projections: { values: { title: 'Text Only' } } }),
             { sessionId: 'session-subagent', running: false, blank: false, updatedAt: 4, cwd: stateDir, origin: 'subagent' },
             ...(options.extraSessions || []).map(withModel),
@@ -627,7 +627,7 @@ export async function createFixture(options = {}) {
   const service = apply(ctx, { stateDir })
   await service.ensure()
   // Production Advisor planning is stateless (lib/core/controller.mjs). Most
-  // suites here test Router/Worker mechanics and need a planned ticket whose
+  // suites here test Router/Executor mechanics and need a planned ticket whose
   // WorkOrder they control, plus an advisor-shaped session for the
   // ria_ticket_plan/ria_ticket_dispatch tool surface. This scaffolding keeps that
   // surface in the fixture only; suites that exercise stateless planning pass

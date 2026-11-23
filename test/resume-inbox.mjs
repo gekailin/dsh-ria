@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { createFixture } from './support/ria-fixture.mjs'
 
-// Model host queue semantics explicitly: queue prompts sent to a running Worker
+// Model host queue semantics explicitly: queue prompts sent to a running Executor
 // are next-turn items, NOT inputs to its current step. Production resume must
 // avoid that path and remain in the same durable inbox used by steer.
 let scenarios = 0
@@ -12,15 +12,15 @@ const run = async (name, body) => {
   const controller = fixture.service.controller
   const chat = controller.state.chatSessionId
   const host = { running: false, nextTurn: [], inputs: [], attempts: [] }
-  const worker = (await controller.ensureWorker('global')).sessionId
-  controller.state.addWorker(worker, { status: 'idle', currentTicketId: null })
-  const ticket = fixture.service.store.addTicket({ status: 'working', executor: worker, goal: name })
+  const executor = (await controller.ensureExecutor('global')).sessionId
+  controller.state.addExecutor(executor, { status: 'idle', currentTicketId: null })
+  const ticket = fixture.service.store.addTicket({ status: 'working', executor: executor, goal: name })
   const ticketId = ticket.ticketId
-  controller.state.setTicketMeta(ticketId, { phase: 'working', executorId: worker })
+  controller.state.setTicketMeta(ticketId, { phase: 'working', executorId: executor })
   controller.state.setWorkOrder(ticketId, { ticketId, summary: 'mock inbox delivery', steps: ['consume messages'], acceptance: 'inbox empty' })
   const originalPrompt = fixture.ctx.sessionController.prompt.bind(fixture.ctx.sessionController)
   fixture.ctx.sessionController.prompt = async (request, signal) => {
-    if (request.sessionId === worker) {
+    if (request.sessionId === executor) {
       host.attempts.push(request)
       const target = host.running ? host.nextTurn : host.inputs
       target.push(request)
@@ -29,23 +29,23 @@ const run = async (name, body) => {
   }
   const running = value => {
     host.running = value
-    fixture.setRunning(worker, value)
-    if (value) controller.turnStartedAt.set(worker, Date.now())
-    else controller.turnStartedAt.delete(worker)
+    fixture.setRunning(executor, value)
+    if (value) controller.turnStartedAt.set(executor, Date.now())
+    else controller.turnStartedAt.delete(executor)
   }
   const park = () => {
     const moved = fixture.service.store.transitionTicket(ticketId, 'blocked', {
-      actor: 'worker', executor: worker, waitingOn: 'user', blockedReason: 'mock decision', reason: 'test park',
+      actor: 'executor', executor: executor, waitingOn: 'user', blockedReason: 'mock decision', reason: 'test park',
     })
     assert.equal(moved.ok, true)
   }
   const resume = message => fixture.callAs(chat, 'ria_chat_resume', { ticketId, message })
   const steer = message => fixture.callAs(chat, 'ria_chat_steer', { ticketId, message })
-  const step = async () => fixture.emit('agent/pre-step', { agent: fixture.agentFor(worker), turn: 1, step: 2 },
+  const step = async () => fixture.emit('agent/pre-step', { agent: fixture.agentFor(executor), turn: 1, step: 2 },
     async () => ({ kind: 'enter', messages: [] }))
   const events = () => fixture.service.routerEvents.query({ ticketId }).events
-  const inbox = () => controller.state.pendingInbox(ticketId, worker)
-  const context = { fixture, controller, chat, worker, ticketId, host, running, park, resume, steer, step, events, inbox }
+  const inbox = () => controller.state.pendingInbox(ticketId, executor)
+  const context = { fixture, controller, chat, executor, ticketId, host, running, park, resume, steer, step, events, inbox }
   try {
     await body(context)
     const delivered = events().filter(event => event.event === 'steer.delivered')
@@ -63,19 +63,19 @@ const run = async (name, body) => {
 await run('idle resume is consumed immediately once, with no host next-turn item', async h => {
   h.park()
   h.running(false)
-  h.controller.state.addWorker(h.worker, { status: 'idle', currentTicketId: null })
+  h.controller.state.addExecutor(h.executor, { status: 'idle', currentTicketId: null })
   const result = await h.resume('resume-immediate-token')
   assert.equal(result.ok, true, JSON.stringify(result))
   assert.equal(result.deliveryMode, 'immediate')
   assert.equal(h.host.inputs.length, 1)
   assert.match(h.host.inputs[0].content[0].text, /resume-immediate-token/)
-  assert.match(h.host.inputs[0].content[0].text, /\[Worker brief\]/)
+  assert.match(h.host.inputs[0].content[0].text, /\[Executor brief\]/)
   assert.deepEqual(h.host.nextTurn, [])
   assert.deepEqual(h.inbox(), [])
   assert.ok(h.events().some(event => event.event === 'steer.delivered' && event.payload.deliveryMode === 'immediate' && event.payload.source === 'resume'))
   // A following boundary or done cannot replay the already consumed reply.
   assert.deepEqual((await h.step()).messages, [])
-  const done = await h.fixture.callAs(h.worker, 'ria_worker_report', { ticketId: h.ticketId, status: 'done', summary: 'consumed', evidence: ['mock input'] })
+  const done = await h.fixture.callAs(h.executor, 'ria_worker_report', { ticketId: h.ticketId, status: 'done', summary: 'consumed', evidence: ['mock input'] })
   assert.equal(done.ok, true)
   assert.equal(h.host.inputs.length, 1)
 })
@@ -103,7 +103,7 @@ await run('busy resume and steer share the very next pre-step input', async h =>
   const delivered = h.events().find(event => event.event === 'steer.delivered')
   assert.equal(delivered.payload.deliveryMode, 'pre-step')
   assert.deepEqual(delivered.payload.messages.map(item => item.source), ['resume', 'steer'])
-  assert.ok(delivered.payload.messages.every(item => item.executorId === h.worker && item.ticketId === h.ticketId))
+  assert.ok(delivered.payload.messages.every(item => item.executorId === h.executor && item.ticketId === h.ticketId))
   assert.deepEqual((await h.step()).messages, [])
   assert.equal(h.host.attempts.length, 0)
 })
@@ -113,7 +113,7 @@ await run('done with unconsumed resume prompts one additional turn and consumes 
   h.park()
   assert.equal((await h.resume('resume-done-token')).ok, true)
   assert.equal(h.inbox().length, 1)
-  const done = await h.fixture.callAs(h.worker, 'ria_worker_report', { ticketId: h.ticketId, status: 'done', summary: 'first turn finished', evidence: ['test'] })
+  const done = await h.fixture.callAs(h.executor, 'ria_worker_report', { ticketId: h.ticketId, status: 'done', summary: 'first turn finished', evidence: ['test'] })
   assert.equal(done.ok, true, JSON.stringify(done))
   assert.equal(h.host.nextTurn.length, 1)
   assert.match(h.host.nextTurn[0].content[0].text, /resume-done-token/)
@@ -130,9 +130,9 @@ await run('completed turn without done drains remaining resume as done-retry', a
   h.park()
   assert.equal((await h.resume('resume-turn-end-token')).ok, true)
   h.running(false)
-  h.controller.onSessionEvent({ header: { id: h.worker } }, { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } })
+  h.controller.onSessionEvent({ header: { id: h.executor } }, { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } })
   // Await the actual shared delivery rather than a real timeout/polling loop.
-  const pendingDelivery = h.controller.steerDeliveryLocks.get(h.worker)
+  const pendingDelivery = h.controller.steerDeliveryLocks.get(h.executor)
   if (pendingDelivery) await pendingDelivery
   assert.equal(h.host.inputs.length, 1)
   assert.match(h.host.inputs[0].content[0].text, /resume-turn-end-token/)
@@ -148,10 +148,10 @@ await run('done-retry exhaustion blocks and notifies, without losing resume', as
   const attempts = []
   const original = h.fixture.ctx.sessionController.prompt.bind(h.fixture.ctx.sessionController)
   h.fixture.ctx.sessionController.prompt = async (request, signal) => {
-    if (request.sessionId === h.worker) { attempts.push(request); throw new Error('mock worker unavailable') }
+    if (request.sessionId === h.executor) { attempts.push(request); throw new Error('mock executor unavailable') }
     return original(request, signal)
   }
-  const done = await h.fixture.callAs(h.worker, 'ria_worker_report', { ticketId: h.ticketId, status: 'done', summary: 'finish', evidence: ['test'] })
+  const done = await h.fixture.callAs(h.executor, 'ria_worker_report', { ticketId: h.ticketId, status: 'done', summary: 'finish', evidence: ['test'] })
   assert.equal(done.ok, false)
   assert.equal(done.code, 'steer_undelivered')
   assert.equal(attempts.length, 2, 'reuse STEER_MAX_DELIVERY_ATTEMPTS=2')
@@ -167,11 +167,11 @@ await run('done-retry exhaustion blocks and notifies, without losing resume', as
 await run('idle resume exhaustion uses the same blocked/undelivered mechanism', async h => {
   h.park()
   h.running(false)
-  h.controller.state.addWorker(h.worker, { status: 'idle', currentTicketId: null })
+  h.controller.state.addExecutor(h.executor, { status: 'idle', currentTicketId: null })
   const original = h.fixture.ctx.sessionController.prompt.bind(h.fixture.ctx.sessionController)
   let attempts = 0
   h.fixture.ctx.sessionController.prompt = async (request, signal) => {
-    if (request.sessionId === h.worker) { attempts++; throw new Error('mock idle unavailable') }
+    if (request.sessionId === h.executor) { attempts++; throw new Error('mock idle unavailable') }
     return original(request, signal)
   }
   const resumed = await h.resume('idle-failure-token')
@@ -192,7 +192,7 @@ await run('in-flight immediate admission is not injected again at pre-step', asy
   const gate = new Promise(resolve => { release = resolve })
   const admitting = new Promise(resolve => { entered = resolve })
   h.fixture.ctx.sessionController.prompt = async (request, signal) => {
-    if (request.sessionId === h.worker) {
+    if (request.sessionId === h.executor) {
       entered()
       await gate
     }
@@ -213,7 +213,7 @@ await run('pre-step consuming during asynchronous idle probe is not replayed', a
   const original = h.fixture.ctx.sessionController.state.bind(h.fixture.ctx.sessionController)
   let injected = false
   h.fixture.ctx.sessionController.state = async (request, signal) => {
-    if (request.sessionId === h.worker && !injected && h.inbox().length) {
+    if (request.sessionId === h.executor && !injected && h.inbox().length) {
       injected = true
       const decision = await h.step()
       assert.match(decision.messages[0].content[0].text, /probe-race-token/)
@@ -232,7 +232,7 @@ await run('cancellation while a delivery fails stops retry and keeps it discarde
   const original = h.fixture.ctx.sessionController.prompt.bind(h.fixture.ctx.sessionController)
   let attempts = 0
   h.fixture.ctx.sessionController.prompt = async (request, signal) => {
-    if (request.sessionId === h.worker) {
+    if (request.sessionId === h.executor) {
       attempts++
       const stopped = await h.fixture.callAs(h.chat, 'ria_chat_stop_ticket', { ticketId: h.ticketId, reason: 'cancel pending delivery' })
       assert.equal(stopped.ok, true)
@@ -257,7 +257,7 @@ for (const mode of deliveryModes) {
       const decision = await h.step()
       assert.match(decision.messages[0].content[0].text, /steer-pre-step-token/)
     } else if (mode === 'done-retry') {
-      const done = await h.fixture.callAs(h.worker, 'ria_worker_report', { ticketId: h.ticketId, status: 'done', summary: 'done', evidence: ['test'] })
+      const done = await h.fixture.callAs(h.executor, 'ria_worker_report', { ticketId: h.ticketId, status: 'done', summary: 'done', evidence: ['test'] })
       assert.equal(done.ok, true)
     }
     assert.deepEqual(h.inbox(), [])
@@ -266,4 +266,4 @@ for (const mode of deliveryModes) {
 }
 
 assert.deepEqual([...observedModes].sort(), deliveryModes.slice().sort(), 'all three automatic paths are exercised')
-console.log(JSON.stringify({ resumeSteerScenarios: scenarios, deliveryModes, realWorkers: 0, realRequests: 0, mockOnly: true }))
+console.log(JSON.stringify({ resumeSteerScenarios: scenarios, deliveryModes, realExecutors: 0, realRequests: 0, mockOnly: true }))

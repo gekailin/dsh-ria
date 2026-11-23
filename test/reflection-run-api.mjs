@@ -55,11 +55,11 @@ try {
   assert.equal(second.runId, 'ticket_reflect_1')
   assert.equal(creates, 1, 'duplicate forDate must not create another ticket')
 
-  nextStatus = { ok: false, code: 'advisor_unavailable', message: 'no reflection worker' }
+  nextStatus = { ok: false, code: 'advisor_unavailable', message: 'no reflection executor' }
   const failed = await service.startReflectionRun({ forDate: '2026-11-21' })
   assert.equal(failed.ok, false)
   assert.equal(failed.code, 'advisor_unavailable')
-  assert.match(failed.message, /no reflection worker/)
+  assert.match(failed.message, /no reflection executor/)
 
   tickets[0].status = 'done'
   assert.equal(service.reflectionStatusSummary().activeRunId, null, 'terminal ticket is not an active run')

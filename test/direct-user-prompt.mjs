@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { createFixture } from './support/ria-fixture.mjs'
 
-const FIXED_REPLY = '请通过 Ria 下达任务。Advisor/Worker 只接受 Ria 派发的工单，直接对话不会被处理。'
+const FIXED_REPLY = '请通过 Ria 下达任务。Advisor/Executor 只接受 Ria 派发的工单，直接对话不会被处理。'
 const SAGE_REPLY = '请通过 Ria 与 Sage 交互。Sage 只接受 Ria/Sage 内部提案，直接对话不会被处理。'
 const message = (rpcId, text = 'run this direct command', kind = 'user') => ({
   id: 'msg_' + rpcId,
@@ -22,8 +22,8 @@ try {
   const controller = fixture.service.controller
   const chat = fixture.service.controller.state.chatSessionId
   const advisor = await fixture.advisorSession()
-  const worker = (await controller.ensureWorker('global')).sessionId
-  const reflection = (await controller.ensureReflectionWorker('global')).sessionId
+  const executor = (await controller.ensureExecutor('global')).sessionId
+  const reflection = (await controller.ensureReflectionExecutor('global')).sessionId
   const sage = (await controller.ensureSage()).sessionId
   const agentOf = id => fixture.agentFor(id)
   const preStep = (id, messages) => controller.onPreStep(
@@ -43,9 +43,9 @@ try {
 
   assert.equal(fixture.service.store.settings().blockDirectUserMessages, true)
 
-  // Advisor and managed Worker (including reflection) are Ria-only.
+  // Advisor and managed Executor (including reflection) are Ria-only.
   await assertBlocked(advisor)
-  await assertBlocked(worker)
+  await assertBlocked(executor)
   await assertBlocked(reflection)
   await assertBlocked(sage, SAGE_REPLY)
 
@@ -61,7 +61,7 @@ try {
   // A host_ prompt passes through unchanged.
   {
     const input = [message('host_startup', 'continue the ticket')]
-    const result = await preStep(worker, input)
+    const result = await preStep(executor, input)
     assert.equal(result.messages, input)
   }
 
@@ -69,12 +69,12 @@ try {
   {
     const ticket = fixture.service.store.addTicket({
       status: 'blocked',
-      executor: worker,
+      executor: executor,
       waitingOn: 'user',
       blockedReason: 'need a clarification',
     })
     const input = [direct('user-waiting')]
-    const result = await preStep(worker, input)
+    const result = await preStep(executor, input)
     assert.equal(result.messages, input)
     assert.equal(fixture.service.store.ticket(ticket.ticketId).status, 'blocked')
     assert.equal(fixture.service.store.ticket(ticket.ticketId).waitingOn, 'user')
@@ -98,7 +98,7 @@ try {
   fixture.service.store.setSettings({ blockDirectUserMessages: false })
   {
     const input = [direct('user-switch-off')]
-    assert.equal((await preStep(worker, input)).messages, input)
+    assert.equal((await preStep(executor, input)).messages, input)
     assert.equal((await preStep(sage, input)).messages, input)
   }
   fixture.service.store.setSettings({ blockDirectUserMessages: true })
@@ -114,9 +114,9 @@ try {
   // Non-user source and non-host user source pass through.
   {
     const replyInput = [message('reply-1', 'answer', 'user-question-reply')]
-    assert.equal((await preStep(worker, replyInput)).messages, replyInput)
+    assert.equal((await preStep(executor, replyInput)).messages, replyInput)
     const systemInput = [message('sys-1', 'system note', 'system')]
-    assert.equal((await preStep(worker, systemInput)).messages, systemInput)
+    assert.equal((await preStep(executor, systemInput)).messages, systemInput)
   }
 
   await settle()

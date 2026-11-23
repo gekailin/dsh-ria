@@ -56,7 +56,7 @@ try {
   assert.equal(service.boardStreams.size, 1)
 
   const beforeCreate = opened.text().length
-  const created = store.addTicket({ goal: 'auto refresh on create', executor: 'session-worker' })
+  const created = store.addTicket({ goal: 'auto refresh on create', executor: 'session-executor' })
   assert.ok(created && created.ticketId)
   const createEvent = opened.text().slice(beforeCreate)
   assert.match(createEvent, /event: board\ndata: /)
@@ -66,7 +66,7 @@ try {
   assert.equal(typeof createBody.at, 'number')
 
   const beforeTransition = opened.text().length
-  const transition = store.transitionTicket(created.ticketId, 'working', { executor: 'session-worker' })
+  const transition = store.transitionTicket(created.ticketId, 'working', { executor: 'session-executor' })
   assert.equal(transition.ok, true)
   const transitionEvent = opened.text().slice(beforeTransition)
   assert.match(transitionEvent, /event: board\ndata: /)
@@ -79,7 +79,7 @@ try {
   opened.res.emit('close')
   assert.equal(service.boardStreams.size, 0)
   assert.equal(opened.res.writableEnded, true)
-  const closedTicket = store.addTicket({ goal: 'no stream after close', executor: 'session-worker' })
+  const closedTicket = store.addTicket({ goal: 'no stream after close', executor: 'session-executor' })
   assert.equal(opened.text().length, sizeBeforeClose)
   assert.equal(service.boardStreams.size, 0)
   assert.ok(closedTicket.ticketId)
@@ -95,7 +95,7 @@ try {
   const two = openStream()
   assert.equal(service.boardStreams.size, 2)
   const revisionBefore = service.boardRevision
-  store.addTicket({ goal: 'fan out one revision', executor: 'session-worker' })
+  store.addTicket({ goal: 'fan out one revision', executor: 'session-executor' })
   for (const stream of [one, two]) {
     assert.match(stream.text(), /event: board\ndata: /)
     const body = JSON.parse(stream.text().match(/event: board\ndata: (.*)\n\n/)[1])

@@ -53,10 +53,10 @@ try {
   const made = await fixture.callAs(chat, 'ria_chat_request', { goal: 'review the retrospective tools' })
   assert.equal(made.ok, true)
   const advisor = fixture.service.controller.advisor('global').sessionId
-  // Create both Worker kinds before the read-only baseline: session creation
+  // Create both Executor kinds before the read-only baseline: session creation
   // renames the session, which is test setup rather than a write by the tools.
-  const worker = await fixture.service.controller.ensureWorker('global')
-  const reflection = await fixture.service.controller.ensureReflectionWorker('global')
+  const executor = await fixture.service.controller.ensureExecutor('global')
+  const reflection = await fixture.service.controller.ensureReflectionExecutor('global')
   // Count every write path the two read-only tools could reach; section 8
   // checks that none of these moved.
   const writeBaseline = {
@@ -65,7 +65,7 @@ try {
     updates: fixture.updateQueueCalls.length,
     renames: fixture.renames.length,
   }
-  // The retrospective tools moved off the Advisor onto the reflection Worker.
+  // The retrospective tools moved off the Advisor onto the reflection Executor.
   assert.deepEqual(fixture.visibleTools(advisor).sort(), [
     'glob', 'grep', 'read', 'ria_ticket_block', 'ria_ticket_dispatch', 'ria_ticket_plan', 'ria_ticket_read',
   ])
@@ -234,23 +234,23 @@ try {
     () => fixture.callAs(chat, 'ria_session_events', { sessionId: 'session-retro-alpha' }),
     /tool not installed for .*: ria_session_events/,
   )
-  assert.equal(fixture.visibleTools(worker.sessionId).includes('ria_session_list'), false)
+  assert.equal(fixture.visibleTools(executor.sessionId).includes('ria_session_list'), false)
   await assert.rejects(
-    () => fixture.callAs(worker.sessionId, 'ria_session_list', {}),
+    () => fixture.callAs(executor.sessionId, 'ria_session_list', {}),
     /tool not installed for .*: ria_session_list/,
   )
   const forbiddenList = await fixture.service.controller.sessionList({}, { agent: { id: chat } })
   assert.equal(forbiddenList.code, 'forbidden')
   const forbiddenEvents = await fixture.service.controller.sessionEvents({ sessionId: 'session-retro-alpha' }, { agent: { id: chat } })
   assert.equal(forbiddenEvents.code, 'forbidden')
-  // The Advisor and work Workers are refused even when calling the implementation.
-  for (const sessionId of [advisor, worker.sessionId]) {
+  // The Advisor and work Executors are refused even when calling the implementation.
+  for (const sessionId of [advisor, executor.sessionId]) {
     const refused = await fixture.service.controller.sessionList({}, { agent: { id: sessionId } })
     assert.equal(refused.code, 'forbidden')
   }
 
   // 8. Read-only: no prompt, append, queue update or rename happened after the
-  // baseline. ensureWorker (test setup, not the tools) may still create a
+  // baseline. ensureExecutor (test setup, not the tools) may still create a
   // session, so creates/summaries are not part of this assertion.
   assert.equal(fixture.prompts.length, writeBaseline.prompts)
   assert.equal(fixture.appends.length, writeBaseline.appends)

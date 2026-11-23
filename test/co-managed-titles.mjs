@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
 import { createFixture } from './support/ria-fixture.mjs'
-import { workerDisplayLabel, roleWorkerTitle } from '../lib/core/controller.mjs'
+import { executorDisplayLabel, roleExecutorTitle } from '../lib/core/controller.mjs'
 
 // A co-managed Session belongs to the user: dispatching a ticket must never
-// rename it, and a restart migration must not mint a Worker seq for it.
-// Managed Workers keep the old behaviour: "Ria Worker NN" + a host rename.
+// rename it, and a restart migration must not mint a Executor seq for it.
+// Managed Executors keep the old behaviour: "Ria Executor NN" + a host rename.
 const fixture = await createFixture({
   stateDefault: true,
   extraSessions: [
@@ -34,8 +34,8 @@ try {
     action: 'add', sessionId: 'session-co-title', roleNote: 'BEV 执行器',
   })
   assert.equal(added.ok, true, JSON.stringify(added))
-  assert.equal(added.worker.kind, 'co-managed')
-  assert.equal(added.worker.title, '众源BEV新')
+  assert.equal(added.executor.kind, 'co-managed')
+  assert.equal(added.executor.title, '众源BEV新')
   assert.equal(await titleOf('session-co-title'), '众源BEV新')
 
   // 2) Dispatch through the real Advisor → ticket → dispatch path.
@@ -49,16 +49,16 @@ try {
   assert.equal(planned.ok, true, JSON.stringify(planned))
   const sent = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: made.ticketId })
   assert.equal(sent.ok, true, JSON.stringify(sent))
-  assert.equal(sent.workerSessionId, 'session-co-title')
+  assert.equal(sent.executorSessionId, 'session-co-title')
 
   // Dispatch itself must not rename, and the title must still be the user's.
   assert.equal(renamed.some(item => item.sessionId === 'session-co-title'), false, JSON.stringify(renamed))
   assert.equal(await titleOf('session-co-title'), '众源BEV新')
-  const co = state.worker('session-co-title')
+  const co = state.executor('session-co-title')
   assert.equal(co.kind, 'co-managed')
   assert.equal(co.executorLabel, '众源BEV新')
   assert.equal(co.seq, undefined)
-  assert.equal(workerDisplayLabel(co), '众源BEV新')
+  assert.equal(executorDisplayLabel(co), '众源BEV新')
 
   // 3) Startup migration skips the co-managed Session entirely: no rename, no
   // seq allocation (the old bug assigned a fresh NN on every restart).
@@ -68,24 +68,24 @@ try {
   assert.equal(renamed.some(item => item.sessionId === 'session-co-title'), false, JSON.stringify(renamed))
   assert.equal(renamed.length, renamedBefore)
   assert.equal(await titleOf('session-co-title'), '众源BEV新')
-  assert.equal(state.worker('session-co-title').seq, undefined)
+  assert.equal(state.executor('session-co-title').seq, undefined)
   assert.equal(state.data.meta.executorSeq, seqBefore)
   assert.equal(migrated.renamed.length, 0, JSON.stringify(migrated))
 
-  // 4) A managed Worker keeps the old naming and rename path.
-  const worker1 = await controller.ensureWorker('global')
-  assert.equal(worker1.meta.seq, 1)
-  assert.equal(worker1.meta.executorLabel, 'Ria Worker 1')
-  assert.equal(await titleOf(worker1.sessionId), 'Ria Worker 1')
-  assert.ok(renamed.some(item => item.sessionId === worker1.sessionId && item.title === 'Ria Worker 1'))
-  state.addWorker(worker1.sessionId, { status: 'working', currentTicketId: 'ticket-occupy' })
-  const worker2 = await controller.ensureWorker('global')
-  assert.equal(worker2.meta.seq, 2)
-  assert.equal(worker2.meta.executorLabel, 'Ria Worker 2')
-  assert.equal(await titleOf(worker2.sessionId), 'Ria Worker 2')
-  assert.equal(roleWorkerTitle('work', 2), 'Ria Worker 2')
+  // 4) A managed Executor keeps the old naming and rename path.
+  const executor1 = await controller.ensureExecutor('global')
+  assert.equal(executor1.meta.seq, 1)
+  assert.equal(executor1.meta.executorLabel, 'Ria Executor 1')
+  assert.equal(await titleOf(executor1.sessionId), 'Ria Executor 1')
+  assert.ok(renamed.some(item => item.sessionId === executor1.sessionId && item.title === 'Ria Executor 1'))
+  state.addExecutor(executor1.sessionId, { status: 'working', currentTicketId: 'ticket-occupy' })
+  const executor2 = await controller.ensureExecutor('global')
+  assert.equal(executor2.meta.seq, 2)
+  assert.equal(executor2.meta.executorLabel, 'Ria Executor 2')
+  assert.equal(await titleOf(executor2.sessionId), 'Ria Executor 2')
+  assert.equal(roleExecutorTitle('work', 2), 'Ria Executor 2')
 
-  // 5) The worker-config listing shows executorLabel, not a host-renamed title.
+  // 5) The executor-config listing shows executorLabel, not a host-renamed title.
   const config = await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'get' })
   const row = config.executors.find(item => item.sessionId === 'session-co-title')
   assert.equal(row.title, '众源BEV新')
@@ -93,8 +93,8 @@ try {
 
   // 6) Legacy records without executorLabel still get a usable display name.
   delete state.data.executors['session-co-title'].executorLabel
-  assert.equal(workerDisplayLabel(state.worker('session-co-title')), '众源BEV新')
-  assert.equal(workerDisplayLabel({ sessionId: 'legacy', executorType: 'work', seq: 9 }), 'Ria Worker 9')
+  assert.equal(executorDisplayLabel(state.executor('session-co-title')), '众源BEV新')
+  assert.equal(executorDisplayLabel({ sessionId: 'legacy', executorType: 'work', seq: 9 }), 'Ria Executor 9')
 
   console.log('co-managed titles ok')
 } finally {

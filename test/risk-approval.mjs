@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createFixture } from './support/ria-fixture.mjs'
-import { advisorPrompt, chatPrompt, workerPrompt } from '../lib/core/prompts.mjs'
+import { advisorPrompt, chatPrompt, executorPrompt } from '../lib/core/prompts.mjs'
 import {
   DEFAULT_ESCALATION_POLICY,
   ESCALATION_POLICIES,
@@ -171,17 +171,17 @@ try {
   const dispatch = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: request.ticketId })
   assert.equal(dispatch.ok, true)
   const ticketId = request.ticketId
-  const worker = dispatch.workerSessionId
-  const workerCwd = fixture.service.controller.state.worker(worker).cwd
+  const executor = dispatch.executorSessionId
+  const executorCwd = fixture.service.controller.state.executor(executor).cwd
   const setTicketPolicy = policy => fixture.service.controller.state.setTicketMeta(ticketId, { escalationPolicy: policy })
   const cache = (callId, toolName, args) => fixture.emit(
     'tools/pre-execute',
-    { agent: { id: worker }, name: toolName, callId, arguments: args },
+    { agent: { id: executor }, name: toolName, callId, arguments: args },
     async () => ({ kind: 'enter' }),
   )
   const approval = (callId, toolName, next) => fixture.emit(
     'approval/request',
-    { agent: { id: worker }, toolName, callId, reason: 'risk probe', signal: new AbortController().signal },
+    { agent: { id: executor }, toolName, callId, reason: 'risk probe', signal: new AbortController().signal },
     next,
   )
   let askedCalls = 0
@@ -198,9 +198,9 @@ try {
   assert.equal(lowAudit.policySource, 'default')
   assert.ok(lowAudit.reasons.some(reason => reason.includes('read-only-git')))
   assert.equal(lowAudit.ticketId, ticketId)
-  assert.equal(lowAudit.sessionId, worker)
+  assert.equal(lowAudit.sessionId, executor)
 
-  await cache('c-medium', 'write', { file_path: workerCwd + '/lib/probe.mjs' })
+  await cache('c-medium', 'write', { file_path: executorCwd + '/lib/probe.mjs' })
   assert.equal(await approval('c-medium', 'write', next), 'rejected')
   assert.equal(askedCalls, 1)
   assert.equal(riskAudits().find(item => item.callId === 'c-medium').level, 'medium')
@@ -215,7 +215,7 @@ try {
 
   // global auto-low-medium: medium now auto-allows; high and unknown still ask.
   fixture.service.store.setSettings({ escalationPolicy: 'auto-low-medium' })
-  await cache('c-medium-global', 'write', { file_path: workerCwd + '/lib/probe2.mjs' })
+  await cache('c-medium-global', 'write', { file_path: executorCwd + '/lib/probe2.mjs' })
   assert.equal(await approval('c-medium-global', 'write', next), 'allowed-once')
   const globalAudit = riskAudits().find(item => item.callId === 'c-medium-global')
   assert.equal(globalAudit.policy, 'auto-low-medium')
@@ -236,7 +236,7 @@ try {
   // ticket auto-low-medium beats global strict: medium auto-allows.
   fixture.service.store.setSettings({ escalationPolicy: 'strict' })
   setTicketPolicy('auto-low-medium')
-  await cache('c-medium-ticket', 'write', { file_path: workerCwd + '/lib/probe3.mjs' })
+  await cache('c-medium-ticket', 'write', { file_path: executorCwd + '/lib/probe3.mjs' })
   assert.equal(await approval('c-medium-ticket', 'write', next), 'allowed-once')
   const ticketAudit = riskAudits().find(item => item.callId === 'c-medium-ticket')
   assert.equal(ticketAudit.policySource, 'ticket')
@@ -247,7 +247,7 @@ try {
   setTicketPolicy('auto-low-medium')
   await cache('c-state-high', 'write', { file_path: '/etc/hosts' })
   fixture.service.onSessionEvent(
-    { header: { id: worker } },
+    { header: { id: executor } },
     { type: 'approval/asked', time: Date.now(), data: { id: 'apr_high', toolName: 'write', callId: 'c-state-high', reason: '写工作区外' } },
   )
   assert.equal(fixture.service.store.ticket(ticketId).status, 'blocked')
@@ -267,7 +267,7 @@ try {
 
   // Human allow: blocked -> open -> working, and a human-allow audit line.
   fixture.service.onSessionEvent(
-    { header: { id: worker } },
+    { header: { id: executor } },
     { type: 'approval/decided', time: Date.now(), data: { id: 'apr_high', outcome: 'allowed-once' } },
   )
   assert.equal(fixture.service.store.ticket(ticketId).status, 'working')
@@ -279,11 +279,11 @@ try {
   // Human deny is audited too and leaves the ticket parked.
   await cache('c-state-deny', 'write', { file_path: '/etc/hosts' })
   fixture.service.onSessionEvent(
-    { header: { id: worker } },
+    { header: { id: executor } },
     { type: 'approval/asked', time: Date.now(), data: { id: 'apr_deny', toolName: 'write', callId: 'c-state-deny', reason: '写工作区外' } },
   )
   fixture.service.onSessionEvent(
-    { header: { id: worker } },
+    { header: { id: executor } },
     { type: 'approval/decided', time: Date.now(), data: { id: 'apr_deny', outcome: 'rejected' } },
   )
   assert.equal(fixture.service.store.ticket(ticketId).status, 'blocked')
@@ -298,7 +298,7 @@ try {
   const beforeLowNotice = notices().length
   await cache('c-state-low', 'bash', { command: 'git status' })
   fixture.service.onSessionEvent(
-    { header: { id: worker } },
+    { header: { id: executor } },
     { type: 'approval/asked', time: Date.now(), data: { id: 'apr_low', toolName: 'bash', callId: 'c-state-low', reason: '只读命令' } },
   )
   assert.equal(fixture.service.store.ticket(ticketId).status, 'working')
@@ -320,14 +320,14 @@ try {
   // 3. ria_chat_grant is debug/emergency only and leaves grant_kind in audit.
   const granted = await fixture.callAs(chat, 'ria_chat_grant', {
     action: 'set',
-    sessionId: worker,
+    sessionId: executor,
     sandboxMode: 'read-only',
     reason: 'risk approval debug probe',
     kind: 'emergency',
   })
   assert.equal(granted.ok, true, JSON.stringify(granted))
   assert.equal(granted.grantKind, 'emergency')
-  const grantAudit = auditLines().find(item => item.event === 'grant/set' && item.sessionId === worker)
+  const grantAudit = auditLines().find(item => item.event === 'grant/set' && item.sessionId === executor)
   assert.ok(grantAudit)
   assert.equal(grantAudit.grant_kind, 'emergency')
   await fixture.callAs(chat, 'ria_chat_grant', { action: 'reset', grantId: granted.grant.grantId })
@@ -336,7 +336,7 @@ try {
   assert.match(chatPrompt(), /调试\/应急/)
   assert.match(advisorPrompt(), /escalationPolicy/)
   assert.match(advisorPrompt(), /ria_chat_grant 仅调试\/应急/)
-  assert.match(workerPrompt({}), /提权按风险逐条审批/)
+  assert.match(executorPrompt({}), /提权按风险逐条审批/)
   assert.equal(existsSync('/home/gkl/Desktop/ria-risk-probe.txt'), false)
 
   console.log('state risk approval ok')

@@ -1,16 +1,16 @@
 import assert from 'node:assert/strict'
 import { createFixture } from './support/ria-fixture.mjs'
 
-// Stuck detection must look at the Worker session, not only the ticket record:
-// a Worker that runs many steps without ria_worker_report(progress) keeps the
+// Stuck detection must look at the Executor session, not only the ticket record:
+// a Executor that runs many steps without ria_worker_report(progress) keeps the
 // ticket record frozen while the session is perfectly alive.
 const fixture = await createFixture({ stateDefault: true })
 try {
   await fixture.service.ensure()
   const controller = fixture.service.controller
-  const worker = await controller.ensureWorker('global')
-  const ticket = fixture.service.store.addTicket({ status: 'working', executor: worker.sessionId, goal: 'long multi-step task' })
-  controller.state.setTicketMeta(ticket.ticketId, { phase: 'working', executorId: worker.sessionId })
+  const executor = await controller.ensureExecutor('global')
+  const ticket = fixture.service.store.addTicket({ status: 'working', executor: executor.sessionId, goal: 'long multi-step task' })
+  controller.state.setTicketMeta(ticket.ticketId, { phase: 'working', executorId: executor.sessionId })
   const now = Date.now()
   const stale = now - 60 * 60000
   const stored = fixture.service.store.ticket(ticket.ticketId)
@@ -20,8 +20,8 @@ try {
   const staleAge = () => fixture.service.store.ticket(ticket.ticketId).updatedAt
 
   // (a) Session events are fresh: the ticket is advancing, however old its record.
-  controller.turnStartedAt.set(worker.sessionId, now - 30_000)
-  fixture.service.onSessionEvent({ header: { id: worker.sessionId } }, { type: 'step/start', time: now - 30_000, data: { step: 25 } })
+  controller.turnStartedAt.set(executor.sessionId, now - 30_000)
+  fixture.service.onSessionEvent({ header: { id: executor.sessionId } }, { type: 'step/start', time: now - 30_000, data: { step: 25 } })
   const fresh = controller.ticketHealth(fixture.service.store.ticket(ticket.ticketId), now)
   assert.equal(fresh.activeTurn, true)
   assert.equal(fresh.lastEventAgeMinutes > 50, true, 'ticket record is old')
@@ -31,7 +31,7 @@ try {
 
   // (b) Session silent past 15 min AND ticket record past 10 min: stuck, and the
   // reason names the session with both clocks.
-  controller.sessionLastEventAt.set(worker.sessionId, now - 16 * 60000)
+  controller.sessionLastEventAt.set(executor.sessionId, now - 16 * 60000)
   const silent = controller.ticketHealth(fixture.service.store.ticket(ticket.ticketId), now)
   assert.equal(silent.stuckSuspect, true)
   assert.match(silent.stuckReason, /会话无事件 16 分钟/)
@@ -40,7 +40,7 @@ try {
   assert.match(silent.stuckReason, /\d{4}-\d{2}-\d{2} \d{2}:\d{2}/)
 
   // (c) No session activity known: degraded to the old ticket-record rule.
-  controller.sessionLastEventAt.delete(worker.sessionId)
+  controller.sessionLastEventAt.delete(executor.sessionId)
   const degraded = controller.ticketHealth(fixture.service.store.ticket(ticket.ticketId), now)
   assert.equal(degraded.sessionLastEventAgeMinutes, null)
   assert.equal(degraded.stuckSuspect, true)

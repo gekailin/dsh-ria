@@ -62,8 +62,8 @@ try {
 
   // Role sessions are silent and do not create suppressed events.
   const advisor = await fixture.advisorSession()
-  const worker = (await fixture.service.controller.ensureWorker('global')).sessionId
-  for (const id of [chat, advisor, worker]) {
+  const executor = (await fixture.service.controller.ensureExecutor('global')).sessionId
+  for (const id of [chat, advisor, executor]) {
     const beforeNotice = notices().length
     const beforeEvent = events().length
     await fixture.emit('user-questions/request', question(id, 'role-q'), async () => ({ answers: [] }))

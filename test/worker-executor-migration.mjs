@@ -56,7 +56,7 @@ try {
   const store = new StateStore(dir, { onWarn: message => warnings.push(message) })
   assert.equal(store.data.executors['session-old'].executorType, 'work')
   assert.equal(store.data.executors['session-old'].executorLabel, 'Ria Worker 1')
-  assert.equal(store.worker('session-old').executorType, 'work')
+  assert.equal(store.executor('session-old').executorType, 'work')
   assert.equal(store.data.meta.executorSeq, 2)
   assert.equal(store.ticketMeta('t1').executorId, 'session-old')
   assert.equal(store.ticketMeta('t1').executorSeq, 1)

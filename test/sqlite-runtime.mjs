@@ -26,7 +26,7 @@ const state = join(root, 'state')
 mkdirSync(state, { recursive: true })
 const old = Date.now() - 3 * day
 
-const hot = [ticket('t1'), ticket('t2', { status: 'working', waitingOn: 'worker' })]
+const hot = [ticket('t1'), ticket('t2', { status: 'working', waitingOn: 'executor' })]
 const closed = Array.from({ length: 52 }, (_, index) => ticket('done' + index, { status: 'done', waitingOn: 'none', closedAt: old - index * 1000, updatedAt: old }))
 const archived = ticket('t4', { status: 'done', closedAt: old, resolution: { summary: 'done' } })
 writeFileSync(join(state, 'ria.json'), JSON.stringify({ schemaVersion: 5, version: 5, tickets: [...hot, ...closed], settings: { progressCards: false } }))
@@ -76,7 +76,7 @@ try {
   const jsonBefore = readFileSync(join(state, 'ria.json'), 'utf8')
   const revisionBefore = store.ticket('t1').revision
   const historyBefore = store.ticket('t1').history.length
-  repository.runSync('note', () => store.noteTicket('t1', { actor: 'worker', reason: 'first' }))
+  repository.runSync('note', () => store.noteTicket('t1', { actor: 'executor', reason: 'first' }))
   assert.equal(store.ticket('t1').revision, revisionBefore + 1)
   assert.equal(withReader(adapter => adapter.get('t1').revision), revisionBefore + 1, 'committed row is in the DB')
   assert.equal(readFileSync(join(state, 'ria.json'), 'utf8'), jsonBefore, 'JSON is not written during the transaction')
@@ -89,7 +89,7 @@ try {
   const start = store.ticket('t2').revision
   const startHistory = store.ticket('t2').history.length
   for (let index = 0; index < 50; index += 1) {
-    repository.runSync('serial-' + index, () => store.noteTicket('t2', { actor: 'worker', reason: 'serial-' + index }))
+    repository.runSync('serial-' + index, () => store.noteTicket('t2', { actor: 'executor', reason: 'serial-' + index }))
   }
   assert.equal(store.ticket('t2').revision, start + 50)
   assert.equal(store.ticket('t2').history.length, startHistory + 50)
@@ -101,7 +101,7 @@ try {
   const concurrentStart = store.ticket('t1').revision
   const concurrentHistory = store.ticket('t1').history.length
   await Promise.all(Array.from({ length: 50 }, (_, index) =>
-    repository.run('concurrent-' + index, () => store.noteTicket('t1', { actor: 'worker', reason: 'concurrent-' + index }))))
+    repository.run('concurrent-' + index, () => store.noteTicket('t1', { actor: 'executor', reason: 'concurrent-' + index }))))
   assert.equal(store.ticket('t1').revision, concurrentStart + 50, 'revision = 初值 + 50')
   assert.equal(store.ticket('t1').history.length, concurrentHistory + 50, 'history 50 条')
   runtime.flush()
@@ -111,7 +111,7 @@ try {
   // A failed job rolls the DB transaction back.
   const beforeFailure = withReader(adapter => adapter.get('t1').revision)
   await assert.rejects(repository.run('rollback', () => {
-    store.noteTicket('t1', { actor: 'worker', reason: 'will roll back' })
+    store.noteTicket('t1', { actor: 'executor', reason: 'will roll back' })
     throw new Error('probe rollback')
   }), /probe rollback/)
   assert.equal(withReader(adapter => adapter.get('t1').revision), beforeFailure, 'transaction rolled back')

@@ -24,7 +24,7 @@ const root = mkdtempSync(join(tmpdir(), 'ria-sqlite-verify-'))
 try {
   const dir = join(root, 'state')
   mkdirSync(dir, { recursive: true })
-  const hot = [ticket('t1'), ticket('t2', { status: 'working', waitingOn: 'worker' })]
+  const hot = [ticket('t1'), ticket('t2', { status: 'working', waitingOn: 'executor' })]
   const archived = ticket('t3', { status: 'done', closedAt: 200, resolution: { summary: 'done' } })
   writeFileSync(join(dir, 'ria.json'), JSON.stringify({ schemaVersion: 5, tickets: hot, settings: { keep: true } }))
   writeFileSync(join(dir, 'state.json'), JSON.stringify({ tickets: { t1: { ticketId: 't1', phase: 'advisor' } } }))

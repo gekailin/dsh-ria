@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { createFixture } from './support/ria-fixture.mjs'
 import { projectKey } from '../lib/roles/cognition.mjs'
 
-// /board groups by projectKey and exposes Worker identity tags.
+// /board groups by projectKey and exposes Executor identity tags.
 const workspace = '/tmp/ria-board-project-key-test'
 const fixture = await createFixture({
   stateDefault: true,
@@ -15,11 +15,11 @@ const fixture = await createFixture({
 try {
   const controller = fixture.service.controller
   const store = controller.state
-  store.addWorker('session-board-a', {
+  store.addExecutor('session-board-a', {
     kind: 'managed', executorType: 'work', cwd: workspace, status: 'idle',
     tags: ['frontend', 'board'], roleNote: '看板 UI', dedicated: true,
   })
-  store.addWorker('session-board-b', { kind: 'managed', executorType: 'work', cwd: workspace, status: 'idle' })
+  store.addExecutor('session-board-b', { kind: 'managed', executorType: 'work', cwd: workspace, status: 'idle' })
   const first = fixture.service.store.addTicket({ status: 'open', waitingOn: 'ria', executor: 'session-board-a', goal: 'board a work', acceptance: 'x' })
   const second = fixture.service.store.addTicket({ status: 'open', waitingOn: 'ria', executor: 'session-board-b', goal: 'board b work', acceptance: 'x' })
   controller.state.setTicketMeta(first.ticketId, { projectCwd: workspace })
@@ -45,7 +45,7 @@ try {
   assert.equal(indexed.projectKey, expectedKey)
   assert.deepEqual(indexed.executorTags, ['frontend', 'board'])
 
-  // UI hooks: a projectKey badge and a worker tags row in the ticket dialog.
+  // UI hooks: a projectKey badge and a executor tags row in the ticket dialog.
   const client = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
   assert.ok(client.includes('data-ria-project-key'))
   assert.ok(client.includes('executorTags'))

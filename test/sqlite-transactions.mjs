@@ -20,7 +20,7 @@ const input = (id, patch = {}) => normalizeTicket({ ticketId: id, status: 'open'
 transaction(seed, () => {
   adapter.save(input('t1', { readyAt: 123 }))
   adapter.save(input('t2'))
-  adapter.save(input('work', { status: 'working', waitingOn: 'worker', executor: 'worker', attempt: { legacy: false, count: 1, lastRequestId: 'request', startedAt: old } }))
+  adapter.save(input('work', { status: 'working', waitingOn: 'executor', executor: 'executor', attempt: { legacy: false, count: 1, lastRequestId: 'request', startedAt: old } }))
   adapter.save(input('archive', { status: 'done', closedAt: old }), { archivedAt: old })
   for (let i = 0; i < 52; i++) adapter.save(input('closed' + i, { status: 'done', closedAt: old - i }))
 })
@@ -88,7 +88,7 @@ try {
   // COMMIT failure is different from an adapter failure: no live publication.
   const exec = runtime.db.exec.bind(runtime.db)
   runtime.db.exec = sql => { if (sql === 'COMMIT') throw new Error('injected commit failure'); return exec(sql) }
-  assert.throws(() => store.transitionTicket('t1', 'working', { executor: 'worker', attempt: { legacy: true } }), /commit failure/)
+  assert.throws(() => store.transitionTicket('t1', 'working', { executor: 'executor', attempt: { legacy: true } }), /commit failure/)
   runtime.db.exec = exec
   assert.deepEqual(store.data, before)
   assert.deepEqual(external.get('t1'), liveTicket)
@@ -151,7 +151,7 @@ try {
   assert.equal(store.ticket('t2').recovery.count, 1)
   assert.equal(external.get('t2').recovery.count, 1)
   const working = store.transitionTicket('t2', 'working', {
-    executor: 'worker', attempt: { legacy: true }, recovery: { count: 0 },
+    executor: 'executor', attempt: { legacy: true }, recovery: { count: 0 },
   })
   assert.equal(working.ok, true)
   assert.equal(working.ticket.recovery.count, 0)

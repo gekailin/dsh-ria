@@ -39,7 +39,7 @@ assert.match(sageBrief, /快脑负责响应与编排，慢脑负责沉淀与裁�
 const legacy = normalizeTicket({
   ticketId: 'ticket_legacy_roles',
   status: 'cancelled',
-  executor: 'session-worker',
+  executor: 'session-executor',
   waitingOn: 'user',
   goal: 'historical ticket',
   createdAt: 1,

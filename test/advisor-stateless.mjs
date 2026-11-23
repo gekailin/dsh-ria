@@ -67,7 +67,7 @@ try {
   assert.ok(callsAfterTwo >= beforeCalls + 2)
   const again = await controller.createAdvisorForTicket(fixture.service.store.ticket(a.ticketId), controller.state.ticketMeta(a.ticketId), null)
   assert.equal(fixture.llmCalls.length, callsAfterTwo)
-  assert.ok(again.code === 'worker_busy' || again.code === 'ticket_not_open' || again.ok === true, JSON.stringify(again))
+  assert.ok(again.code === 'executor_busy' || again.code === 'ticket_not_open' || again.ok === true, JSON.stringify(again))
 
   // Degraded: retrieval failure is explicit in the event.
   const originalRetrieve = controller.cognition.retrieve.bind(controller.cognition)

@@ -18,9 +18,9 @@ try {
 
   // ---- blocked(waitingOn=user) notifies once, with dedupe + event -------------
   const longGoal = 'g'.repeat(200)
-  const ticket = store.addTicket({ status: 'open', waitingOn: 'ria', executor: 'session-worker-x', goal: longGoal, acceptance: 'x' })
+  const ticket = store.addTicket({ status: 'open', waitingOn: 'ria', executor: 'session-executor-x', goal: longGoal, acceptance: 'x' })
   const first = store.transitionTicket(ticket.ticketId, 'blocked', {
-    actor: 'router', executor: 'session-worker-x', waitingOn: 'user',
+    actor: 'router', executor: 'session-executor-x', waitingOn: 'user',
     blockedReason: '需要你选择 A/B', attention: { kind: 'question', question: '选 A 还是 B？' }, reason: 'test block',
   })
   assert.equal(first.ok, true)
@@ -47,7 +47,7 @@ try {
   const reopened = store.transitionTicket(ticket.ticketId, 'open', { actor: 'user', waitingOn: 'ria', reason: 'answered' })
   assert.equal(reopened.ok, true)
   const second = store.transitionTicket(ticket.ticketId, 'blocked', {
-    actor: 'router', executor: 'session-worker-x', waitingOn: 'user',
+    actor: 'router', executor: 'session-executor-x', waitingOn: 'user',
     blockedReason: '第二个问题', attention: { kind: 'question', question: '继续吗？' }, reason: 'second block',
   })
   assert.equal(second.ok, true)
@@ -56,10 +56,10 @@ try {
   assert.ok(notices[1].includes('继续吗？'))
 
   // Delivery failure keeps the same tick; retry re-renders and delivers once.
-  const failing = store.addTicket({ status: 'open', waitingOn: 'ria', executor: 'session-worker-y', goal: 'notify failure', acceptance: 'x' })
+  const failing = store.addTicket({ status: 'open', waitingOn: 'ria', executor: 'session-executor-y', goal: 'notify failure', acceptance: 'x' })
   controller.notifyChat = async () => false
   const failedBlock = store.transitionTicket(failing.ticketId, 'blocked', {
-    actor: 'router', executor: 'session-worker-y', waitingOn: 'user', blockedReason: '等确认',
+    actor: 'router', executor: 'session-executor-y', waitingOn: 'user', blockedReason: '等确认',
     attention: { kind: 'decision', question: '确认？' }, reason: 'notify failure',
   })
   assert.equal(failedBlock.ok, true)
@@ -75,14 +75,14 @@ try {
   controller.notifyChat = async () => true // keep unrelated transitions quiet
   const nowMs = Date.now()
   const make = (status, ageMinutes, extra = {}) => {
-    const item = store.addTicket({ status, waitingOn: status === 'blocked' ? 'user' : (status === 'working' ? 'worker' : 'ria'), executor: 'session-ghost', goal: 'status ' + status + ' ' + ageMinutes, acceptance: 'x', ...extra })
+    const item = store.addTicket({ status, waitingOn: status === 'blocked' ? 'user' : (status === 'working' ? 'executor' : 'ria'), executor: 'session-ghost', goal: 'status ' + status + ' ' + ageMinutes, acceptance: 'x', ...extra })
     item.updatedAt = nowMs - ageMinutes * 60000
     return item
   }
   const zombie = make('open', 121)
   const ghostWorking = make('working', 90)
   const healthy = make('working', 120)
-  controller.state.addWorker('session-live', { kind: 'managed', status: 'working', currentTicketId: healthy.ticketId, executorType: 'work' })
+  controller.state.addExecutor('session-live', { kind: 'managed', status: 'working', currentTicketId: healthy.ticketId, executorType: 'work' })
   healthy.executor = 'session-live'
   controller.state.setTicketMeta(healthy.ticketId, { phase: 'working', executorId: 'session-live' })
   const exactly60 = make('open', 60)
@@ -94,7 +94,7 @@ try {
   for (const item of [zombie, ghostWorking, healthy, exactly60, fresh]) assert.ok(ids.has(item.ticketId), 'listed ' + item.ticketId)
   const ghostView = list.tickets.find(item => item.ticketId === ghostWorking.ticketId)
   assert.equal(ghostView.phase, null)
-  assert.equal(ghostView.hasActiveWorker, false)
+  assert.equal(ghostView.hasActiveExecutor, false)
   assert.equal(ghostView.ageMinutes, 90)
   assert.equal(ghostView.stale, true)
   assert.equal(ghostView.zombieSuspect, true)
@@ -102,8 +102,8 @@ try {
   assert.equal(zombieView.zombieSuspect, true)
   assert.equal(zombieView.ageMinutes, 121)
   const healthyView = list.tickets.find(item => item.ticketId === healthy.ticketId)
-  assert.equal(healthyView.hasActiveWorker, true)
-  assert.equal(healthyView.stale, true, 'worker has no open turn')
+  assert.equal(healthyView.hasActiveExecutor, true)
+  assert.equal(healthyView.stale, true, 'executor has no open turn')
   assert.equal(healthyView.zombieSuspect, false)
   const boundary = list.tickets.find(item => item.ticketId === exactly60.ticketId)
   assert.equal(boundary.ageMinutes, 60)

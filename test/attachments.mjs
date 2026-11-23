@@ -50,10 +50,10 @@ try {
   assert.deepEqual(event.payload.attachments.sha256, [sha1])
   const workOrder = controller.state.workOrder(first.ticketId)
   assert.equal(workOrder.attachments[0].path, meta.attachments[0].path)
-  const workerPrompt = fixture.prompts.find(item => item.sessionId === fixture.service.store.ticket(first.ticketId).executor)
-  assert.ok(workerPrompt && String(workerPrompt.content[0].text).includes(meta.attachments[0].path))
-  assert.ok(String(workerPrompt.content[0].text).includes('需要时用 read 工具查看'))
-  assert.equal(/base64/i.test(String(workerPrompt.content[0].text)), false)
+  const executorPrompt = fixture.prompts.find(item => item.sessionId === fixture.service.store.ticket(first.ticketId).executor)
+  assert.ok(executorPrompt && String(executorPrompt.content[0].text).includes(meta.attachments[0].path))
+  assert.ok(String(executorPrompt.content[0].text).includes('需要时用 read 工具查看'))
+  assert.equal(/base64/i.test(String(executorPrompt.content[0].text)), false)
 
   // Current message has no image: fallback one previous user message.
   sendUser([{ type: 'text', text: 'no image now' }])
@@ -84,9 +84,9 @@ try {
   const large = await request()
   const largeAttachment = controller.state.ticketMeta(large.ticketId).attachments[0]
   assert.equal(largeAttachment.oversized, true)
-  const largeWorker = fixture.prompts.find(item => item.sessionId === fixture.service.store.ticket(large.ticketId).executor)
-  assert.ok(String(largeWorker.content[0].text).includes('[oversized]'))
-  assert.ok(String(largeWorker.content[0].text).includes('不建议读入'))
+  const largeExecutor = fixture.prompts.find(item => item.sessionId === fixture.service.store.ticket(large.ticketId).executor)
+  assert.ok(String(largeExecutor.content[0].text).includes('[oversized]'))
+  assert.ok(String(largeExecutor.content[0].text).includes('不建议读入'))
 
   // attachImages=false: no meta attachment and event count 0.
   sendUser([imageRef(shas[0])])

@@ -12,11 +12,11 @@ try {
   controller.notifyChat = async message => { notices.push(message); return true }
 
   const makeTicket = () => store.addTicket({
-    status: 'open', waitingOn: 'ria', executor: 'session-worker-x',
+    status: 'open', waitingOn: 'ria', executor: 'session-executor-x',
     goal: 'notice edge test', acceptance: 'x',
   })
   const block = ticket => store.transitionTicket(ticket.ticketId, 'blocked', {
-    actor: 'router', executor: 'session-worker-x', waitingOn: 'user',
+    actor: 'router', executor: 'session-executor-x', waitingOn: 'user',
     blockedReason: '问题', attention: { kind: 'question', question: '确认？' }, reason: 'test block',
   })
 
@@ -58,12 +58,12 @@ try {
 
   // 4) Approval pending check: asked edge delivers once; resolved drops later ticks.
   const approvalTicket = store.addTicket({
-    status: 'blocked', waitingOn: 'approval', executor: 'session-worker-x',
+    status: 'blocked', waitingOn: 'approval', executor: 'session-executor-x',
     goal: 'approval notice', acceptance: 'x', blockedReason: '等待审批',
     attention: { kind: 'approval', question: '等待审批', ref: 'approval-test' },
   })
   controller.pendingApprovals.set('approval-test', {
-    ticketId: approvalTicket.ticketId, sessionId: 'session-worker-x', toolName: 'bash',
+    ticketId: approvalTicket.ticketId, sessionId: 'session-executor-x', toolName: 'bash',
     reason: 'test approval', riskLabel: { text: 'risk:high' }, policy: 'auto-low', askedAt: Date.now(),
   })
   controller.emitTicketNotice(approvalTicket, 'approval.asked', { approvalId: 'approval-test' })
@@ -77,7 +77,7 @@ try {
   assert.ok(approvalDropped)
   assert.equal(approvalDropped.payload.edge, 'approval.asked')
 
-  // 5) workerReport(blocked) itself does not add a second notice.
+  // 5) executorReport(blocked) itself does not add a second notice.
   const reportFixture = await createFixture({ stateDefault: true })
   try {
     const c = reportFixture.service.controller
@@ -90,12 +90,12 @@ try {
     assert.equal(dispatched.ok, true, JSON.stringify(dispatched))
     const reportNotices = []
     c.notifyChat = async message => { reportNotices.push(message); return true }
-    const report = await reportFixture.callAs(dispatched.workerSessionId, 'ria_worker_report', {
+    const report = await reportFixture.callAs(dispatched.executorSessionId, 'ria_worker_report', {
       ticketId: request.ticketId, status: 'blocked', summary: 'need answer',
     })
     assert.equal(report.ok, true, JSON.stringify(report))
     await flush()
-    assert.equal(reportNotices.length, 1, 'workerReport blocked adds no extra notice')
+    assert.equal(reportNotices.length, 1, 'executorReport blocked adds no extra notice')
     assert.equal(s.ticket(request.ticketId).status, 'blocked')
   } finally { reportFixture.cleanup() }
 

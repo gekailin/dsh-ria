@@ -37,7 +37,7 @@ const ADVISOR_TOOLS = [
   'glob', 'grep', 'read', 
   'ria_ticket_block', 'ria_ticket_dispatch', 'ria_ticket_plan', 'ria_ticket_read',
 ]
-const WORKER_DENY = ['subagent', 'subagent_fork', 'list_agents', 'send_message', 'interrupt_agent']
+const EXECUTOR_DENY = ['subagent', 'subagent_fork', 'list_agents', 'send_message', 'interrupt_agent']
 
 const fixture = await createFixture({ stateDefault: true, extraGlobalTools: MOUNTED_GLOBALS })
 try {
@@ -80,26 +80,26 @@ try {
   assert.deepEqual(chatBefore, CHAT_TOOLS)
   assert.deepEqual(advisorBefore, ADVISOR_TOOLS)
 
-  // 4. Worker baseline: untouched by this ticket. The Worker is created only
+  // 4. Executor baseline: untouched by this ticket. The Executor is created only
   //    after Sage is installed, so its surface also proves install() for Sage
   //    did not alter the shared tool registry.
   const planned = await fixture.callAs(advisor, 'ria_ticket_plan', { ticketId: created.ticketId, summary: 'do the work', steps: ['x'] })
   assert.equal(planned.ok, true, JSON.stringify(planned))
   const dispatched = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: created.ticketId })
   assert.equal(dispatched.ok, true, JSON.stringify(dispatched))
-  const worker = dispatched.workerSessionId
-  const workerTools = fixture.visibleTools(worker).sort()
-  assert.deepEqual(workerTools, [
+  const executor = dispatched.executorSessionId
+  const executorTools = fixture.visibleTools(executor).sort()
+  assert.deepEqual(executorTools, [
     'bash', 'edit', 'glob', 'grep', 'read', 'read_image', 'run_code',
     'task', 'web_fetch', 'web_search', 'plugin_manager', 'present',
     'schedule_create', 'skill', 'todo_write', 'workflow', 'working_directory',
     'create_goal', 'get_goal', 'update_goal', 'ask_user_question', 'job_list',
     'list_subagent_models', 'exit_plan_mode', 'ria_worker_report', 'write',
   ].sort())
-  for (const name of WORKER_DENY) {
-    assert.equal(workerTools.includes(name), false, name + ' must stay denied to Workers')
+  for (const name of EXECUTOR_DENY) {
+    assert.equal(executorTools.includes(name), false, name + ' must stay denied to Executors')
   }
-  assert.deepEqual(fixture.restrictions.get(worker), { deny: WORKER_DENY })
+  assert.deepEqual(fixture.restrictions.get(executor), { deny: EXECUTOR_DENY })
 
   // 5. Fail-closed: a missing or failing restrict() must abort Sage instead of
   //    silently leaving it unrestricted.

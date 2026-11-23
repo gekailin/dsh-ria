@@ -34,16 +34,16 @@ const promptTextOf = (fixture, sessionId) => {
     const started = await fixture.service.startReflectionRun({ forDate: '2026-11-23' })
     assert.equal(started.ok, true, JSON.stringify(started))
     const dispatched = await planAndDispatch(fixture, controller, started.runId)
-    const worker = dispatched.workerSessionId
+    const executor = dispatched.executorSessionId
 
-    const text = promptTextOf(fixture, worker)
+    const text = promptTextOf(fixture, executor)
     assert.match(text, /Sage 质量检查/, 'instruction must demand the Sage audit section')
     assert.match(text, /ria_reflect_read_sage_context/, 'instruction must name the sage context tool')
     assert.match(text, new RegExp('ticketId: ' + started.runId))
     assert.match(text, /forDate: 2026-11-23/)
     assert.match(text, /工单绑定/)
 
-    const visible = fixture.visibleTools(worker)
+    const visible = fixture.visibleTools(executor)
     for (const name of REFLECTION_TOOLS) assert.ok(visible.includes(name), 'missing bound tool ' + name)
     assert.ok(visible.includes('ria_reflect_read_sage_context'))
     assert.equal(REFLECTION_TOOLS.length, 8)
@@ -56,7 +56,7 @@ const promptTextOf = (fixture, sessionId) => {
     assert.ok(run, 'bound run.json must be persisted')
     assert.equal(run.runId, started.runId)
     assert.equal(run.forDate, '2026-11-23')
-    assert.equal(run.workerSessionId, worker)
+    assert.equal(run.executorSessionId, executor)
     assert.equal(run.trigger, 'manual')
 
     const state = readReflectionState(fixture.stateDir)
@@ -80,12 +80,12 @@ const promptTextOf = (fixture, sessionId) => {
     )
     assert.equal(request.ok, true, JSON.stringify(request))
     const dispatched = await planAndDispatch(fixture, controller, request.ticketId)
-    const worker = dispatched.workerSessionId
+    const executor = dispatched.executorSessionId
     const forDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(new Date())
-    const text = promptTextOf(fixture, worker)
+    const text = promptTextOf(fixture, executor)
     assert.match(text, new RegExp('forDate: ' + forDate))
     assert.match(text, /Sage 质量检查/)
-    const visible = fixture.visibleTools(worker)
+    const visible = fixture.visibleTools(executor)
     assert.ok(visible.includes('ria_reflect_read_sage_context'))
     const meta = controller.state.ticketMeta(request.ticketId)
     assert.equal(meta.reflectionForDate, forDate)
@@ -101,7 +101,7 @@ const promptTextOf = (fixture, sessionId) => {
     const controller = fixture.service.controller
     const started = await fixture.service.startReflectionRun({ forDate: '2026-11-23' })
     const dispatched = await planAndDispatch(fixture, controller, started.runId)
-    const worker = dispatched.workerSessionId
+    const executor = dispatched.executorSessionId
     const canonical = join(fixture.stateDir, 'reflections', '2026-11-23.md')
     const before = existsSync(canonical) ? readFileSync(canonical) : null
 
@@ -118,11 +118,11 @@ const promptTextOf = (fixture, sessionId) => {
     assert.equal(existsSync(canonical) ? readFileSync(canonical, 'utf8') : null, before ? before.toString('utf8') : null)
     const run = readReflectionRun(fixture.stateDir, started.runId)
     assert.equal(run.status, 'cancelled')
-    assert.equal(fixture.service.reflectionBindings.has(worker), false, 'bindings must be dropped on terminal')
+    assert.equal(fixture.service.reflectionBindings.has(executor), false, 'bindings must be dropped on terminal')
   } finally { fixture.cleanup() }
 }
 
-// 4) done: the worker draft becomes the canonical report and the skip marker is
+// 4) done: the executor draft becomes the canonical report and the skip marker is
 //    cleared, so the same accounting path covers every terminal state.
 {
   const fixture = await createFixture({ stateDefault: true })
@@ -130,7 +130,7 @@ const promptTextOf = (fixture, sessionId) => {
     const controller = fixture.service.controller
     const started = await fixture.service.startReflectionRun({ forDate: '2026-11-23' })
     const dispatched = await planAndDispatch(fixture, controller, started.runId)
-    const worker = dispatched.workerSessionId
+    const executor = dispatched.executorSessionId
     const run = readReflectionRun(fixture.stateDir, started.runId)
     const markdown = [
       '---',
@@ -143,7 +143,7 @@ const promptTextOf = (fixture, sessionId) => {
       'trigger: ' + run.trigger,
       'runId: ' + started.runId,
       'attempt: 1',
-      'workerSessionId: ' + worker,
+      'executorSessionId: ' + executor,
       'status: complete',
       'sessionsReviewed: 1',
       'sessionsSkipped: 0',
@@ -177,9 +177,9 @@ const promptTextOf = (fixture, sessionId) => {
       '- cognition/chat/preferences.md §锚点 2026-11-23',
       '- cognition/chat/decisions.md §锚点 2026-11-23',
     ].join('\n')
-    const reported = await fixture.callAs(worker, 'ria_reflect_report', { markdown, status: 'complete', counts: {} })
+    const reported = await fixture.callAs(executor, 'ria_reflect_report', { markdown, status: 'complete', counts: {} })
     assert.equal(reported.ok, true, JSON.stringify(reported))
-    const done = await fixture.callAs(worker, 'ria_worker_report', {
+    const done = await fixture.callAs(executor, 'ria_worker_report', {
       ticketId: started.runId, status: 'done', summary: markdown, evidence: ['draft written'],
     })
     assert.equal(done.ok, true, JSON.stringify(done))

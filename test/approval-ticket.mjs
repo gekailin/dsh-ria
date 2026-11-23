@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createFixture } from './support/ria-fixture.mjs'
 
-// A Worker that stops for an approval must show up as blocked(waitingOn=approval)
+// A Executor that stops for an approval must show up as blocked(waitingOn=approval)
 // on its ticket and get a Chat notice. Valid completed work supersedes old
 // approvals instead of being reported as an approval timeout.
 
@@ -20,8 +20,8 @@ const settle = () => new Promise(resolve => setTimeout(resolve, 20))
 const chat = fixture.service.controller.state.chatSessionId
 const notices = () => fixture.prompts.filter(item => String(item.sessionId) === String(chat))
 const textOf = prompt => String(prompt && prompt.content && prompt.content[0] ? prompt.content[0].text : '')
-const asked = (worker, data) => fixture.service.onSessionEvent({ header: { id: worker } }, { type: 'approval/asked', time: Date.now(), data })
-const decided = (worker, data) => fixture.service.onSessionEvent({ header: { id: worker } }, { type: 'approval/decided', time: Date.now(), data })
+const asked = (executor, data) => fixture.service.onSessionEvent({ header: { id: executor } }, { type: 'approval/asked', time: Date.now(), data })
+const decided = (executor, data) => fixture.service.onSessionEvent({ header: { id: executor } }, { type: 'approval/decided', time: Date.now(), data })
 const ticketOf = ticketId => fixture.service.store.ticket(ticketId)
 
 try {
@@ -32,29 +32,29 @@ try {
   const dispatch = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: request.ticketId })
   assert.equal(dispatch.ok, true)
   const ticketId = request.ticketId
-  const worker = dispatch.workerSessionId
+  const executor = dispatch.executorSessionId
   assert.equal(ticketOf(ticketId).status, 'working')
-  assert.equal(String(ticketOf(ticketId).executor), String(worker))
+  assert.equal(String(ticketOf(ticketId).executor), String(executor))
 
   // Risk policy replaces the old tool whitelist. The default is auto-low: a
   // cached read-only command is auto-allowed, unknown arguments still ask.
   {
     const cache = (callId, args) => fixture.emit(
       'tools/pre-execute',
-      { agent: { id: worker }, name: 'bash', callId, arguments: args },
+      { agent: { id: executor }, name: 'bash', callId, arguments: args },
       async () => ({ kind: 'enter' }),
     )
     const calls = []
     const next = async () => { calls.push('next'); return 'rejected' }
     await cache('call-low', { command: 'git status' })
-    const allowed = await fixture.emit('approval/request', { agent: { id: worker }, toolName: 'bash', callId: 'call-low', reason: 'why', signal: new AbortController().signal }, next)
+    const allowed = await fixture.emit('approval/request', { agent: { id: executor }, toolName: 'bash', callId: 'call-low', reason: 'why', signal: new AbortController().signal }, next)
     assert.equal(allowed, 'allowed-once')
     assert.deepEqual(calls, [])
     // The matching asked event must not park the ticket this plugin approved.
-    asked(worker, { id: 'apr_auto', toolName: 'bash', callId: 'call-low', reason: 'why' })
+    asked(executor, { id: 'apr_auto', toolName: 'bash', callId: 'call-low', reason: 'why' })
     assert.equal(ticketOf(ticketId).status, 'working')
     // An unknown tool/arguments still goes to the answerer.
-    const other = await fixture.emit('approval/request', { agent: { id: worker }, toolName: 'write', callId: 'call-w', reason: 'why', signal: new AbortController().signal }, next)
+    const other = await fixture.emit('approval/request', { agent: { id: executor }, toolName: 'write', callId: 'call-w', reason: 'why', signal: new AbortController().signal }, next)
     assert.equal(other, 'rejected')
     assert.deepEqual(calls, ['next'])
     // An independent session is never auto-approved.
@@ -65,7 +65,7 @@ try {
 
   // asked -> blocked(waitingOn=approval) with the tool, the reason and the time.
   const before = notices().length
-  asked(worker, { id: 'apr_1', toolName: 'bash', callId: 'call-1', reason: '受控实验：写工作区外探针' })
+  asked(executor, { id: 'apr_1', toolName: 'bash', callId: 'call-1', reason: '受控实验：写工作区外探针' })
   {
     const ticket = ticketOf(ticketId)
     assert.equal(ticket.status, 'blocked')
@@ -89,11 +89,11 @@ try {
   // allowed -> blocked has no direct edge to working; ask -> open -> working.
   {
     const before = notices().length
-    decided(worker, { id: 'apr_1', outcome: 'allowed-once' })
+    decided(executor, { id: 'apr_1', outcome: 'allowed-once' })
     const ticket = ticketOf(ticketId)
     assert.equal(ticket.status, 'working')
-    assert.equal(ticket.waitingOn, 'worker')
-    assert.equal(String(ticket.executor), String(worker))
+    assert.equal(ticket.waitingOn, 'executor')
+    assert.equal(String(ticket.executor), String(executor))
     assert.equal(ticket.blockedReason, '')
     assert.equal(ticket.attention, null)
     await settle()
@@ -103,8 +103,8 @@ try {
   }
 
   // rejected -> stays blocked with a durable failure code.
-  asked(worker, { id: 'apr_2', toolName: 'bash', callId: 'call-2', reason: '第二次' })
-  decided(worker, { id: 'apr_2', outcome: 'rejected' })
+  asked(executor, { id: 'apr_2', toolName: 'bash', callId: 'call-2', reason: '第二次' })
+  decided(executor, { id: 'apr_2', outcome: 'rejected' })
   {
     const ticket = ticketOf(ticketId)
     assert.equal(ticket.status, 'blocked')
@@ -122,8 +122,8 @@ try {
     assert.equal(resume.ok, true, JSON.stringify(resume))
     assert.equal(ticketOf(ticketId).status, 'working')
   }
-  asked(worker, { id: 'apr_3', toolName: 'bash', callId: 'call-3', reason: '第三次' })
-  decided(worker, { id: 'apr_3', outcome: 'cancelled' })
+  asked(executor, { id: 'apr_3', toolName: 'bash', callId: 'call-3', reason: '第三次' })
+  decided(executor, { id: 'apr_3', outcome: 'cancelled' })
   {
     const ticket = ticketOf(ticketId)
     assert.equal(ticket.status, 'blocked')
@@ -142,14 +142,14 @@ try {
   }
 
   // No decided at all: valid completed work supersedes the obsolete approval.
-  asked(worker, { id: 'apr_4', toolName: 'bash', callId: 'call-4', reason: '无决定' })
+  asked(executor, { id: 'apr_4', toolName: 'bash', callId: 'call-4', reason: '无决定' })
   assert.equal(ticketOf(ticketId).status, 'blocked')
   assert.equal(ticketOf(ticketId).waitingOn, 'approval')
   {
-    const progress = await fixture.callAs(worker, 'ria_worker_report', { ticketId, status: 'progress', summary: 'still waiting' })
+    const progress = await fixture.callAs(executor, 'ria_worker_report', { ticketId, status: 'progress', summary: 'still waiting' })
     assert.equal(progress.ok, true)
     assert.equal(progress.status, 'blocked')
-    const done = await fixture.callAs(worker, 'ria_worker_report', { ticketId, status: 'done', summary: 'finished', evidence: ['command exit 0'] })
+    const done = await fixture.callAs(executor, 'ria_worker_report', { ticketId, status: 'done', summary: 'finished', evidence: ['command exit 0'] })
     assert.equal(done.ok, true, JSON.stringify(done))
     assert.equal(done.status, 'done')
     const ticket = ticketOf(ticketId)
@@ -157,7 +157,7 @@ try {
     assert.equal(ticket.waitingOn, 'none')
     assert.equal(ticket.failure, null)
     assert.equal(fixture.service.controller.pendingApprovals.has('apr_4'), false)
-    decided(worker, { id: 'apr_4', outcome: 'cancelled' })
+    decided(executor, { id: 'apr_4', outcome: 'cancelled' })
     assert.equal(ticket.status, 'done')
     assert.equal(ticket.failure, null)
     await settle()

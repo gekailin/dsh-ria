@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { createFixture } from './support/ria-fixture.mjs'
 import { STUCK_LAST_EVENT_MINUTES, computeTicketHealth } from '../lib/core/ticket-health.mjs'
 
-// A Worker turn can end abnormally (LLM idle timeout -> reason.kind=error, a
+// A Executor turn can end abnormally (LLM idle timeout -> reason.kind=error, a
 // user/parent abort -> reason.kind=aborted). Before this fix `turn/end` only
 // looked at the ticket binding, so the ticket stayed working forever with no
 // blocked state, no event and no notification. These tests pin the four
@@ -20,7 +20,7 @@ async function setup() {
   return { fixture, chat }
 }
 
-// Dispatch through the real path so attempt/worker bindings are production-shaped.
+// Dispatch through the real path so attempt/executor bindings are production-shaped.
 async function dispatch(fixture, chat, goal) {
   const made = await fixture.callAs(chat, 'ria_chat_request', { goal })
   assert.equal(made.ok, true, JSON.stringify(made))
@@ -33,7 +33,7 @@ async function dispatch(fixture, chat, goal) {
   assert.equal(plan.ok, true, JSON.stringify(plan))
   const sent = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: made.ticketId })
   assert.equal(sent.ok, true, JSON.stringify(sent))
-  return { ticketId: made.ticketId, executorId: sent.workerSessionId }
+  return { ticketId: made.ticketId, executorId: sent.executorSessionId }
 }
 
 const turnStart = (fixture, executorId, turn) => fixture.service.onSessionEvent(
@@ -47,7 +47,7 @@ const turnEnd = (fixture, executorId, turn, reason) => fixture.service.onSession
 const noticesAbout = (fixture, chat, ticketId) => fixture.prompts
   .filter(prompt => String(prompt.sessionId) === chat && promptText(prompt).includes(ticketId))
 
-// 1. reason.kind=error -> blocked(environment), turn_failed, worker released,
+// 1. reason.kind=error -> blocked(environment), turn_failed, executor released,
 //    turn.failed event, exactly one Chat notice.
 {
   const { fixture, chat } = await setup()
@@ -70,10 +70,10 @@ const noticesAbout = (fixture, chat, ticketId) => fixture.prompts
     assert.match(ticket.blockedReason, /200000ms/)
     assert.equal(fixture.service.controller.state.ticketMeta(ticketId).phase, 'blocked')
 
-    const worker = fixture.service.controller.state.worker(executorId)
-    assert.equal(worker.status, 'idle')
-    assert.equal(worker.currentTicketId, null)
-    assert.equal(fixture.service.controller.workerTicketId(worker), null, 'a released worker owns no ticket')
+    const executor = fixture.service.controller.state.executor(executorId)
+    assert.equal(executor.status, 'idle')
+    assert.equal(executor.currentTicketId, null)
+    assert.equal(fixture.service.controller.executorTicketId(executor), null, 'a released executor owns no ticket')
     assert.equal(fixture.service.controller.turnStartedAt.has(executorId), false, 'the turn marker is closed')
 
     const failed = fixture.service.routerEvents.query({ ticketId }).events.find(item => item.event === 'turn.failed')
@@ -115,8 +115,8 @@ const noticesAbout = (fixture, chat, ticketId) => fixture.prompts
     assert.equal(ticket.waitingOn, 'environment')
     assert.equal(ticket.failure.code, 'turn_aborted')
     assert.match(ticket.blockedReason, /aborted\(user\)/)
-    assert.equal(fixture.service.controller.state.worker(executorId).status, 'idle')
-    assert.equal(fixture.service.controller.state.worker(executorId).currentTicketId, null)
+    assert.equal(fixture.service.controller.state.executor(executorId).status, 'idle')
+    assert.equal(fixture.service.controller.state.executor(executorId).currentTicketId, null)
 
     const failed = fixture.service.routerEvents.query({ ticketId }).events.find(item => item.event === 'turn.failed')
     assert.ok(failed)
@@ -151,7 +151,7 @@ const noticesAbout = (fixture, chat, ticketId) => fixture.prompts
 }
 
 // 4. Regression: a completed turn keeps the pre-fix behaviour exactly:
-//    ticket working, worker still bound, no turn.failed, no notification.
+//    ticket working, executor still bound, no turn.failed, no notification.
 {
   const { fixture, chat } = await setup()
   try {
@@ -161,11 +161,11 @@ const noticesAbout = (fixture, chat, ticketId) => fixture.prompts
 
     const ticket = fixture.service.store.ticket(ticketId)
     assert.equal(ticket.status, 'working')
-    assert.equal(ticket.waitingOn, 'worker')
+    assert.equal(ticket.waitingOn, 'executor')
     assert.equal(ticket.failure, null)
-    const worker = fixture.service.controller.state.worker(executorId)
-    assert.equal(worker.status, 'working')
-    assert.equal(worker.currentTicketId, ticketId)
+    const executor = fixture.service.controller.state.executor(executorId)
+    assert.equal(executor.status, 'working')
+    assert.equal(executor.currentTicketId, ticketId)
     assert.equal(fixture.service.controller.turnStartedAt.has(executorId), false, 'the marker always closes')
     const events = fixture.service.routerEvents.query({ ticketId }).events
     assert.equal(events.some(item => item.event === 'turn.failed'), false)
@@ -206,7 +206,7 @@ const noticesAbout = (fixture, chat, ticketId) => fixture.prompts
   assert.equal(computeTicketHealth(ticket, { activeTurn: true, now: at(9) }).stuckSuspect, false)
   assert.equal(computeTicketHealth(ticket, { activeTurn: true, now: at(20), thresholdMinutes: 20 }).stuckSuspect, false)
   assert.equal(computeTicketHealth(ticket, { activeTurn: true, now: at(21), thresholdMinutes: 20 }).stuckSuspect, true)
-  // Primary rule: a fresh Worker session means the ticket is advancing, however
+  // Primary rule: a fresh Executor session means the ticket is advancing, however
   // old the ticket record is. A step-running turn never writes ria_worker_report.
   const sessionFresh = computeTicketHealth(ticket, { activeTurn: true, now: at(60), sessionLastEventAt: at(59) })
   assert.equal(sessionFresh.sessionLastEventAgeMinutes, 1)
@@ -256,35 +256,35 @@ const noticesAbout = (fixture, chat, ticketId) => fixture.prompts
     turnStart(fixture, executorId, 4)
 
     const viewOf = async () => (await fixture.callAs(chat, 'ria_chat_status', { ticketId })).ticket
-    const workerOf = async () => (await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'get' })).executors
+    const executorOf = async () => (await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'get' })).executors
       .find(item => item.sessionId === executorId)
 
     const viewActive = await viewOf()
-    const workerActive = await workerOf()
+    const executorActive = await executorOf()
     assert.equal(viewActive.activeTurn, true)
-    assert.equal(workerActive.activeTurn, true)
+    assert.equal(executorActive.activeTurn, true)
     assert.equal(viewActive.stuckSuspect, false)
-    assert.equal(workerActive.stuckSuspect, false)
-    assert.equal(viewActive.stuckReason, workerActive.stuckReason)
-    assert.ok(Math.abs(viewActive.lastEventAgeMinutes - workerActive.lastEventAgeMinutes) < 0.01)
+    assert.equal(executorActive.stuckSuspect, false)
+    assert.equal(viewActive.stuckReason, executorActive.stuckReason)
+    assert.ok(Math.abs(viewActive.lastEventAgeMinutes - executorActive.lastEventAgeMinutes) < 0.01)
 
     // Close the turn marker without touching the ticket: working + no active
     // turn is the exact silent state the fix targets.
     fixture.service.controller.turnStartedAt.delete(executorId)
     const viewStuck = await viewOf()
-    const workerStuck = await workerOf()
+    const executorStuck = await executorOf()
     assert.equal(viewStuck.status, 'working')
     assert.equal(viewStuck.activeTurn, false)
     assert.equal(viewStuck.stuckSuspect, true)
     assert.match(viewStuck.stuckReason, /没有活跃 turn/)
-    assert.equal(workerStuck.activeTurn, viewStuck.activeTurn)
-    assert.equal(workerStuck.stuckSuspect, viewStuck.stuckSuspect)
-    assert.equal(workerStuck.stuckReason, viewStuck.stuckReason)
-    assert.equal(workerStuck.status, 'working')
-    assert.equal(workerStuck.currentTicketId, ticketId)
-    assert.equal(workerStuck.stateConsistent, true, 'status and currentTicketId stay consistent')
+    assert.equal(executorStuck.activeTurn, viewStuck.activeTurn)
+    assert.equal(executorStuck.stuckSuspect, viewStuck.stuckSuspect)
+    assert.equal(executorStuck.stuckReason, viewStuck.stuckReason)
+    assert.equal(executorStuck.status, 'working')
+    assert.equal(executorStuck.currentTicketId, ticketId)
+    assert.equal(executorStuck.stateConsistent, true, 'status and currentTicketId stay consistent')
 
-    // The ticket record is 11 minutes old but the Worker session just emitted
+    // The ticket record is 11 minutes old but the Executor session just emitted
     // events (turn/start etc.): the ticket is advancing, not stuck.
     fixture.service.controller.turnStartedAt.set(executorId, Date.now())
     const idleSince = Date.now() - 11 * 60000
@@ -294,31 +294,31 @@ const noticesAbout = (fixture, chat, ticketId) => fixture.prompts
     fixture.service.store.save()
     const viewFresh = await viewOf()
     assert.equal(viewFresh.activeTurn, true)
-    assert.equal(viewFresh.stuckSuspect, false, 'a live Worker session is never stuck')
+    assert.equal(viewFresh.stuckSuspect, false, 'a live Executor session is never stuck')
     assert.equal(viewFresh.stuckReason, null)
     // Drop the session signal: the degraded path uses the ticket record alone.
     fixture.service.controller.sessionLastEventAt.delete(executorId)
     const viewOld = await viewOf()
-    const workerOld = await workerOf()
+    const executorOld = await executorOf()
     assert.equal(viewOld.activeTurn, true)
     assert.equal(viewOld.stuckSuspect, true)
     assert.match(viewOld.stuckReason, /工单记录无更新/)
-    assert.equal(workerOld.stuckSuspect, viewOld.stuckSuspect)
+    assert.equal(executorOld.stuckSuspect, viewOld.stuckSuspect)
     // The age text advances between the two reads; the criterion, the verdict
     // and the age itself (within milliseconds) must still agree.
-    assert.match(workerOld.stuckReason, /工单记录无更新/)
-    assert.ok(Math.abs(workerOld.lastEventAgeMinutes - viewOld.lastEventAgeMinutes) < 0.01)
+    assert.match(executorOld.stuckReason, /工单记录无更新/)
+    assert.ok(Math.abs(executorOld.lastEventAgeMinutes - viewOld.lastEventAgeMinutes) < 0.01)
 
     // A blocked ticket is not a stuck suspect even with an old event.
     turnEnd(fixture, executorId, 4, { kind: 'error', error: { message: 'boom' } })
     const viewBlocked = await viewOf()
-    const workerBlocked = await workerOf()
+    const executorBlocked = await executorOf()
     assert.equal(viewBlocked.status, 'blocked')
     assert.equal(viewBlocked.stuckSuspect, false)
-    assert.equal(workerBlocked.stuckSuspect, false)
-    assert.equal(workerBlocked.status, 'idle')
-    assert.equal(workerBlocked.currentTicketId, null)
-    assert.equal(workerBlocked.stateConsistent, true)
+    assert.equal(executorBlocked.stuckSuspect, false)
+    assert.equal(executorBlocked.status, 'idle')
+    assert.equal(executorBlocked.currentTicketId, null)
+    assert.equal(executorBlocked.stateConsistent, true)
   } finally {
     fixture.cleanup()
   }

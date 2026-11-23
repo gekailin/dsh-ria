@@ -3,14 +3,14 @@ import { readFileSync } from 'node:fs'
 import { parseReflectionFrontMatter, validateReflectionReport } from '../lib/reflection.mjs'
 
 // Saved from ~/.dsh/state/ria/reflections/2026-11-14.md. The degraded list is
-// kept in the block form the worker originally wrote; the file on disk was
+// kept in the block form the executor originally wrote; the file on disk was
 // normalized to a flow list only after ria_reflect finish rejected it.
 const markdown = readFileSync(new URL('./fixtures/reflection-report-2026-11-14.md', import.meta.url), 'utf8')
 const run = {
   forDate: '2026-11-14',
   runId: 'refl-20261114-6f25a3',
   trigger: 'manual',
-  workerSessionId: 'session-8c621973-167d-4b18-89df-c9b98f1f258c',
+  executorSessionId: 'session-8c621973-167d-4b18-89df-c9b98f1f258c',
   windowStart: Date.parse('2026-11-13T16:00:00.000Z'),
   windowEnd: Date.parse('2026-11-14T05:45:57.050Z'),
   attempt: 1,

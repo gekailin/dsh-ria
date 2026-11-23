@@ -7,7 +7,7 @@ const run = {
   forDate: '2026-11-14',
   runId: 'refl-20261114-6f25a3',
   trigger: 'manual',
-  workerSessionId: 'session-8c621973-167d-4b18-89df-c9b98f1f258c',
+  executorSessionId: 'session-8c621973-167d-4b18-89df-c9b98f1f258c',
   windowStart: Date.parse('2026-11-13T16:00:00.000Z'),
   windowEnd: Date.parse('2026-11-14T05:45:57.050Z'),
   attempt: 1,
@@ -83,7 +83,7 @@ const realRun = {
   forDate: '2026-11-16',
   runId: 'refl-fixture-20261116-d7c9c2',
   trigger: 'schedule',
-  workerSessionId: 'session-1a71ab03-fbc8-4e2d-8b7e-c4f973ef1104',
+  executorSessionId: 'session-1a71ab03-fbc8-4e2d-8b7e-c4f973ef1104',
   windowStart: Date.parse('2026-11-15T16:00:00.000Z'),
   windowEnd: Date.parse('2026-11-16T15:46:14.327Z'),
   attempt: 2,
@@ -93,7 +93,7 @@ assert.equal(realReport.ok, true, JSON.stringify(realReport))
 
 assert.deepEqual(parseMemoryCandidateTarget(undefined), { target: 'global', kind: 'global', sessionId: null })
 assert.deepEqual(parseMemoryCandidateTarget('global'), { target: 'global', kind: 'global', sessionId: null })
-assert.deepEqual(parseMemoryCandidateTarget('worker:session-abc'), { target: 'worker:session-abc', kind: 'worker', sessionId: 'session-abc' })
+assert.deepEqual(parseMemoryCandidateTarget('executor:session-abc'), { target: 'executor:session-abc', kind: 'executor', sessionId: 'session-abc' })
 const invalid = parseMemoryCandidateTarget('team:ops')
 assert.equal(invalid.target, 'global')
 assert.match(invalid.warning, /invalid target "team:ops"/)
@@ -101,11 +101,11 @@ assert.match(invalid.warning, /invalid target "team:ops"/)
 const candidatesMarkdown = [
   '## memory 候选',
   '- **flow-global** [target: global]：全局规则。',
-  '- **flow-worker** [target: worker:session-abc]：给指定 worker 的规则。',
+  '- **flow-executor** [target: executor:session-abc]：给指定 executor 的规则。',
   '- **legacy**：没有 target 的旧格式。',
   '- **invalid** [target: team:ops]：非法 target 应降级。',
   '- **block**',
-  '  target: worker:session-def',
+  '  target: executor:session-def',
   '  ：块序列写法。',
   '',
 ].join('\n')
@@ -113,13 +113,13 @@ const parsed = parseMemoryCandidates(candidatesMarkdown)
 assert.equal(parsed.candidates.length, 5)
 assert.deepEqual(parsed.candidates.map(item => item.target), [
   'global',
-  'worker:session-abc',
+  'executor:session-abc',
   'global',
   'global',
-  'worker:session-def',
+  'executor:session-def',
 ])
 assert.equal(parsed.candidates[0].rule, '全局规则。')
-assert.equal(parsed.candidates[1].rule, '给指定 worker 的规则。')
+assert.equal(parsed.candidates[1].rule, '给指定 executor 的规则。')
 assert.equal(parsed.candidates[2].rule, '没有 target 的旧格式。')
 assert.equal(parsed.candidates[4].rule, '块序列写法。')
 assert.equal(parsed.warnings.length, 1)
@@ -127,12 +127,12 @@ assert.match(parsed.warnings[0], /memory candidate invalid: invalid target "team
 
 const targeted = validate(withIteration('无\n').replace(
   memoryHeading,
-  memoryHeading + '- **worker-rule** [target: worker:session-abc]：给 worker 的规则。\n- **bad-rule** [target: team:ops]：降级。\n',
+  memoryHeading + '- **executor-rule** [target: executor:session-abc]：给 executor 的规则。\n- **bad-rule** [target: team:ops]：降级。\n',
 ))
 assert.equal(targeted.ok, true, JSON.stringify(targeted))
 assert.equal(targeted.warnings.length, 1)
 assert.match(targeted.warnings[0], /memory candidate bad-rule/)
-assert.equal(targeted.memoryCandidates.find(item => item.key === 'worker-rule').target, 'worker:session-abc')
+assert.equal(targeted.memoryCandidates.find(item => item.key === 'executor-rule').target, 'executor:session-abc')
 assert.equal(targeted.memoryCandidates.find(item => item.key === 'bad-rule').target, 'global')
 
 console.log('reflection report sections ok')

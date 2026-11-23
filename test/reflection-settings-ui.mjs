@@ -42,11 +42,11 @@ assert.equal(reflectionStatusLabel('running'), '运行中')
 assert.equal(reflectionStatusLabel(null), '暂无记录')
 
 assert.equal(reflectionCadenceSummary({ cadence: 'daily', time: '23:40', weekday: 1 }),
-  '每天 23:40 启动一个独立的 worker 做反思。默认关闭。')
+  '每天 23:40 启动一个独立的 executor 做反思。默认关闭。')
 assert.equal(reflectionCadenceSummary({ cadence: 'weekly', time: '09:05', weekday: 3 }),
-  '每周三 09:05 启动一个独立的 worker 做反思。默认关闭。')
+  '每周三 09:05 启动一个独立的 executor 做反思。默认关闭。')
 assert.equal(reflectionCadenceSummary({ cadence: 'daily', time: '23:40', weekday: 7 }),
-  '每天 23:40 启动一个独立的 worker 做反思。默认关闭。')
+  '每天 23:40 启动一个独立的 executor 做反思。默认关闭。')
 
 assert.equal(reflectionAdvancedUpdate(null, ''), null)
 assert.equal(reflectionAdvancedUpdate(null, '   '), null)

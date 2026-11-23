@@ -118,7 +118,7 @@ function setup() {
       store.noteTicket('first', { reason: 'rollback all domains' })
       state.setTicketMeta('first', { projectId: 'not-committed' })
       state.addReport({ reportId: 'report-dirty', ticketId: 'first', summary: 'must roll back' })
-      state.addWorker('worker-dirty')
+      state.addExecutor('executor-dirty')
       throw new Error('compound aborted')
     }), /compound aborted/)
     assert.deepEqual(store.data, beforeTickets)

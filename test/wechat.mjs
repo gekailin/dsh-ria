@@ -97,7 +97,7 @@ try {
     const ctx = fakeCtx()
     ctx.sessionController.prompt = async (_request, signal) => {
       assert.equal(signal instanceof AbortSignal, true)
-      throw new Error('worker unavailable')
+      throw new Error('executor unavailable')
     }
     const service = makeService(ctx, dir)
     service.session = { client: { sentIds: new Set() } }
@@ -181,10 +181,10 @@ try {
     service.session = { client: { sentIds: new Set() } }
     service.outbound = { async enqueue(text) { sent.push(text); return 'id' } }
 
-    assert.equal(await service.sendDispatchNote('已把任务交给 Worker One。', { isTask: true }), true)
-    assert.deepEqual(sent, ['📌 任务已派发：已把任务交给 Worker One。'])
-    assert.equal(await service.sendDispatchNote('转述一句话给 Worker One。', { isTask: false }), true)
-    assert.equal(sent[1], '📌 消息已转交：转述一句话给 Worker One。')
+    assert.equal(await service.sendDispatchNote('已把任务交给 Executor One。', { isTask: true }), true)
+    assert.deepEqual(sent, ['📌 任务已派发：已把任务交给 Executor One。'])
+    assert.equal(await service.sendDispatchNote('转述一句话给 Executor One。', { isTask: false }), true)
+    assert.equal(sent[1], '📌 消息已转交：转述一句话给 Executor One。')
 
     service.setPaused(true, { by: 'manual', reason: '测试暂停' })
     const beforePause = sent.length

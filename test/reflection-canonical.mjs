@@ -17,7 +17,7 @@ try {
   const dispatched = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: request.ticketId })
   assert.equal(dispatched.ok, true, JSON.stringify(dispatched))
   const summary = '# 反思报告\n\ncanonical body'
-  const report = await fixture.callAs(dispatched.workerSessionId, 'ria_worker_report', {
+  const report = await fixture.callAs(dispatched.executorSessionId, 'ria_worker_report', {
     ticketId: request.ticketId, status: 'done', summary, evidence: ['artifacts/report.md'],
   })
   assert.equal(report.ok, true, JSON.stringify(report))
@@ -35,7 +35,7 @@ try {
   const different = service.writeReflectionCanonicalFromTicket(request.ticketId, { summary: 'different report', evidence: ['other.md'] })
   assert.equal(different.skipped, false)
   assert.equal(different.reason, 'different_content')
-  assert.ok(existsSync(different.workerPath))
+  assert.ok(existsSync(different.executorPath))
   assert.equal(readFileSync(target, 'utf8'), before)
   console.log('reflection canonical ok')
 } finally {

@@ -46,7 +46,7 @@ try {
   assert.equal(store.ticket(openTicket.ticketId).status, 'open')
 
   // 5. archive succeeds once every linked ticket is terminal.
-  store.transitionTicket(openTicket.ticketId, 'done', { actor: 'test', executor: 'worker', resolution: { kind: 'done', summary: 'ok' } })
+  store.transitionTicket(openTicket.ticketId, 'done', { actor: 'test', executor: 'executor', resolution: { kind: 'done', summary: 'ok' } })
   const archived = await call({ action: 'archive', topicId: topicB.topicId })
   assert.equal(archived.ok, true, JSON.stringify(archived))
   assert.ok(store.topic(topicB.topicId).archivedAt)

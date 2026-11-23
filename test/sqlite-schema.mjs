@@ -48,7 +48,7 @@ try {
   assert.deepEqual(adapter.get(archived.ticketId, { includeArchived: true }), archived)
   assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type='index'").all().some(row => row.name === 'idx_ticket_history_ticket_at'))
 
-  const updated = { ...ticket, revision: 2, goal: 'committed', history: [...ticket.history, { at: 101, actor: 'worker', reason: 'next' }] }
+  const updated = { ...ticket, revision: 2, goal: 'committed', history: [...ticket.history, { at: 101, actor: 'executor', reason: 'next' }] }
   assert.throws(() => transaction(db, () => { adapter.save(updated); throw new Error('rollback probe') }), /rollback probe/)
   assert.deepEqual(adapter.get(ticket.ticketId), ticket)
   assert.equal(adapter.history(ticket.ticketId).length, 1)

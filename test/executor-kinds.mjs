@@ -5,32 +5,32 @@ import { join } from 'node:path'
 import { StateStore } from '../lib/store/store.mjs'
 import { createFixture } from './support/ria-fixture.mjs'
 
-// Two Worker kinds: work (default, may write its workspace) and reflection
+// Two Executor kinds: work (default, may write its workspace) and reflection
 // (read-only retrospective over repository files and session logs).
 
 const fixture = await createFixture({
   stateDefault: true,
   // The real host mounts grep/glob; the minimal fixture adds them here so the
-  // reflection Worker's read-only surface is observable.
+  // reflection Executor's read-only surface is observable.
   extraGlobalTools: ['grep', 'glob'],
 })
 
 const advisorOf = () => fixture.service.controller.advisor('global').sessionId
-const workerOf = sessionId => fixture.service.controller.state.worker(sessionId)
+const executorOf = sessionId => fixture.service.controller.state.executor(sessionId)
 
 try {
   await fixture.service.ensure()
   const chat = fixture.service.controller.state.chatSessionId
 
-  // ① Old state.json: a worker row without executorType is a work Worker.
+  // ① Old state.json: a executor row without executorType is a work Executor.
   {
-    const dir = mkdtempSync(join(tmpdir(), 'ria-worker-kinds-'))
+    const dir = mkdtempSync(join(tmpdir(), 'ria-executor-kinds-'))
     try {
       writeFileSync(join(dir, 'state.json'), JSON.stringify({
         schemaVersion: 1,
         chatSessionId: null,
         advisors: {},
-        executors: { 'session-old': { sessionId: 'session-old', kind: 'managed', scope: 'global', status: 'idle', cwd: '/tmp/old-worker' } },
+        executors: { 'session-old': { sessionId: 'session-old', kind: 'managed', scope: 'global', status: 'idle', cwd: '/tmp/old-executor' } },
         requests: {},
         tickets: {},
         workOrders: {},
@@ -39,17 +39,17 @@ try {
         lastError: null,
       }, null, 2))
       const store = new StateStore(dir)
-      assert.equal(store.worker('session-old').executorType, 'work')
+      assert.equal(store.executor('session-old').executorType, 'work')
       assert.deepEqual(store.executors().map(item => item.executorType), ['work'])
       // The read default is persisted on the next write.
-      store.addWorker('session-old', { lastUsedAt: 1 })
+      store.addExecutor('session-old', { lastUsedAt: 1 })
       assert.equal(JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8')).executors['session-old'].executorType, 'work')
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
   }
 
-  // ② A reflection ticket: no Worker exists yet, so dispatch creates one.
+  // ② A reflection ticket: no Executor exists yet, so dispatch creates one.
   assert.equal(fixture.service.controller.state.executors().filter(item => item.executorType === 'reflection').length, 0)
   // Reflection tickets are created internally now; ria_chat_request is work-only.
   const reflectionRequest = await fixture.service.controller.requestTicket({
@@ -67,19 +67,19 @@ try {
   assert.equal(reflectionPlan.ok, true)
   const reflectionDispatch = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: reflectionRequest.ticketId })
   assert.equal(reflectionDispatch.ok, true, JSON.stringify(reflectionDispatch))
-  const reflectionWorkerId = reflectionDispatch.workerSessionId
-  const reflectionMeta = workerOf(reflectionWorkerId)
+  const reflectionExecutorId = reflectionDispatch.executorSessionId
+  const reflectionMeta = executorOf(reflectionExecutorId)
   assert.equal(reflectionMeta.executorType, 'reflection')
   // Its cwd is under the Ria state directory: it has no repository sandbox.
   assert.ok(String(reflectionMeta.cwd).startsWith(fixture.stateDir), reflectionMeta.cwd)
   assert.equal(fixture.service.store.ticket(reflectionRequest.ticketId).status, 'working')
-  assert.equal(fixture.service.store.ticket(reflectionRequest.ticketId).executor, reflectionWorkerId)
+  assert.equal(fixture.service.store.ticket(reflectionRequest.ticketId).executor, reflectionExecutorId)
   assert.equal(fixture.service.controller.state.executors().filter(item => item.executorType === 'reflection').length, 1)
 
   // Its tool surface: read-only investigation plus the bound retrospective
   // tools, no write/execute tools. A reflection dispatch binds all eight
   // ria_reflect_* tools (including the Sage context reader).
-  const reflectionTools = fixture.visibleTools(reflectionWorkerId).sort()
+  const reflectionTools = fixture.visibleTools(reflectionExecutorId).sort()
   assert.deepEqual(reflectionTools, [
     'glob', 'grep', 'read',
     'ria_reflect_read_context', 'ria_reflect_read_role_context',
@@ -91,7 +91,7 @@ try {
   assert.equal(reflectionTools.includes('edit'), false)
   assert.equal(reflectionTools.includes('bash'), false)
 
-  // ③ A normal work ticket goes to a work Worker, never the reflection one.
+  // ③ A normal work ticket goes to a work Executor, never the reflection one.
   const workRequest = await fixture.callAs(chat, 'ria_chat_request', {
     goal: '修一个普通 bug',
     acceptance: '测试通过',
@@ -105,11 +105,11 @@ try {
   })
   const workDispatch = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: workRequest.ticketId })
   assert.equal(workDispatch.ok, true, JSON.stringify(workDispatch))
-  const workWorkerId = workDispatch.workerSessionId
-  const workMeta = workerOf(workWorkerId)
+  const workExecutorId = workDispatch.executorSessionId
+  const workMeta = executorOf(workExecutorId)
   assert.equal(workMeta.executorType, 'work')
-  assert.notEqual(workWorkerId, reflectionWorkerId)
-  const workTools = fixture.visibleTools(workWorkerId).sort()
+  assert.notEqual(workExecutorId, reflectionExecutorId)
+  const workTools = fixture.visibleTools(workExecutorId).sort()
   assert.deepEqual(workTools, [
     'bash', 'edit', 'glob', 'grep', 'read', 'ria_worker_report', 'run_code', 'write',
   ])
@@ -130,12 +130,12 @@ try {
   await fixture.callAs(advisor, 'ria_ticket_plan', { ticketId: mismatchRequest.ticketId, summary: 'x', steps: ['x'] })
   const mismatch = await fixture.callAs(advisor, 'ria_ticket_dispatch', {
     ticketId: mismatchRequest.ticketId,
-    workerSessionId: reflectionWorkerId,
+    executorSessionId: reflectionExecutorId,
   })
   assert.equal(mismatch.ok, false)
-  assert.equal(mismatch.code, 'specified_worker_unavailable')
-  assert.equal(mismatch.cause, 'worker_kind_mismatch')
-  assert.match(mismatch.message, /reflection worker.*work worker/)
+  assert.equal(mismatch.code, 'specified_executor_unavailable')
+  assert.equal(mismatch.cause, 'executor_kind_mismatch')
+  assert.match(mismatch.message, /reflection executor.*work executor/)
   assert.equal(fixture.service.store.ticket(mismatchRequest.ticketId).status, 'blocked')
   assert.equal(fixture.service.store.ticket(mismatchRequest.ticketId).waitingOn, 'user')
 
@@ -153,16 +153,16 @@ try {
   // The Advisor's ticket brief carries the reflection mode.
   const advisorBrief = fixture.prompts.find(item => String(item.sessionId) === String(advisor) && /模式: reflection/.test(String(item.content[0].text)))
   assert.ok(advisorBrief, 'expected an Advisor ticket brief with mode reflection')
-  assert.match(String(advisorBrief.content[0].text), /模式: reflection（复盘，派给 reflection worker）/)
-  // The reflection Worker is dispatched with the bound reflectionInstruction,
+  assert.match(String(advisorBrief.content[0].text), /模式: reflection（复盘，派给 reflection executor）/)
+  // The reflection Executor is dispatched with the bound reflectionInstruction,
   // not a generic ticket brief: it names the ticket, the run date and the Sage
   // audit requirement.
-  const workerBrief = fixture.prompts.filter(item => item.sessionId === reflectionWorkerId).at(-1)
-  assert.match(String(workerBrief.content[0].text), /工单绑定/)
-  assert.match(String(workerBrief.content[0].text), /Sage 质量检查/)
-  assert.match(String(workerBrief.content[0].text), new RegExp('ticketId: ' + reflectionRequest.ticketId))
+  const executorBrief = fixture.prompts.filter(item => item.sessionId === reflectionExecutorId).at(-1)
+  assert.match(String(executorBrief.content[0].text), /工单绑定/)
+  assert.match(String(executorBrief.content[0].text), /Sage 质量检查/)
+  assert.match(String(executorBrief.content[0].text), new RegExp('ticketId: ' + reflectionRequest.ticketId))
 
-  console.log('state worker kinds ok')
+  console.log('state executor kinds ok')
 } finally {
   fixture.cleanup()
 }

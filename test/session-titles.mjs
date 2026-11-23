@@ -7,8 +7,8 @@ const fixture = await createFixture({
   stateDefault: true,
   extraSessions: [
     { sessionId: 'session-user-design', running: false, blank: false, updatedAt: 30, cwd: '/tmp', projections: { values: { title: 'Ria 顶层设计' } } },
-    { sessionId: 'session-legacy-worker', running: false, blank: false, updatedAt: 29, cwd: '/tmp', projections: { values: { title: 'Worker 1' } } },
-    { sessionId: 'session-legacy-reflection', running: false, blank: false, updatedAt: 28, cwd: '/tmp', projections: { values: { title: 'Reflection Worker' } } },
+    { sessionId: 'session-legacy-executor', running: false, blank: false, updatedAt: 29, cwd: '/tmp', projections: { values: { title: 'Executor 1' } } },
+    { sessionId: 'session-legacy-reflection', running: false, blank: false, updatedAt: 28, cwd: '/tmp', projections: { values: { title: 'Reflection Executor' } } },
     { sessionId: 'session-sage', running: false, blank: false, updatedAt: 27, cwd: '/tmp' },
     { sessionId: 'session-read-fail', running: false, blank: false, updatedAt: 26, cwd: '/tmp' },
     { sessionId: 'session-rename-fail', running: false, blank: false, updatedAt: 25, cwd: '/tmp' },
@@ -33,44 +33,44 @@ try {
 
   const chat = (await controller.ensureChat()).sessionId
   const advisor = await fixture.advisorSession()
-  const worker1 = (await controller.ensureWorker('global')).sessionId
-  // New Workers are created idle and are reusable for the next ticket, so
-  // occupy the first one before asking for a second distinct Worker.
-  controller.state.addWorker(worker1, { status: 'working', currentTicketId: 'ticket-seq-1' })
-  const worker2 = (await controller.ensureWorker('global')).sessionId
-  const reflection1 = (await controller.ensureReflectionWorker('global')).sessionId
+  const executor1 = (await controller.ensureExecutor('global')).sessionId
+  // New Executors are created idle and are reusable for the next ticket, so
+  // occupy the first one before asking for a second distinct Executor.
+  controller.state.addExecutor(executor1, { status: 'working', currentTicketId: 'ticket-seq-1' })
+  const executor2 = (await controller.ensureExecutor('global')).sessionId
+  const reflection1 = (await controller.ensureReflectionExecutor('global')).sessionId
 
   assert.equal(await titleOf(chat), 'Ria')
   assert.equal(await titleOf(advisor), 'Ria Advisor')
-  assert.equal(await titleOf(worker1), 'Ria Worker 1')
-  assert.equal(await titleOf(worker2), 'Ria Worker 2')
-  assert.equal(await titleOf(reflection1), 'Ria Reflection Worker 1')
+  assert.equal(await titleOf(executor1), 'Ria Executor 1')
+  assert.equal(await titleOf(executor2), 'Ria Executor 2')
+  assert.equal(await titleOf(reflection1), 'Ria Reflection Executor 1')
 
-  // Removing a Worker does not reuse its number.
-  controller.state.removeWorker(worker2)
-  const worker3 = (await controller.ensureWorker('global')).sessionId
-  assert.equal(await titleOf(worker3), 'Ria Worker 3')
+  // Removing a Executor does not reuse its number.
+  controller.state.removeExecutor(executor2)
+  const executor3 = (await controller.ensureExecutor('global')).sessionId
+  assert.equal(await titleOf(executor3), 'Ria Executor 3')
 
   // Old bindings without seq are assigned persistent numbers and renamed once.
-  controller.state.addWorker('session-legacy-worker', { executorType: 'work', status: 'idle' })
-  controller.state.addWorker('session-legacy-reflection', { executorType: 'reflection', status: 'idle' })
+  controller.state.addExecutor('session-legacy-executor', { executorType: 'work', status: 'idle' })
+  controller.state.addExecutor('session-legacy-reflection', { executorType: 'reflection', status: 'idle' })
   await sc.rename({ sessionId: chat, title: 'Chat' })
   await sc.rename({ sessionId: advisor, title: 'Advisor' })
-  await sc.rename({ sessionId: worker1, title: 'Worker 1' })
-  await sc.rename({ sessionId: worker3, title: 'Worker 3' })
-  await sc.rename({ sessionId: reflection1, title: 'Reflection Worker' })
+  await sc.rename({ sessionId: executor1, title: 'Executor 1' })
+  await sc.rename({ sessionId: executor3, title: 'Executor 3' })
+  await sc.rename({ sessionId: reflection1, title: 'Reflection Executor' })
   const before = renameCalls
   const first = await controller.renameRoleSessions()
   assert.ok(first.renamed.length >= 7, JSON.stringify(first))
   assert.equal(await titleOf(chat), 'Ria')
   assert.equal(await titleOf(advisor), 'Ria Advisor')
-  assert.equal(await titleOf(worker1), 'Ria Worker 1')
-  assert.equal(await titleOf(worker3), 'Ria Worker 3')
-  assert.equal(await titleOf(reflection1), 'Ria Reflection Worker 1')
-  assert.match(await titleOf('session-legacy-worker'), /^Ria Worker \d+$/)
-  assert.match(await titleOf('session-legacy-reflection'), /^Ria Reflection Worker \d+$/)
-  assert.ok(controller.state.worker('session-legacy-worker').seq > 0)
-  assert.ok(controller.state.worker('session-legacy-reflection').seq > 0)
+  assert.equal(await titleOf(executor1), 'Ria Executor 1')
+  assert.equal(await titleOf(executor3), 'Ria Executor 3')
+  assert.equal(await titleOf(reflection1), 'Ria Reflection Executor 1')
+  assert.match(await titleOf('session-legacy-executor'), /^Ria Executor \d+$/)
+  assert.match(await titleOf('session-legacy-reflection'), /^Ria Reflection Executor \d+$/)
+  assert.ok(controller.state.executor('session-legacy-executor').seq > 0)
+  assert.ok(controller.state.executor('session-legacy-reflection').seq > 0)
   assert.equal(await titleOf('session-user-design'), 'Ria 顶层设计')
 
   // Idempotent: a second pass neither renames nor emits title events.
@@ -85,23 +85,23 @@ try {
   const titles = listed.items.map(item => item && item.projections && item.projections.values ? item.projections.values.title : '')
   assert.ok(titles.includes('Ria'))
   assert.ok(titles.includes('Ria Advisor'))
-  assert.ok(titles.includes('Ria Worker 1'))
-  assert.ok(titles.includes('Ria Reflection Worker 1'))
+  assert.ok(titles.includes('Ria Executor 1'))
+  assert.ok(titles.includes('Ria Reflection Executor 1'))
   assert.equal(titles.includes('Chat'), false)
   assert.equal(titles.includes('Advisor'), false)
-  assert.equal(titles.includes('Worker 1'), false)
-  assert.equal(titles.includes('Reflection Worker'), false)
+  assert.equal(titles.includes('Executor 1'), false)
+  assert.equal(titles.includes('Reflection Executor'), false)
   assert.ok(titles.includes('Ria 顶层设计'))
 
   // Read/rename failures are isolated, observable, and the read path now passes
   // a real AbortSignal to projections().
   {
     controller.state.setSage('session-sage')
-    controller.state.addWorker('session-read-fail', { executorType: 'work', status: 'idle', seq: 50 })
-    controller.state.addWorker('session-rename-fail', { executorType: 'work', status: 'idle', seq: 51 })
+    controller.state.addExecutor('session-read-fail', { executorType: 'work', status: 'idle', seq: 50 })
+    controller.state.addExecutor('session-rename-fail', { executorType: 'work', status: 'idle', seq: 51 })
     await sc.rename({ sessionId: 'session-sage', title: 'Sage' })
-    await sc.rename({ sessionId: 'session-read-fail', title: 'Worker 50' })
-    await sc.rename({ sessionId: 'session-rename-fail', title: 'Worker 51' })
+    await sc.rename({ sessionId: 'session-read-fail', title: 'Executor 50' })
+    await sc.rename({ sessionId: 'session-rename-fail', title: 'Executor 51' })
 
     const warnings = []
     const originalLog = controller.log.bind(controller)
@@ -126,8 +126,8 @@ try {
     const result = await controller.renameRoleSessions()
     assert.equal(sawSignal, true)
     assert.equal(await rawTitle('session-sage'), 'Sage')
-    assert.equal(await rawTitle('session-read-fail'), 'Worker 50')
-    assert.equal(await rawTitle('session-rename-fail'), 'Worker 51')
+    assert.equal(await rawTitle('session-read-fail'), 'Executor 50')
+    assert.equal(await rawTitle('session-rename-fail'), 'Executor 51')
     assert.ok(warnings.some(text => text.includes('session-read-fail') && text.includes('signal.throwIfAborted')))
     assert.ok(warnings.some(text => text.includes('session-rename-fail') && text.includes('rename boom')))
     const events = readFileSync(join(fixture.stateDir, 'router-events.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line))

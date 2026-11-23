@@ -164,8 +164,8 @@ function byKey(models, provider, model) {
 {
   const { fixture, chat } = await setup()
   try {
-    await assert.rejects(fixture.callAs('session-worker', 'ria_chat_models', {}), /tool not installed/)
-    const direct = await fixture.service.controller.chatModels({}, { agent: { id: 'session-worker' } })
+    await assert.rejects(fixture.callAs('session-executor', 'ria_chat_models', {}), /tool not installed/)
+    const direct = await fixture.service.controller.chatModels({}, { agent: { id: 'session-executor' } })
     assert.equal(direct.ok, false)
     assert.equal(direct.code, 'forbidden')
   } finally {

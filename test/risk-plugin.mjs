@@ -39,16 +39,16 @@ try {
 
   // End-to-end decision uses the ticket policy.
   const controller = fixture.service.controller
-  const worker = (await controller.ensureWorker('global')).sessionId
-  const ticket = fixture.service.store.addTicket({ status: 'working', executor: worker, goal: 'deploy plugin' })
+  const executor = (await controller.ensureExecutor('global')).sessionId
+  const ticket = fixture.service.store.addTicket({ status: 'working', executor: executor, goal: 'deploy plugin' })
   controller.state.setTicketMeta(ticket.ticketId, { phase: 'working', escalationPolicy: 'auto-low-medium' })
-  await fixture.emit('tools/pre-execute', { agent: { id: worker }, name: 'bash', callId: 'plugin-call', arguments: { command } }, async () => ({ kind: 'enter' }))
-  const autoDecision = controller.evaluateApprovalRisk(worker, 'bash', 'plugin-call')
+  await fixture.emit('tools/pre-execute', { agent: { id: executor }, name: 'bash', callId: 'plugin-call', arguments: { command } }, async () => ({ kind: 'enter' }))
+  const autoDecision = controller.evaluateApprovalRisk(executor, 'bash', 'plugin-call')
   assert.equal(autoDecision.decision, 'auto-allow')
   assert.equal(autoDecision.policy, 'auto-low-medium')
   controller.state.setTicketMeta(ticket.ticketId, { escalationPolicy: 'strict' })
-  await fixture.emit('tools/pre-execute', { agent: { id: worker }, name: 'bash', callId: 'plugin-call-strict', arguments: { command } }, async () => ({ kind: 'enter' }))
-  const strictDecision = controller.evaluateApprovalRisk(worker, 'bash', 'plugin-call-strict')
+  await fixture.emit('tools/pre-execute', { agent: { id: executor }, name: 'bash', callId: 'plugin-call-strict', arguments: { command } }, async () => ({ kind: 'enter' }))
+  const strictDecision = controller.evaluateApprovalRisk(executor, 'bash', 'plugin-call-strict')
   assert.equal(strictDecision.decision, 'ask')
   assert.equal(strictDecision.policy, 'strict')
 

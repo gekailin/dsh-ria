@@ -19,7 +19,7 @@ try {
   assert.equal(state.data.coManagement.find(item => item.sessionId === 'session-old').allowDispatch, false)
   assert.equal(state.data.coManagement.find(item => item.sessionId === 'session-old').dedicated, true)
   assert.equal(state.data.coManagement.find(item => item.sessionId === 'session-file').options.relayReplies, false)
-  assert.equal(state.worker('session-old').kind, 'co-managed')
+  assert.equal(state.executor('session-old').kind, 'co-managed')
   assert.equal(co.watches().length, 2)
   const backupsBefore = readdirSync(dir).filter(name => name.startsWith('co-management.json.bak.')).length
   assert.equal(backupsBefore, 1)

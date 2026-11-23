@@ -2,10 +2,10 @@
 # scripts/review-worktree.sh — 为代码 review 创建/清理独立 git worktree
 #
 # Review 约定（代码 review 的标准流程）：
-#   - 每次 review 新开专用 worker，不复用；
+#   - 每次 review 新开专用 executor，不复用；
 #   - 模型固定 mccodex/ide/gpt-6.1-sol，reasoningEffort=max；
-#   - review worker 在独立 worktree 中只读审查指定 commit，基线 commit 必须写进报告开头；
-#   - review worker 一次性使用，任务结束即归档；其它类型任务不得派给它。
+#   - review executor 在独立 worktree 中只读审查指定 commit，基线 commit 必须写进报告开头；
+#   - review executor 一次性使用，任务结束即归档；其它类型任务不得派给它。
 #
 # 用法示例：
 #   # 1) 默认目录：<repo 父目录>/ria-review-<短sha>-<yyyymmddHHMMSS>

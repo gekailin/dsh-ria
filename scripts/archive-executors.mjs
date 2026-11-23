@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * archive-executors.mjs — archive Ria worker sessions through the canonical DSH
+ * archive-executors.mjs — archive Ria executor sessions through the canonical DSH
  * Connection RPC channel (no state-file editing, no session deletion).
  *
  * Channel (see reports/done.md for the full evidence chain):
@@ -20,7 +20,7 @@
  *   node scripts/archive-executors.mjs --readback 7,9,10
  *
  * Options:
- *   --seqs <a,b,c>        Ria worker seq numbers (resolved from GET /plugins/dsh-ria/api/state)
+ *   --seqs <a,b,c>        Ria executor seq numbers (resolved from GET /plugins/dsh-ria/api/state)
  *   --sessions <a,b,c>    explicit session ids (overrides --seqs)
  *   --base <url>          DSH web base URL (default http://127.0.0.1:3080)
  *   --token <token>       launch token (default: $DSH_WEB_TOKEN, then
@@ -92,7 +92,7 @@ let targets = []
 if (sessionIds.length) {
   targets = sessionIds.map(id => ({ sessionId: id, seq: null }))
 } else if (seqs.length) {
-  // Ria's own HTTP state projection lists every bound worker with its seq.
+  // Ria's own HTTP state projection lists every bound executor with its seq.
   const response = await fetch(base + '/plugins/dsh-ria/api/state', { headers: { cookie } }).catch(() => null)
   const state = response && response.ok ? await response.json() : null
   const executors = (state && state.state && state.state.executors) || []

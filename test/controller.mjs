@@ -81,7 +81,7 @@ try {
   assert.equal(fixture.service.controller.status().lastError, null)
 
   // Ordinary independent sessions can be listed and addressed by the Chat.
-  // Managed Workers and the Chat itself stay out of this channel.
+  // Managed Executors and the Chat itself stay out of this channel.
   const listed = await fixture.callAs(chat, 'ria_chat_sessions', { query: 'Alpha' })
   if (!listed.ok) console.error('LISTED', listed)
   assert.equal(listed.ok, true)
@@ -225,7 +225,7 @@ try {
   assert.equal(fixture.service.store.ticket(created.ticketId).waitingOn, 'ria')
 
   const advisor = fixture.service.controller.advisor('global').sessionId
-  // Retrospective tools belong to reflection Workers, not the Advisor.
+  // Retrospective tools belong to reflection Executors, not the Advisor.
   assert.deepEqual(fixture.visibleTools(advisor).sort(), ['read', 'ria_ticket_block', 'ria_ticket_dispatch', 'ria_ticket_plan', 'ria_ticket_read'])
   assert.equal(fixture.prompts.at(-1).sessionId, advisor)
   assert.match(fixture.prompts.at(-1).content[0].text, /Ticket brief/)
@@ -245,26 +245,26 @@ try {
 
   const dispatch = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: created.ticketId })
   assert.equal(dispatch.ok, true)
-  assert.ok(dispatch.workerSessionId)
+  assert.ok(dispatch.executorSessionId)
   const working = fixture.service.store.ticket(created.ticketId)
   assert.equal(working.status, 'working')
-  assert.equal(working.executor, dispatch.workerSessionId)
+  assert.equal(working.executor, dispatch.executorSessionId)
   assert.equal(working.attempt.legacy, false)
 
-  const worker = dispatch.workerSessionId
-  assert.deepEqual(fixture.visibleTools(worker).sort(), ['bash', 'edit', 'read', 'ria_worker_report', 'run_code', 'write'])
+  const executor = dispatch.executorSessionId
+  assert.deepEqual(fixture.visibleTools(executor).sort(), ['bash', 'edit', 'read', 'ria_worker_report', 'run_code', 'write'])
   // The retired polling tool is absent; use the host's ordinary missing-tool
   // error, never a compatibility handler that could consume pending messages.
-  const retiredTool = ['worker', 'checkpoint'].join('_')
-  assert.equal(fixture.visibleTools(worker).includes(retiredTool), false)
-  await assert.rejects(fixture.callAs(worker, retiredTool, { ticketId: created.ticketId }), /tool not installed/)
+  const retiredTool = ['executor', 'checkpoint'].join('_')
+  assert.equal(fixture.visibleTools(executor).includes(retiredTool), false)
+  await assert.rejects(fixture.callAs(executor, retiredTool, { ticketId: created.ticketId }), /tool not installed/)
   assert.equal(fixture.service.controller.state.workOrder(created.ticketId).summary, 'read the notes and write a paragraph')
-  const workerMeta = fixture.service.controller.state.worker(worker)
-  assert.match(workerMeta.cwd, /executors$/)
-  assert.ok(workerMeta.artifactDir.includes('/executors/runs/'))
+  const executorMeta = fixture.service.controller.state.executor(executor)
+  assert.match(executorMeta.cwd, /executors$/)
+  assert.ok(executorMeta.artifactDir.includes('/executors/runs/'))
 
   // The Chat can change any top-level session's permissions on an explicit
-  // user request, not just managed Workers. A pure downgrade is permanent: no
+  // user request, not just managed Executors. A pure downgrade is permanent: no
   // TTL, and neither ticket close nor a restart undoes it.
   const initialGrants = await fixture.callAs(chat, 'ria_chat_grant', { action: 'list' })
   assert.equal(initialGrants.ok, true)
@@ -285,14 +285,14 @@ try {
 
   const granted = await fixture.callAs(chat, 'ria_chat_grant', {
     action: 'set',
-    sessionId: worker,
+    sessionId: executor,
     ticketId: created.ticketId,
     sandboxMode: 'read-only',
     ttlSeconds: 60,
     reason: 'the user asked to test a narrower sandbox',
   })
   assert.equal(granted.ok, true)
-  assert.equal(granted.grant.sessionId, worker)
+  assert.equal(granted.grant.sessionId, executor)
   assert.equal(granted.grant.ticketId, created.ticketId)
   assert.equal(granted.grant.kind, 'permanent')
   assert.equal(granted.grant.expiresAt, null)
@@ -311,15 +311,15 @@ try {
   assert.equal(steer.ok, true)
   // Idle delivery already consumed the inbox. Neither another boundary nor
   // the turn-end retry can replay the same instruction.
-  assert.deepEqual(fixture.service.controller.state.pendingInbox(created.ticketId, worker), [])
+  assert.deepEqual(fixture.service.controller.state.pendingInbox(created.ticketId, executor), [])
   const beforeRepeat = fixture.prompts.length
-  const repeatedStep = await fixture.emit('agent/pre-step', { agent: fixture.agentFor(worker), turn: 1, step: 2 },
+  const repeatedStep = await fixture.emit('agent/pre-step', { agent: fixture.agentFor(executor), turn: 1, step: 2 },
     async () => ({ kind: 'enter', messages: [] }))
   assert.deepEqual(repeatedStep.messages, [])
-  await fixture.service.controller.retryManagerInboxAtTurnEnd(created.ticketId, worker)
+  await fixture.service.controller.retryManagerInboxAtTurnEnd(created.ticketId, executor)
   assert.equal(fixture.prompts.length, beforeRepeat)
 
-  const progress = await fixture.callAs(worker, 'ria_worker_report', {
+  const progress = await fixture.callAs(executor, 'ria_worker_report', {
     ticketId: created.ticketId,
     status: 'progress',
     summary: 'notes read',
@@ -328,7 +328,7 @@ try {
   assert.equal(progress.ok, true)
   assert.equal(fixture.service.store.ticket(created.ticketId).progress.lastPhase, 'notes read')
 
-  const blockedReport = await fixture.callAs(worker, 'ria_worker_report', {
+  const blockedReport = await fixture.callAs(executor, 'ria_worker_report', {
     ticketId: created.ticketId,
     status: 'blocked',
     summary: 'need a format decision',
@@ -343,19 +343,19 @@ try {
   })
   assert.equal(resumed.ok, true)
   assert.equal(resumed.status, 'working')
-  assert.equal(resumed.workerSessionId, worker)
+  assert.equal(resumed.executorSessionId, executor)
   // Idle resume already delivered the reply in the new turn; no unread copy
   // remains for a later pre-step or done retry.
-  assert.deepEqual(fixture.service.controller.state.pendingInbox(created.ticketId, worker), [])
+  assert.deepEqual(fixture.service.controller.state.pendingInbox(created.ticketId, executor), [])
   assert.equal(resumed.deliveryMode, 'immediate')
-  assert.ok(fixture.prompts.some(prompt => prompt.sessionId === worker
+  assert.ok(fixture.prompts.some(prompt => prompt.sessionId === executor
     && prompt.content[0].text.includes('[Manager resume]') && prompt.content[0].text.includes('use Markdown')))
 
   // A grant bound to a ticket must not outlive it. The next grant is still
-  // active when the Worker reports done, so completion itself must restore it.
+  // active when the Executor reports done, so completion itself must restore it.
   const doneGrant = await fixture.callAs(chat, 'ria_chat_grant', {
     action: 'set',
-    sessionId: worker,
+    sessionId: executor,
     ticketId: created.ticketId,
     approvalPolicy: 'never',
     ttlSeconds: 60,
@@ -363,7 +363,7 @@ try {
   })
   assert.equal(doneGrant.ok, true)
 
-  const done = await fixture.callAs(worker, 'ria_worker_report', {
+  const done = await fixture.callAs(executor, 'ria_worker_report', {
     ticketId: created.ticketId,
     status: 'done',
     summary: 'summary written',
@@ -412,7 +412,7 @@ try {
     assert.equal(controller.pendingRestrictions.has(delayedId), false)
   }
 
-  // A request that names a project directory must give the Worker that cwd,
+  // A request that names a project directory must give the Executor that cwd,
   // so its sandbox can actually edit the project instead of stateDir/executors.
   const workspace = mkdtempSync(join(tmpdir(), 'ria-state-workspace-'))
   try {
@@ -438,12 +438,12 @@ try {
     })
     const projectDispatch = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: project.ticketId })
     assert.equal(projectDispatch.ok, true)
-    const projectWorker = fixture.service.controller.state.worker(projectDispatch.workerSessionId)
-    assert.equal(projectWorker.cwd, workspace)
-    assert.equal(projectWorker.artifactDir, join(workspace, 'ria-runs', projectDispatch.workerSessionId))
-    const projectPrompt = fixture.prompts.find(item => item.sessionId === projectDispatch.workerSessionId)
+    const projectExecutor = fixture.service.controller.state.executor(projectDispatch.executorSessionId)
+    assert.equal(projectExecutor.cwd, workspace)
+    assert.equal(projectExecutor.artifactDir, join(workspace, 'ria-runs', projectDispatch.executorSessionId))
+    const projectPrompt = fixture.prompts.find(item => item.sessionId === projectDispatch.executorSessionId)
     assert.ok(projectPrompt.content[0].text.includes('工作目录: ' + workspace))
-    assert.ok(projectPrompt.content[0].text.includes('产物目录: ' + projectWorker.artifactDir))
+    assert.ok(projectPrompt.content[0].text.includes('产物目录: ' + projectExecutor.artifactDir))
   } finally {
     rmSync(workspace, { recursive: true, force: true })
   }
@@ -503,7 +503,7 @@ try {
   await first.callAs(advisor, 'ria_ticket_plan', { ticketId: created.ticketId, summary: 'do the work' })
   const dispatched = await first.callAs(advisor, 'ria_ticket_dispatch', { ticketId: created.ticketId })
   workingTicketId = created.ticketId
-  executorId = dispatched.workerSessionId
+  executorId = dispatched.executorSessionId
   assert.equal(first.service.store.ticket(workingTicketId).status, 'working')
 } finally {
   first.cleanup({ keepState: true })
@@ -520,7 +520,7 @@ try {
   assert.equal(parked.status, 'blocked')
   assert.equal(parked.waitingOn, 'environment')
   assert.match(parked.blockedReason, /重启/)
-  assert.equal(second.service.controller.state.worker(executorId).status, 'idle')
+  assert.equal(second.service.controller.state.executor(executorId).status, 'idle')
   const status = second.service.controller.status()
   assert.equal(status.chatSessionId, chat)
   assert.equal(status.lastError, null)

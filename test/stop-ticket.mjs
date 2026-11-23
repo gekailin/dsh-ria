@@ -16,17 +16,17 @@ const eventsOf = stateDir => {
     const controller = fixture.service.controller
     const store = fixture.service.store
     const chat = controller.state.chatSessionId
-    const worker = (await controller.ensureWorker('global')).sessionId
-    controller.state.addWorker(worker, { status: 'idle', currentTicketId: null })
-    const ticket = store.addTicket({ status: 'working', executor: worker, goal: 'stop me' })
-    controller.state.setTicketMeta(ticket.ticketId, { phase: 'working', executorId: worker })
+    const executor = (await controller.ensureExecutor('global')).sessionId
+    controller.state.addExecutor(executor, { status: 'idle', currentTicketId: null })
+    const ticket = store.addTicket({ status: 'working', executor: executor, goal: 'stop me' })
+    controller.state.setTicketMeta(ticket.ticketId, { phase: 'working', executorId: executor })
     controller.state.setWorkOrder(ticket.ticketId, { ticketId: ticket.ticketId, summary: 'plan', steps: ['long job'] })
-    fixture.setRunning(worker, true)
+    fixture.setRunning(executor, true)
     await fixture.callAs(chat, 'ria_chat_steer', { ticketId: ticket.ticketId, message: 'pending direction' })
-    assert.equal(controller.state.pendingInbox(ticket.ticketId, worker).length, 1)
+    assert.equal(controller.state.pendingInbox(ticket.ticketId, executor).length, 1)
 
     // The guard rejects a non-Chat caller even if it reaches the method.
-    const forbidden = await controller.chatStopTicket({ ticketId: ticket.ticketId, reason: 'nope' }, { agent: fixture.agentFor(worker) })
+    const forbidden = await controller.chatStopTicket({ ticketId: ticket.ticketId, reason: 'nope' }, { agent: fixture.agentFor(executor) })
     assert.equal(forbidden.ok, false)
     assert.equal(forbidden.code, 'forbidden')
     assert.equal(store.ticket(ticket.ticketId).status, 'working')
@@ -38,12 +38,12 @@ const eventsOf = stateDir => {
     assert.equal(after.status, 'cancelled')
     assert.equal(after.resolution.reason, 'user changed their mind')
     assert.equal(after.resolution.by, 'chat')
-    assert.equal(controller.state.pendingInbox(ticket.ticketId, worker).length, 0)
+    assert.equal(controller.state.pendingInbox(ticket.ticketId, executor).length, 0)
     // A guard marker remains so a retained DSH queue cannot resume work.
-    assert.equal(controller.state.workerStop(worker).ticketId, ticket.ticketId)
-    assert.equal(controller.state.workerStop(worker).hardAbort, true)
+    assert.equal(controller.state.executorStop(executor).ticketId, ticket.ticketId)
+    assert.equal(controller.state.executorStop(executor).hardAbort, true)
     assert.equal(fixture.cancelCalls.length, 1)
-    assert.equal(fixture.cancelCalls[0].sessionId, worker)
+    assert.equal(fixture.cancelCalls[0].sessionId, executor)
     const events = eventsOf(fixture.stateDir)
     const cancelled = events.filter(item => item.event === 'ticket.cancelled')
     assert.equal(cancelled.length, 1)
@@ -76,34 +76,34 @@ const eventsOf = stateDir => {
     const controller = fixture.service.controller
     const store = fixture.service.store
     const chat = controller.state.chatSessionId
-    const worker = (await controller.ensureWorker('global')).sessionId
-    controller.state.addWorker(worker, { status: 'idle', currentTicketId: null })
+    const executor = (await controller.ensureExecutor('global')).sessionId
+    controller.state.addExecutor(executor, { status: 'idle', currentTicketId: null })
     delete fixture.ctx.sessionController.cancel
-    const ticket = store.addTicket({ status: 'working', executor: worker, goal: 'soft stop' })
-    controller.state.setTicketMeta(ticket.ticketId, { phase: 'working', executorId: worker })
+    const ticket = store.addTicket({ status: 'working', executor: executor, goal: 'soft stop' })
+    controller.state.setTicketMeta(ticket.ticketId, { phase: 'working', executorId: executor })
     controller.state.setWorkOrder(ticket.ticketId, { ticketId: ticket.ticketId, summary: 'plan', steps: ['long job'] })
-    fixture.setRunning(worker, true)
+    fixture.setRunning(executor, true)
     const stopped = await fixture.callAs(chat, 'ria_chat_stop_ticket', { ticketId: ticket.ticketId, reason: 'deadline moved' })
     assert.equal(stopped.ok, true, JSON.stringify(stopped))
     assert.equal(stopped.hardAbort, false)
     assert.equal(stopped.abortAvailable, false)
     assert.ok(stopped.message.includes('已请求停止，当前步骤结束后生效'))
     assert.equal(store.ticket(ticket.ticketId).status, 'cancelled')
-    const marker = controller.state.workerStop(worker)
+    const marker = controller.state.executorStop(executor)
     assert.ok(marker)
     assert.equal(marker.ticketId, ticket.ticketId)
 
     // The stop cleared the queue, and the normal steer entry point rejects a
     // closed ticket. A raw inbox row injected afterwards is never picked up by
     // the soft-stop pre-step.
-    controller.state.addInbox({ id: 'inbox_late', ticketId: ticket.ticketId, executorId: worker, message: 'late direction', from: 'chat', at: Date.now() })
+    controller.state.addInbox({ id: 'inbox_late', ticketId: ticket.ticketId, executorId: executor, message: 'late direction', from: 'chat', at: Date.now() })
     const rejectedSteer = await fixture.callAs(chat, 'ria_chat_steer', { ticketId: ticket.ticketId, message: 'late' })
     assert.equal(rejectedSteer.ok, false)
     assert.equal(rejectedSteer.code, 'ticket_closed')
 
     const preStep = async () => fixture.emit(
       'agent/pre-step',
-      { agent: fixture.agentFor(worker), turn: 3, step: 2 },
+      { agent: fixture.agentFor(executor), turn: 3, step: 2 },
       async () => ({ kind: 'enter', messages: [] }),
     )
     const first = await preStep()
@@ -112,42 +112,42 @@ const eventsOf = stateDir => {
     assert.ok(first.messages[0].content[0].text.includes('终止说明'))
     assert.ok(first.messages[0].content[0].text.includes('ticket ' + ticket.ticketId))
     assert.ok(!first.messages[0].content[0].text.includes('late direction'))
-    assert.equal(controller.state.pendingInbox(ticket.ticketId, worker).length, 1, 'soft stop does not consume steer')
-    assert.ok(eventsOf(fixture.stateDir).some(item => item.event === 'worker.stop.enforced'
+    assert.equal(controller.state.pendingInbox(ticket.ticketId, executor).length, 1, 'soft stop does not consume steer')
+    assert.ok(eventsOf(fixture.stateDir).some(item => item.event === 'executor.stop.enforced'
       && item.ticketId === ticket.ticketId
       && item.reason === 'cancelled-by-stop'
       && item.payload.mode === 'soft'))
 
-    // If the worker keeps working anyway, the following boundary rejects the
+    // If the executor keeps working anyway, the following boundary rejects the
     // step and clears the marker.
     const second = await preStep()
     assert.equal(second.kind, 'reject')
     assert.equal(second.reason, 'cancelled-by-stop')
-    assert.equal(controller.state.workerStop(worker), null)
+    assert.equal(controller.state.executorStop(executor), null)
     console.log('state stop soft path ok')
   } finally {
     fixture.cleanup()
   }
 }
 
-// --- Idle worker: nothing to interrupt, no stale soft-stop marker. ---
+// --- Idle executor: nothing to interrupt, no stale soft-stop marker. ---
 {
   const fixture = await createFixture({ stateDefault: true })
   try {
     const controller = fixture.service.controller
     const store = fixture.service.store
     const chat = controller.state.chatSessionId
-    const worker = (await controller.ensureWorker('global')).sessionId
-    controller.state.addWorker(worker, { status: 'idle', currentTicketId: null })
-    const ticket = store.addTicket({ status: 'working', executor: worker, goal: 'idle stop' })
-    controller.state.setTicketMeta(ticket.ticketId, { phase: 'working', executorId: worker })
+    const executor = (await controller.ensureExecutor('global')).sessionId
+    controller.state.addExecutor(executor, { status: 'idle', currentTicketId: null })
+    const ticket = store.addTicket({ status: 'working', executor: executor, goal: 'idle stop' })
+    controller.state.setTicketMeta(ticket.ticketId, { phase: 'working', executorId: executor })
     const stopped = await fixture.callAs(chat, 'ria_chat_stop_ticket', { ticketId: ticket.ticketId, reason: 'cancel idle work' })
     assert.equal(stopped.ok, true, JSON.stringify(stopped))
     assert.equal(stopped.hardAbort, false)
     assert.equal(stopped.softStop, false)
     assert.ok(stopped.message.includes('已停止'))
     assert.equal(store.ticket(ticket.ticketId).status, 'cancelled')
-    assert.equal(controller.state.workerStop(worker), null)
+    assert.equal(controller.state.executorStop(executor), null)
     console.log('state stop idle path ok')
   } finally {
     fixture.cleanup()
@@ -161,11 +161,11 @@ const eventsOf = stateDir => {
     const controller = fixture.service.controller
     const store = fixture.service.store
     const chat = controller.state.chatSessionId
-    const worker = (await controller.ensureWorker('global')).sessionId
-    controller.state.addWorker(worker, { status: 'idle', currentTicketId: null })
-    const ticket = store.addTicket({ status: 'working', executor: worker, goal: 'already done' })
-    controller.state.setTicketMeta(ticket.ticketId, { phase: 'working', executorId: worker })
-    const done = await fixture.callAs(worker, 'ria_worker_report', { ticketId: ticket.ticketId, status: 'done', summary: 'finished', evidence: ['test'] })
+    const executor = (await controller.ensureExecutor('global')).sessionId
+    controller.state.addExecutor(executor, { status: 'idle', currentTicketId: null })
+    const ticket = store.addTicket({ status: 'working', executor: executor, goal: 'already done' })
+    controller.state.setTicketMeta(ticket.ticketId, { phase: 'working', executorId: executor })
+    const done = await fixture.callAs(executor, 'ria_worker_report', { ticketId: ticket.ticketId, status: 'done', summary: 'finished', evidence: ['test'] })
     assert.equal(done.ok, true, JSON.stringify(done))
     const stopped = await fixture.callAs(chat, 'ria_chat_stop_ticket', { ticketId: ticket.ticketId, reason: 'too late' })
     assert.equal(stopped.ok, false)

@@ -200,6 +200,19 @@ try {
     await fixture.service.wechatClaw.deliverText('/退出直通')
     assert.equal(fixture.service.controller.status().direct.active, false)
 
+    // Exiting direct mode must clear any typing loop that survived the command
+    // notice race, otherwise Claw keeps refreshing the indicator for 10 minutes.
+    const claw = fixture.service.wechatClaw
+    claw.typingUsers.set('user-1', {
+      userId: 'user-1', contextToken: 'context-1', startedAt: Date.now(),
+      started: false, cancelled: false, cancelSent: false, timer: null,
+    })
+    fixture.service.controller.setDirect({ sessionId: 'session-independent', title: 'Alpha Session' })
+    await fixture.service.controller.directRelay([{ type: 'text', text: '/退出直通' }], chat)
+    await new Promise(resolve => setTimeout(resolve, 20))
+    assert.equal(claw.typingUsers.size, 0, 'direct exit must clear typingUsers')
+    assert.equal(claw.statusView().wechatClawTyping.active, 0)
+
     // Command-layer failures are readable and never fall through to Chat.
     const beforeMissing = fixture.prompts.length
     await fixture.service.wechatClaw.deliverText('/直通 session-no-such-session')

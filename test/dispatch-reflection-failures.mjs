@@ -32,6 +32,8 @@ const reflectionPlan = async (fixture, controller) => {
 }
 
 // 2) The same requirement with a tagged reflection Worker already in the pool.
+// A reflection run now always gets a fresh Worker, so the tagged idle Worker is
+// not reused; the new one is still untagged and passes the tag-exemption check.
 {
   const fixture = await createFixture({
     stateDefault: true,
@@ -50,7 +52,10 @@ const reflectionPlan = async (fixture, controller) => {
     controller.state.setTicketMeta(request.ticketId, { routingTags: ['reflect'], requireTagMatch: true })
     const dispatched = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: request.ticketId })
     assert.equal(dispatched.ok, true, JSON.stringify(dispatched))
-    assert.equal(dispatched.workerSessionId, 'session-reflect-tagged')
+    assert.notEqual(dispatched.workerSessionId, 'session-reflect-tagged')
+    const created = controller.state.worker(dispatched.workerSessionId)
+    assert.equal(created.workerType, 'reflection')
+    assert.deepEqual(created.tags || [], [])
   } finally { fixture.cleanup() }
 }
 

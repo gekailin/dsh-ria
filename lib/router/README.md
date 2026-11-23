@@ -43,7 +43,9 @@ Content-Type: application/json
 
 candidates 省略时使用默认候选；传了就必须是 {id, kind?, label?, description?} 数组。端点只读，不改 ticket、不建 session。
 
-也可以用环境变量提供默认模型：RIA_ROUTER_PROVIDER、RIA_ROUTER_MODEL。
+Router 不再有自己的模型配置：省略 provider/model 时，用当前 chat 的模型（body.sessionId 指定的会话，缺省为 Ria 会话）打分，reasoning effort 也跟该 chat 一致。body 里的 provider/model 只作为预览/测试的显式覆盖。
+
+Advisor 同理：它用发起工单的那个 chat 的模型做计划，不再读 agent-default-model 或 RIA_ADVISOR_* 环境变量；换 chat 模型就是换 Advisor 模型。
 
 ## CLI（本地模型端点）
 

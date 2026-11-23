@@ -4,9 +4,8 @@
 // Usage:
 //   node scripts/sqlite-verify.mjs --state-dir <stateDir> [--db <path>] [--sample 20]
 //
-// Opens ria.sqlite read-only, compares it with the JSON sources, and reports
-// counts / integrity / sample mismatches. It never writes to the database or
-// the JSON state.
+// The DB is checked against itself with pure SQL. legacy ria.json is only an
+// informational comparison after Phase A froze it; it never affects ok/exit.
 
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
@@ -14,42 +13,53 @@ import { pathToFileURL } from 'node:url'
 import { openDatabase } from '../lib/state/sqlite/db.mjs'
 import { SqliteTicketAdapter } from '../lib/state/sqlite/adapter.mjs'
 import { readStateSource } from '../lib/state/sqlite/source.mjs'
-import { verifyDatabase } from '../lib/state/sqlite/verify.mjs'
+import { checkDomainTables, checkIntegrity, checkSelfConsistency, compareCounts } from '../lib/state/sqlite/verify.mjs'
 
 const error = (code, message) => Object.assign(new Error(message), { code })
 
-function describe(verification) {
-  return {
-    ok: verification.ok,
-    counts: verification.counts.actual,
-    countsMatch: verification.counts.ok,
-    integrity: verification.integrity.integrity,
-    foreignKeyViolations: verification.integrity.foreignKeys.length,
-    orphanHistory: verification.integrity.orphanHistory,
-    sampled: verification.sample.sampled,
-    sampleMismatches: verification.sample.results.filter(result => !result.ok),
-    importId: verification.provenance.importId,
-    sourceSha256: verification.provenance.sourceSha256,
-    domains: verification.domains,
+function legacyComparison(stateDir, counts) {
+  try {
+    const source = readStateSource(stateDir)
+    const compared = compareCounts(counts, source.counts)
+    return { informational: true, available: true, matched: compared.ok, deltas: compared.mismatches }
+  } catch (cause) {
+    return { informational: true, available: false, matched: false, deltas: [], message: String(cause && cause.message ? cause.message : cause) }
   }
 }
 
-export function verifySqliteState({ stateDir, dbPath = join(stateDir, 'ria.sqlite'), sampleSize = 20 } = {}) {
+export function verifySqliteState({ stateDir, dbPath = join(stateDir, 'ria.sqlite') } = {}) {
   if (!stateDir) throw error('invalid_arguments', 'stateDir is required')
   if (!existsSync(dbPath)) throw error('sqlite_missing', 'SQLite DB is missing: ' + dbPath)
-  const source = readStateSource(stateDir)
   const db = openDatabase(dbPath, { readOnly: true })
   try {
-    const verification = verifyDatabase(db, new SqliteTicketAdapter(db), source, { sampleSize, requireSourceHash: false })
-    return { ok: verification.ok, mode: 'verify-only', dbPath, ...describe(verification) }
-  } finally {
-    db.close()
-  }
+    const adapter = new SqliteTicketAdapter(db)
+    const counts = adapter.counts()
+    const selfConsistency = checkSelfConsistency(db)
+    const integrity = checkIntegrity(db)
+    const domains = checkDomainTables(db)
+    const issues = [...selfConsistency.issues]
+    if (!integrity.ok) issues.push('integrity check failed: integrity=' + JSON.stringify(integrity.integrity) + ' foreignKeys=' + integrity.foreignKeys.length + ' orphanHistory=' + integrity.orphanHistory)
+    if (!domains.ok) issues.push('domains check failed: issues=' + JSON.stringify(domains.issues))
+    return {
+      ok: selfConsistency.ok && integrity.ok && domains.ok,
+      mode: 'verify-only',
+      dbPath,
+      counts,
+      countsMatch: selfConsistency.ok,
+      selfConsistency,
+      issues,
+      integrity: integrity.integrity,
+      foreignKeyViolations: integrity.foreignKeys.length,
+      orphanHistory: integrity.orphanHistory,
+      domains,
+      legacyComparison: legacyComparison(stateDir, counts),
+    }
+  } finally { db.close() }
 }
 
 export function verificationFailed(result) {
-  return result.ok === false || result.countsMatch === false
-    || (Array.isArray(result.sampleMismatches) && result.sampleMismatches.length > 0)
+  return result.ok === false || (result.selfConsistency && result.selfConsistency.ok === false)
+    || (Array.isArray(result.issues) && result.issues.length > 0)
     || !Array.isArray(result.integrity) || result.integrity.some(value => value !== 'ok')
     || result.foreignKeyViolations > 0 || result.orphanHistory > 0
     || (result.domains && result.domains.ok === false)

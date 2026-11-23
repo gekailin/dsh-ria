@@ -72,7 +72,8 @@ async function setup() {
   } finally { fixture.cleanup() }
 }
 
-// 2) Dispatch: Advisor WorkOrder only, [WorkOrder #ticketId] header, plus auto-watch.
+// 2) Dispatch: Advisor WorkOrder only, [WorkOrder #ticketId] header, and the
+//    execution binding lives on the ticket meta instead of the watch list.
 {
   const { fixture, chat, state, controller, textOf, register, ticket, dispatch } = await setup()
   try {
@@ -86,19 +87,22 @@ async function setup() {
       assert.ok(brief.includes(expected), 'brief should carry ' + expected)
     }
     assert.equal(fixture.service.store.ticket(ticketId).status, 'working')
-    // Dispatch also watches the session, tagged with the ticket.
+    // Dispatch must not touch the user registration; it binds execution on the
+    // ticket meta instead.
     const watch = controller.coManagement.watch('session-cm')
-    assert.ok(watch, 'dispatch should add a watch')
-    assert.equal(watch.addedBy, 'ticket:' + ticketId)
-    assert.equal(watch.reason, 'ticket-dispatch')
-    assert.equal(watch.ticketId, ticketId)
-    assert.equal(watch.options.relayReplies, true)
-    assert.equal(watch.options.relayQuestions, true)
+    assert.ok(watch, 'user registration remains')
+    const watchId = watch.watchId
+    assert.equal(String(watch.addedBy).startsWith('ticket:'), false, 'watch stays user-owned')
+    assert.equal(watch.ticketId, undefined)
+    const bound = state.ticketMeta(ticketId)
+    assert.equal(bound.executorSessionId, 'session-cm')
+    assert.equal(bound.executing, true)
     const list = await fixture.callAs(chat, 'ria_chat_watch', { action: 'list' })
-    assert.equal(list.watches.find(item => item.sessionId === 'session-cm').addedBy, 'ticket:' + ticketId)
-    // Idempotent: a second attach for the same ticket adds nothing.
+    assert.equal(list.watches.find(item => item.sessionId === 'session-cm').watchId, watchId)
+    // Idempotent: a second attach for the same ticket writes the same binding.
     controller.attachTicketWatch(fixture.service.store.ticket(ticketId), state.worker('session-cm'))
-    assert.equal(controller.coManagement.watches().filter(item => item.addedBy === 'ticket:' + ticketId).length, 1)
+    assert.equal(state.ticketMeta(ticketId).executorSessionId, 'session-cm')
+    assert.equal(controller.coManagement.watch('session-cm').watchId, watchId)
     // Assistant reply becomes a structured report.
     fixture.service.onSessionEvent({ header: { id: 'session-cm' } }, {
       type: 'assistant/message', time: Date.now(),
@@ -119,12 +123,16 @@ async function setup() {
     assert.equal(loose.structured, false)
     assert.equal(loose.unstructured, true)
     assert.equal(loose.summary, '随便说说，没有结构')
-    // stop_ticket works for co-managed: cancelled + the ticket watch is removed.
+    // stop_ticket works for co-managed: cancelled + only the execution binding
+    // is cleared, while the user registration survives.
     const stopped = await fixture.callAs(chat, 'ria_chat_stop_ticket', { ticketId, reason: '演练结束' })
     assert.equal(stopped.ok, true, JSON.stringify(stopped))
     assert.equal(fixture.service.store.ticket(ticketId).status, 'cancelled')
-    assert.equal(controller.coManagement.watch('session-cm'), null, 'terminal state removes the ticket watch')
-    console.log('co-managed dispatch, watch and stop ok')
+    assert.equal(controller.coManagement.watch('session-cm').watchId, watchId, 'terminal state keeps the registration')
+    const released = state.ticketMeta(ticketId)
+    assert.equal(released.executing, false)
+    assert.equal(released.executorSessionId, null)
+    console.log('co-managed dispatch, binding and stop ok')
   } finally { fixture.cleanup() }
 }
 // 3a) A turn that ends abnormally parks the ticket on the environment.
@@ -218,7 +226,7 @@ async function setup() {
   } finally { fixture.cleanup() }
 }
 
-// 5) Terminal cleanup removes only the ticket-owned watch; manual watches survive.
+// 5) Terminal cleanup never removes the user registration; a manual watch also survives.
 {
   const { fixture, chat, state, controller, register, ticket, dispatch } = await setup()
   try {
@@ -235,6 +243,9 @@ async function setup() {
     const remaining = controller.coManagement.watches().filter(item => item.sessionId === 'session-cm-other')
     assert.equal(remaining.length, 1)
     assert.equal(remaining[0].watchId, manualWatchId, 'manual watch is untouched')
+    const meta = state.ticketMeta(ticketId)
+    assert.equal(meta.executing, false, 'only the execution binding is cleared')
+    assert.equal(meta.executorSessionId, null)
     console.log('co-managed watch cleanup ok')
   } finally { fixture.cleanup() }
 }

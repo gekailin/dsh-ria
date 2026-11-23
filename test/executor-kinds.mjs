@@ -81,11 +81,11 @@ try {
   // ria_reflect_* tools (including the Sage context reader).
   const reflectionTools = fixture.visibleTools(reflectionExecutorId).sort()
   assert.deepEqual(reflectionTools, [
-    'glob', 'grep', 'read',
+    'glob', 'grep', 'read', 'ria_executor_report',
     'ria_reflect_read_context', 'ria_reflect_read_role_context',
     'ria_reflect_read_sage_context', 'ria_reflect_read_session',
     'ria_reflect_read_sessions', 'ria_reflect_read_tickets', 'ria_reflect_report',
-    'ria_reflect_status', 'ria_session_events', 'ria_session_list', 'ria_worker_report',
+    'ria_reflect_status', 'ria_session_events', 'ria_session_list',
   ])
   assert.equal(reflectionTools.includes('write'), false)
   assert.equal(reflectionTools.includes('edit'), false)
@@ -111,7 +111,7 @@ try {
   assert.notEqual(workExecutorId, reflectionExecutorId)
   const workTools = fixture.visibleTools(workExecutorId).sort()
   assert.deepEqual(workTools, [
-    'bash', 'edit', 'glob', 'grep', 'read', 'ria_worker_report', 'run_code', 'write',
+    'bash', 'edit', 'glob', 'grep', 'read', 'ria_executor_report', 'run_code', 'write',
   ])
   assert.equal(workTools.includes('ria_session_list'), false)
   assert.equal(workTools.includes('ria_session_events'), false)

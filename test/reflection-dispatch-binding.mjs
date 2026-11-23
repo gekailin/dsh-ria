@@ -179,7 +179,7 @@ const promptTextOf = (fixture, sessionId) => {
     ].join('\n')
     const reported = await fixture.callAs(executor, 'ria_reflect_report', { markdown, status: 'complete', counts: {} })
     assert.equal(reported.ok, true, JSON.stringify(reported))
-    const done = await fixture.callAs(executor, 'ria_worker_report', {
+    const done = await fixture.callAs(executor, 'ria_executor_report', {
       ticketId: started.runId, status: 'done', summary: markdown, evidence: ['draft written'],
     })
     assert.equal(done.ok, true, JSON.stringify(done))

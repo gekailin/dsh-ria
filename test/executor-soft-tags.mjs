@@ -28,7 +28,7 @@ try {
 
   // Reset the dispatch-time learning so this test proves the done path.
   store.addExecutor(executor.sessionId, { autoTags: [], recentTopics: [] })
-  const done = await fixture.callAs(executor.sessionId, 'ria_worker_report', {
+  const done = await fixture.callAs(executor.sessionId, 'ria_executor_report', {
     ticketId: request.ticketId, status: 'done', summary: 'completed', evidence: ['test: soft tags'],
   })
   assert.equal(done.ok, true, JSON.stringify(done))

@@ -89,7 +89,7 @@ try {
   assert.equal(dispatched.ok, true, JSON.stringify(dispatched))
   const runExecutor = dispatched.executorSessionId
   assert.equal(controller.state.executor(runExecutor).executorLabel, controller.state.executor(runExecutor).executorLabel)
-  const report = await fixture.callAs(runExecutor, 'ria_worker_report', {
+  const report = await fixture.callAs(runExecutor, 'ria_executor_report', {
     ticketId: request.ticketId, status: 'done', summary: ['# 反思报告', '', 'lifecycle ok'].join('\n'), evidence: ['test'],
   })
   assert.equal(report.ok, true, JSON.stringify(report))
@@ -117,7 +117,7 @@ try {
   assert.equal(dispatched2.ok, true, JSON.stringify(dispatched2))
   assert.notEqual(dispatched2.executorSessionId, runExecutor)
   assert.equal(controller.state.executor(dispatched2.executorSessionId).executorType, 'reflection')
-  const report2 = await fixture.callAs(dispatched2.executorSessionId, 'ria_worker_report', {
+  const report2 = await fixture.callAs(dispatched2.executorSessionId, 'ria_executor_report', {
     ticketId: secondRun.reflectionTicketId, status: 'done', summary: ['# 反思报告', '', 'second run'].join('\n'), evidence: ['test'],
   })
   assert.equal(report2.ok, true, JSON.stringify(report2))

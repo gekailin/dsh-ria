@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { createFixture } from './support/ria-fixture.mjs'
 
 // Stuck detection must look at the Executor session, not only the ticket record:
-// a Executor that runs many steps without ria_worker_report(progress) keeps the
+// a Executor that runs many steps without ria_executor_report(progress) keeps the
 // ticket record frozen while the session is perfectly alive.
 const fixture = await createFixture({ stateDefault: true })
 try {

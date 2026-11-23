@@ -65,7 +65,7 @@ await withFixture(async fixture => {
   const controller = fixture.service.controller
   const chat = controller.state.chatSessionId
   const explicitOnly = await controller.ensureExecutor('global')
-  const off = await fixture.callAs(chat, 'ria_chat_worker_config', {
+  const off = await fixture.callAs(chat, 'ria_chat_executor_config', {
     action: 'set', executorId: explicitOnly.sessionId, allowAutoDispatch: false,
   })
   assert.equal(off.ok, true, JSON.stringify(off))
@@ -80,9 +80,9 @@ await withFixture(async fixture => {
   assert.equal(controller.state.executor(explicitOnly.sessionId).cwd, auto.meta.cwd)
   controller.state.addExecutor(explicitOnly.sessionId, { lastUsedAt: Date.now() + 1000 })
   assert.equal((await controller.ensureExecutor('global')).sessionId, auto.sessionId)
-  const get = await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'get' })
+  const get = await fixture.callAs(chat, 'ria_chat_executor_config', { action: 'get' })
   assert.equal(get.executors.find(item => item.sessionId === explicitOnly.sessionId).allowAutoDispatch, false)
-  const on = await fixture.callAs(chat, 'ria_chat_worker_config', {
+  const on = await fixture.callAs(chat, 'ria_chat_executor_config', {
     action: 'set', seq: explicitOnly.meta.seq, allowAutoDispatch: true,
   })
   assert.equal(on.ok, true, JSON.stringify(on))
@@ -96,13 +96,13 @@ await withFixture(async fixture => {
   assert.ok(changes.some(event => event.payload.before === true && event.payload.after === false))
   assert.ok(changes.some(event => event.payload.before === false && event.payload.after === true))
   assert.ok(changes.every(event => event.actor === 'chat' && event.payload.executorId === explicitOnly.sessionId))
-  const repeated = await fixture.callAs(chat, 'ria_chat_worker_config', {
+  const repeated = await fixture.callAs(chat, 'ria_chat_executor_config', {
     action: 'set', executorId: explicitOnly.sessionId, allowAutoDispatch: true,
   })
   assert.equal(repeated.ok, true)
   assert.equal(eventsFor(fixture).filter(event => event.event === 'executor.config.changed' && event.payload.field === 'allowAutoDispatch').length, 2)
   for (const value of ['false', 0, null]) {
-    const invalid = await fixture.callAs(chat, 'ria_chat_worker_config', {
+    const invalid = await fixture.callAs(chat, 'ria_chat_executor_config', {
       action: 'set', executorId: explicitOnly.sessionId, allowAutoDispatch: value,
     })
     assert.equal(invalid.code, 'invalid_allow_auto_dispatch')
@@ -128,7 +128,7 @@ for (const selector of ['executorId', 'executorSeq']) {
     assert.equal(fixture.service.tickets.ticket(request.ticketId).executor, target.sessionId)
     assert.equal(controller.state.executor(target.sessionId).allowAutoDispatch, false)
     // The opt-out concerns new automatic assignments, not reporting or resuming this ticket.
-    const blocked = await fixture.callAs(target.sessionId, 'ria_worker_report', { ticketId: request.ticketId, status: 'blocked', question: 'continue?' })
+    const blocked = await fixture.callAs(target.sessionId, 'ria_executor_report', { ticketId: request.ticketId, status: 'blocked', question: 'continue?' })
     assert.equal(blocked.ok, true)
     const resumed = await fixture.callAs(chat, 'ria_chat_resume', { ticketId: request.ticketId })
     assert.equal(resumed.ok, true, JSON.stringify(resumed))
@@ -264,14 +264,14 @@ await withFixture(async fixture => {
   const controller = fixture.service.controller
   const { request, advisor, chat } = await plannedTicket(fixture)
   const sent = await fixture.callAs(advisor, 'ria_ticket_dispatch', { ticketId: request.ticketId })
-  const updated = await fixture.callAs(chat, 'ria_chat_worker_config', {
+  const updated = await fixture.callAs(chat, 'ria_chat_executor_config', {
     action: 'set', executorId: sent.executorSessionId, allowAutoDispatch: false,
   })
   assert.equal(updated.ok, true, JSON.stringify(updated))
   assert.equal(updated.executor.currentTicketId, request.ticketId)
   assert.equal(fixture.service.tickets.ticket(request.ticketId).status, 'working')
   assert.equal(fixture.cancelCalls.length, 0)
-  const report = await fixture.callAs(sent.executorSessionId, 'ria_worker_report', {
+  const report = await fixture.callAs(sent.executorSessionId, 'ria_executor_report', {
     ticketId: request.ticketId, status: 'done', summary: 'complete', evidence: ['test'],
   })
   assert.equal(report.ok, true)
@@ -300,14 +300,14 @@ await withFixture(async fixture => {
   const controller = fixture.service.controller
   const chat = controller.state.chatSessionId
   const target = await controller.ensureExecutor('global')
-  const combined = await fixture.callAs(chat, 'ria_chat_worker_config', {
+  const combined = await fixture.callAs(chat, 'ria_chat_executor_config', {
     action: 'set', executorId: target.sessionId, model: 'model-fast', provider: 'provider-ok', allowAutoDispatch: false,
   })
   assert.equal(combined.ok, true, JSON.stringify(combined))
   assert.equal(combined.after.model, 'model-fast')
   assert.deepEqual(combined.autoDispatch, { before: true, after: false })
   assert.equal(combined.executor.allowAutoDispatch, false)
-  const recreated = await fixture.callAs(chat, 'ria_chat_worker_config', {
+  const recreated = await fixture.callAs(chat, 'ria_chat_executor_config', {
     action: 'set', executorId: target.sessionId, preset: 'minimal', recreate: true,
   })
   assert.equal(recreated.ok, true, JSON.stringify(recreated))
@@ -406,7 +406,7 @@ await withFixture(async fixture => {
     controller.state.removeExecutor(executor.sessionId)
     return snapshot
   }
-  const updated = await fixture.callAs(chat, 'ria_chat_worker_config', {
+  const updated = await fixture.callAs(chat, 'ria_chat_executor_config', {
     action: 'set', executorId: target.sessionId, allowAutoDispatch: false,
   })
   assert.equal(updated.ok, false)

@@ -28,7 +28,7 @@ function promptTo(fixture, sessionId, after) {
   const { fixture, chat } = await setup()
   try {
     const { ticketId, executorId } = await planAndDispatch(fixture, chat)
-    const blocked = await fixture.callAs(executorId, 'ria_worker_report', {
+    const blocked = await fixture.callAs(executorId, 'ria_executor_report', {
       ticketId,
       status: 'blocked',
       summary: 'need a format decision',
@@ -167,7 +167,7 @@ function promptTo(fixture, sessionId, after) {
   const { fixture, chat } = await setup()
   try {
     const { ticketId, executorId } = await planAndDispatch(fixture, chat)
-    const blocked = await fixture.callAs(executorId, 'ria_worker_report', {
+    const blocked = await fixture.callAs(executorId, 'ria_executor_report', {
       ticketId,
       status: 'blocked',
       summary: 'need a decision',
@@ -201,7 +201,7 @@ function promptTo(fixture, sessionId, after) {
   const { fixture, chat } = await setup()
   try {
     const { ticketId, executorId } = await planAndDispatch(fixture, chat)
-    await fixture.callAs(executorId, 'ria_worker_report', { ticketId, status: 'blocked', summary: 'decision', question: 'continue?' })
+    await fixture.callAs(executorId, 'ria_executor_report', { ticketId, status: 'blocked', summary: 'decision', question: 'continue?' })
     fixture.service.controller.turnStartedAt.set(executorId, Date.now())
     const other = await fixture.service.controller.ensureExecutor('global')
     fixture.service.controller.turnStartedAt.delete(executorId)
@@ -220,7 +220,7 @@ for (const unavailable of ['archived', 'missing', 'unresolvable']) {
   const { fixture, chat } = await setup()
   try {
     const { ticketId, executorId } = await planAndDispatch(fixture, chat)
-    await fixture.callAs(executorId, 'ria_worker_report', { ticketId, status: 'blocked', summary: 'decision', question: 'continue?' })
+    await fixture.callAs(executorId, 'ria_executor_report', { ticketId, status: 'blocked', summary: 'decision', question: 'continue?' })
     if (unavailable === 'archived') fixture.archivedSessions.push(executorId)
     else if (unavailable === 'missing') fixture.service.controller.state.removeExecutor(executorId)
     else {
@@ -248,7 +248,7 @@ for (const unavailable of ['archived', 'missing', 'unresolvable']) {
   try {
     const { ticketId, executorId } = await planAndDispatch(fixture, chat)
     fixture.service.controller.turnStartedAt.set(executorId, Date.now())
-    await fixture.callAs(executorId, 'ria_worker_report', { ticketId, status: 'blocked', summary: 'decision', question: 'continue?' })
+    await fixture.callAs(executorId, 'ria_executor_report', { ticketId, status: 'blocked', summary: 'decision', question: 'continue?' })
     const resumed = await fixture.callAs(chat, 'ria_chat_resume', { ticketId, message: 'continue' })
     assert.equal(resumed.ok, true, JSON.stringify(resumed))
     assert.equal(resumed.executorSessionId, executorId)
@@ -304,7 +304,7 @@ for (const unavailable of ['archived', 'missing', 'unresolvable']) {
       sandboxMode: 'danger-full-access', approvalPolicy: 'never', reason: 'explicit ticket grant', ttlSeconds: 60 })
     assert.equal(granted.ok, true, JSON.stringify(granted))
     assert.equal(granted.grant.ticketId, ticketId)
-    await fixture.callAs(executorId, 'ria_worker_report', { ticketId, status: 'blocked', summary: 'handoff', question: 'choose executor?' })
+    await fixture.callAs(executorId, 'ria_executor_report', { ticketId, status: 'blocked', summary: 'handoff', question: 'choose executor?' })
     fixture.service.controller.turnStartedAt.set(executorId, Date.now())
     const replacement = await fixture.service.controller.ensureExecutor('global')
     fixture.service.controller.turnStartedAt.delete(executorId)

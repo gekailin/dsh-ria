@@ -27,7 +27,7 @@ try {
 
   // A steer after the last step boundary is consumed by an extra prompt at done.
   await fixture.callAs(chat, 'ria_chat_steer', { ticketId: ticket.ticketId, message: 'late instruction' })
-  const done = await fixture.callAs(executor, 'ria_worker_report', { ticketId: ticket.ticketId, status: 'done', summary: 'finished', evidence: ['test'] })
+  const done = await fixture.callAs(executor, 'ria_executor_report', { ticketId: ticket.ticketId, status: 'done', summary: 'finished', evidence: ['test'] })
   assert.equal(done.ok, true, JSON.stringify(done))
   assert.equal(fixture.service.store.ticket(ticket.ticketId).status, 'done')
   assert.equal(controller.state.pendingInbox(ticket.ticketId, executor).length, 0)
@@ -39,7 +39,7 @@ try {
   fixture.setRunning(executor, true)
   await fixture.callAs(chat, 'ria_chat_steer', { ticketId: second.ticketId, message: 'never delivered' })
   fixture.setPromptFailure(new Error('executor unavailable'))
-  const failedDone = await fixture.callAs(executor, 'ria_worker_report', { ticketId: second.ticketId, status: 'done', summary: 'finished', evidence: ['test'] })
+  const failedDone = await fixture.callAs(executor, 'ria_executor_report', { ticketId: second.ticketId, status: 'done', summary: 'finished', evidence: ['test'] })
   assert.equal(failedDone.ok, false)
   assert.equal(failedDone.code, 'steer_undelivered')
   assert.equal(fixture.service.store.ticket(second.ticketId).status, 'blocked')
@@ -61,7 +61,7 @@ try {
   // Empty inbox done path remains unchanged.
   const fourth = fixture.service.store.addTicket({ status: 'working', executor: executor, goal: 'empty inbox' })
   controller.state.setTicketMeta(fourth.ticketId, { phase: 'working', executorId: executor })
-  const emptyDone = await fixture.callAs(executor, 'ria_worker_report', { ticketId: fourth.ticketId, status: 'done', summary: 'finished', evidence: ['test'] })
+  const emptyDone = await fixture.callAs(executor, 'ria_executor_report', { ticketId: fourth.ticketId, status: 'done', summary: 'finished', evidence: ['test'] })
   assert.equal(emptyDone.ok, true)
   assert.equal(fixture.service.store.ticket(fourth.ticketId).status, 'done')
 

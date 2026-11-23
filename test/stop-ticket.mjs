@@ -165,7 +165,7 @@ const eventsOf = stateDir => {
     controller.state.addExecutor(executor, { status: 'idle', currentTicketId: null })
     const ticket = store.addTicket({ status: 'working', executor: executor, goal: 'already done' })
     controller.state.setTicketMeta(ticket.ticketId, { phase: 'working', executorId: executor })
-    const done = await fixture.callAs(executor, 'ria_worker_report', { ticketId: ticket.ticketId, status: 'done', summary: 'finished', evidence: ['test'] })
+    const done = await fixture.callAs(executor, 'ria_executor_report', { ticketId: ticket.ticketId, status: 'done', summary: 'finished', evidence: ['test'] })
     assert.equal(done.ok, true, JSON.stringify(done))
     const stopped = await fixture.callAs(chat, 'ria_chat_stop_ticket', { ticketId: ticket.ticketId, reason: 'too late' })
     assert.equal(stopped.ok, false)

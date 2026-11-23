@@ -75,7 +75,7 @@ await run('idle resume is consumed immediately once, with no host next-turn item
   assert.ok(h.events().some(event => event.event === 'steer.delivered' && event.payload.deliveryMode === 'immediate' && event.payload.source === 'resume'))
   // A following boundary or done cannot replay the already consumed reply.
   assert.deepEqual((await h.step()).messages, [])
-  const done = await h.fixture.callAs(h.executor, 'ria_worker_report', { ticketId: h.ticketId, status: 'done', summary: 'consumed', evidence: ['mock input'] })
+  const done = await h.fixture.callAs(h.executor, 'ria_executor_report', { ticketId: h.ticketId, status: 'done', summary: 'consumed', evidence: ['mock input'] })
   assert.equal(done.ok, true)
   assert.equal(h.host.inputs.length, 1)
 })
@@ -113,7 +113,7 @@ await run('done with unconsumed resume prompts one additional turn and consumes 
   h.park()
   assert.equal((await h.resume('resume-done-token')).ok, true)
   assert.equal(h.inbox().length, 1)
-  const done = await h.fixture.callAs(h.executor, 'ria_worker_report', { ticketId: h.ticketId, status: 'done', summary: 'first turn finished', evidence: ['test'] })
+  const done = await h.fixture.callAs(h.executor, 'ria_executor_report', { ticketId: h.ticketId, status: 'done', summary: 'first turn finished', evidence: ['test'] })
   assert.equal(done.ok, true, JSON.stringify(done))
   assert.equal(h.host.nextTurn.length, 1)
   assert.match(h.host.nextTurn[0].content[0].text, /resume-done-token/)
@@ -151,7 +151,7 @@ await run('done-retry exhaustion blocks and notifies, without losing resume', as
     if (request.sessionId === h.executor) { attempts.push(request); throw new Error('mock executor unavailable') }
     return original(request, signal)
   }
-  const done = await h.fixture.callAs(h.executor, 'ria_worker_report', { ticketId: h.ticketId, status: 'done', summary: 'finish', evidence: ['test'] })
+  const done = await h.fixture.callAs(h.executor, 'ria_executor_report', { ticketId: h.ticketId, status: 'done', summary: 'finish', evidence: ['test'] })
   assert.equal(done.ok, false)
   assert.equal(done.code, 'steer_undelivered')
   assert.equal(attempts.length, 2, 'reuse STEER_MAX_DELIVERY_ATTEMPTS=2')
@@ -257,7 +257,7 @@ for (const mode of deliveryModes) {
       const decision = await h.step()
       assert.match(decision.messages[0].content[0].text, /steer-pre-step-token/)
     } else if (mode === 'done-retry') {
-      const done = await h.fixture.callAs(h.executor, 'ria_worker_report', { ticketId: h.ticketId, status: 'done', summary: 'done', evidence: ['test'] })
+      const done = await h.fixture.callAs(h.executor, 'ria_executor_report', { ticketId: h.ticketId, status: 'done', summary: 'done', evidence: ['test'] })
       assert.equal(done.ok, true)
     }
     assert.deepEqual(h.inbox(), [])

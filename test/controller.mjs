@@ -73,7 +73,7 @@ try {
   assert.equal(historicalStatus.ticket.status, historical.status)
   const historicalBrief = ticketBrief(historical, { goal: historical.goal }, fixture.service.controller.state.ticketMeta(modeIgnored.ticketId))
   assert.match(historicalBrief, /模式: work/)
-  assert.deepEqual(fixture.visibleTools(chat).sort(), ['ria_chat_co_manage', 'ria_chat_direct', 'ria_chat_grant', 'ria_chat_models', 'ria_chat_new_session', 'ria_chat_propose', 'ria_chat_read', 'ria_chat_request', 'ria_chat_resume', 'ria_chat_send_image', 'ria_chat_sessions', 'ria_chat_status', 'ria_chat_steer', 'ria_chat_stop_ticket', 'ria_chat_watch', 'ria_chat_worker_config'])
+  assert.deepEqual(fixture.visibleTools(chat).sort(), ['ria_chat_co_manage', 'ria_chat_direct', 'ria_chat_executor_config', 'ria_chat_grant', 'ria_chat_models', 'ria_chat_new_session', 'ria_chat_propose', 'ria_chat_read', 'ria_chat_request', 'ria_chat_resume', 'ria_chat_send_image', 'ria_chat_sessions', 'ria_chat_status', 'ria_chat_steer', 'ria_chat_stop_ticket', 'ria_chat_watch'])
   // WeChat Claw resolves its peer session through these two callbacks. In state
   // they must point at the Chat, not at the retired legacy manager.
   assert.equal(fixture.service.wechatClaw.getRiaId(), chat)
@@ -252,7 +252,7 @@ try {
   assert.equal(working.attempt.legacy, false)
 
   const executor = dispatch.executorSessionId
-  assert.deepEqual(fixture.visibleTools(executor).sort(), ['bash', 'edit', 'read', 'ria_worker_report', 'run_code', 'write'])
+  assert.deepEqual(fixture.visibleTools(executor).sort(), ['bash', 'edit', 'read', 'ria_executor_report', 'run_code', 'write'])
   // The retired polling tool is absent; use the host's ordinary missing-tool
   // error, never a compatibility handler that could consume pending messages.
   const retiredTool = ['executor', 'checkpoint'].join('_')
@@ -319,7 +319,7 @@ try {
   await fixture.service.controller.retryManagerInboxAtTurnEnd(created.ticketId, executor)
   assert.equal(fixture.prompts.length, beforeRepeat)
 
-  const progress = await fixture.callAs(executor, 'ria_worker_report', {
+  const progress = await fixture.callAs(executor, 'ria_executor_report', {
     ticketId: created.ticketId,
     status: 'progress',
     summary: 'notes read',
@@ -328,7 +328,7 @@ try {
   assert.equal(progress.ok, true)
   assert.equal(fixture.service.store.ticket(created.ticketId).progress.lastPhase, 'notes read')
 
-  const blockedReport = await fixture.callAs(executor, 'ria_worker_report', {
+  const blockedReport = await fixture.callAs(executor, 'ria_executor_report', {
     ticketId: created.ticketId,
     status: 'blocked',
     summary: 'need a format decision',
@@ -363,7 +363,7 @@ try {
   })
   assert.equal(doneGrant.ok, true)
 
-  const done = await fixture.callAs(executor, 'ria_worker_report', {
+  const done = await fixture.callAs(executor, 'ria_executor_report', {
     ticketId: created.ticketId,
     status: 'done',
     summary: 'summary written',
@@ -514,7 +514,7 @@ try {
   const chat = second.service.controller.state.chatSessionId
   assert.ok(chat)
   assert.equal(second.service.store.riaSessionId, chat)
-  assert.deepEqual(second.visibleTools(chat).sort(), ['ria_chat_co_manage', 'ria_chat_direct', 'ria_chat_grant', 'ria_chat_models', 'ria_chat_new_session', 'ria_chat_propose', 'ria_chat_read', 'ria_chat_request', 'ria_chat_resume', 'ria_chat_send_image', 'ria_chat_sessions', 'ria_chat_status', 'ria_chat_steer', 'ria_chat_stop_ticket', 'ria_chat_watch', 'ria_chat_worker_config'])
+  assert.deepEqual(second.visibleTools(chat).sort(), ['ria_chat_co_manage', 'ria_chat_direct', 'ria_chat_executor_config', 'ria_chat_grant', 'ria_chat_models', 'ria_chat_new_session', 'ria_chat_propose', 'ria_chat_read', 'ria_chat_request', 'ria_chat_resume', 'ria_chat_send_image', 'ria_chat_sessions', 'ria_chat_status', 'ria_chat_steer', 'ria_chat_stop_ticket', 'ria_chat_watch'])
   await second.service.startup()
   const parked = second.service.store.ticket(workingTicketId)
   assert.equal(parked.status, 'blocked')

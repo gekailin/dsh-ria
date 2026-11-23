@@ -6,7 +6,7 @@ const planReply = routing => () => JSON.stringify({
   workOrder: { summary: 'plan the work', steps: ['do it'], ...(routing ? { routing } : {}) },
 })
 
-// 1) ria_chat_worker_config carries explicit tags, roleNote and dedicated.
+// 1) ria_chat_executor_config carries explicit tags, roleNote and dedicated.
 {
   const fixture = await createFixture({ stateDefault: true, advisorPlan: 'stateless', llmReply: planReply() })
   try {
@@ -15,7 +15,7 @@ const planReply = routing => () => JSON.stringify({
     const executor = await controller.ensureExecutor('global')
     const events = []
     fixture.service.routerEvent = event => { events.push(event) }
-    const set = await fixture.callAs(chat, 'ria_chat_worker_config', {
+    const set = await fixture.callAs(chat, 'ria_chat_executor_config', {
       action: 'set', executorId: executor.sessionId,
       tags: ['SQLite', '前端 UI'], roleNote: '数据库事务专用', dedicated: true,
     })
@@ -28,20 +28,20 @@ const planReply = routing => () => JSON.stringify({
     const configEvents = events.filter(event => event.event === 'executor.config.changed')
     assert.deepEqual(configEvents.map(event => event.payload.field).sort(), ['dedicated', 'roleNote', 'tags'])
 
-    const get = await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'get' })
+    const get = await fixture.callAs(chat, 'ria_chat_executor_config', { action: 'get' })
     const row = get.executors.find(item => item.sessionId === executor.sessionId)
     assert.deepEqual(row.tags, ['sqlite', '前端-ui'])
     assert.equal(row.dedicated, true)
 
     // Clearing explicit tags is explicit: pass [].
-    const cleared = await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'set', executorId: executor.sessionId, tags: [], dedicated: false })
+    const cleared = await fixture.callAs(chat, 'ria_chat_executor_config', { action: 'set', executorId: executor.sessionId, tags: [], dedicated: false })
     assert.equal(cleared.ok, true)
     assert.deepEqual(cleared.executor.tags, [])
     assert.equal(cleared.executor.dedicated, false)
 
-    assert.equal((await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'set', executorId: executor.sessionId, tags: 'docs' })).code, 'invalid_tags')
-    assert.equal((await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'set', executorId: executor.sessionId, roleNote: 'x'.repeat(121) })).code, 'invalid_role_note')
-    assert.equal((await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'set', executorId: executor.sessionId, dedicated: 'yes' })).code, 'invalid_dedicated')
+    assert.equal((await fixture.callAs(chat, 'ria_chat_executor_config', { action: 'set', executorId: executor.sessionId, tags: 'docs' })).code, 'invalid_tags')
+    assert.equal((await fixture.callAs(chat, 'ria_chat_executor_config', { action: 'set', executorId: executor.sessionId, roleNote: 'x'.repeat(121) })).code, 'invalid_role_note')
+    assert.equal((await fixture.callAs(chat, 'ria_chat_executor_config', { action: 'set', executorId: executor.sessionId, dedicated: 'yes' })).code, 'invalid_dedicated')
     console.log('executor config identity ok')
   } finally {
     fixture.cleanup()

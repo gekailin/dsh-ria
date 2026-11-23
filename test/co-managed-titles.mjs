@@ -86,7 +86,7 @@ try {
   assert.equal(roleExecutorTitle('work', 2), 'Ria Executor 2')
 
   // 5) The executor-config listing shows executorLabel, not a host-renamed title.
-  const config = await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'get' })
+  const config = await fixture.callAs(chat, 'ria_chat_executor_config', { action: 'get' })
   const row = config.executors.find(item => item.sessionId === 'session-co-title')
   assert.equal(row.title, '众源BEV新')
   assert.equal(row.seq, 0)

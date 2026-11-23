@@ -146,10 +146,10 @@ try {
   assert.equal(ticketOf(ticketId).status, 'blocked')
   assert.equal(ticketOf(ticketId).waitingOn, 'approval')
   {
-    const progress = await fixture.callAs(executor, 'ria_worker_report', { ticketId, status: 'progress', summary: 'still waiting' })
+    const progress = await fixture.callAs(executor, 'ria_executor_report', { ticketId, status: 'progress', summary: 'still waiting' })
     assert.equal(progress.ok, true)
     assert.equal(progress.status, 'blocked')
-    const done = await fixture.callAs(executor, 'ria_worker_report', { ticketId, status: 'done', summary: 'finished', evidence: ['command exit 0'] })
+    const done = await fixture.callAs(executor, 'ria_executor_report', { ticketId, status: 'done', summary: 'finished', evidence: ['command exit 0'] })
     assert.equal(done.ok, true, JSON.stringify(done))
     assert.equal(done.status, 'done')
     const ticket = ticketOf(ticketId)

@@ -207,7 +207,7 @@ const noticesAbout = (fixture, chat, ticketId) => fixture.prompts
   assert.equal(computeTicketHealth(ticket, { activeTurn: true, now: at(20), thresholdMinutes: 20 }).stuckSuspect, false)
   assert.equal(computeTicketHealth(ticket, { activeTurn: true, now: at(21), thresholdMinutes: 20 }).stuckSuspect, true)
   // Primary rule: a fresh Executor session means the ticket is advancing, however
-  // old the ticket record is. A step-running turn never writes ria_worker_report.
+  // old the ticket record is. A step-running turn never writes ria_executor_report.
   const sessionFresh = computeTicketHealth(ticket, { activeTurn: true, now: at(60), sessionLastEventAt: at(59) })
   assert.equal(sessionFresh.sessionLastEventAgeMinutes, 1)
   assert.equal(sessionFresh.stuckSuspect, false, 'a live session is never stuck')
@@ -247,7 +247,7 @@ const noticesAbout = (fixture, chat, ticketId) => fixture.prompts
   assert.equal(empty.stuckSuspect, true)
 }
 
-// 6. ria_chat_status ticket view and ria_chat_worker_config get agree for the same
+// 6. ria_chat_status ticket view and ria_chat_executor_config get agree for the same
 //    ticket, both criteria included; status/currentTicketId consistency holds.
 {
   const { fixture, chat } = await setup()
@@ -256,7 +256,7 @@ const noticesAbout = (fixture, chat, ticketId) => fixture.prompts
     turnStart(fixture, executorId, 4)
 
     const viewOf = async () => (await fixture.callAs(chat, 'ria_chat_status', { ticketId })).ticket
-    const executorOf = async () => (await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'get' })).executors
+    const executorOf = async () => (await fixture.callAs(chat, 'ria_chat_executor_config', { action: 'get' })).executors
       .find(item => item.sessionId === executorId)
 
     const viewActive = await viewOf()

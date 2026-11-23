@@ -18,10 +18,10 @@ const SAGE_FORBIDDEN = [
   'schedule_create', 'skill', 'todo_write', 'workflow', 'working_directory',
 ]
 const CHAT_TOOLS = [
-  'ria_chat_co_manage', 'ria_chat_direct', 'ria_chat_grant', 'ria_chat_models', 'ria_chat_new_session',
+  'ria_chat_co_manage', 'ria_chat_direct', 'ria_chat_executor_config', 'ria_chat_grant', 'ria_chat_models', 'ria_chat_new_session',
   'ria_chat_propose', 'ria_chat_read', 'ria_chat_request', 'ria_chat_resume',
   'ria_chat_send_image', 'ria_chat_sessions', 'ria_chat_status', 'ria_chat_steer', 'ria_chat_stop_ticket',
-  'ria_chat_watch', 'ria_chat_worker_config',
+  'ria_chat_watch',
 ]
 // Preset/global tools this fixture mounts. It deliberately mirrors the families
 // the deployed standard/ptc presets expose (shell, fs, search, delegation,
@@ -94,7 +94,7 @@ try {
     'task', 'web_fetch', 'web_search', 'plugin_manager', 'present',
     'schedule_create', 'skill', 'todo_write', 'workflow', 'working_directory',
     'create_goal', 'get_goal', 'update_goal', 'ask_user_question', 'job_list',
-    'list_subagent_models', 'exit_plan_mode', 'ria_worker_report', 'write',
+    'list_subagent_models', 'exit_plan_mode', 'ria_executor_report', 'write',
   ].sort())
   for (const name of EXECUTOR_DENY) {
     assert.equal(executorTools.includes(name), false, name + ' must stay denied to Executors')

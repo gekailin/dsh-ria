@@ -90,7 +90,7 @@ try {
     assert.equal(dispatched.ok, true, JSON.stringify(dispatched))
     const reportNotices = []
     c.notifyChat = async message => { reportNotices.push(message); return true }
-    const report = await reportFixture.callAs(dispatched.executorSessionId, 'ria_worker_report', {
+    const report = await reportFixture.callAs(dispatched.executorSessionId, 'ria_executor_report', {
       ticketId: request.ticketId, status: 'blocked', summary: 'need answer',
     })
     assert.equal(report.ok, true, JSON.stringify(report))

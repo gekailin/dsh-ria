@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { createFixture } from './support/ria-fixture.mjs'
 
 // New Executors may name a preset; existing Executors keep theirs when reused.
-// ria_chat_worker_config reads configuration and changes model live, while a
+// ria_chat_executor_config reads configuration and changes model live, while a
 // preset change needs a recreate (DSH has no live preset switch).
 
 const fixture = await createFixture({ stateDefault: true })
@@ -74,8 +74,8 @@ try {
   assert.equal(reused.preset, 'standard', 'reused Executors keep their creation preset')
   assert.equal(store.executor(created.sessionId).preset, 'standard')
 
-  // ⑤ ria_chat_worker_config get lists the fields the Chat needs.
-  const list = await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'get' })
+  // ⑤ ria_chat_executor_config get lists the fields the Chat needs.
+  const list = await fixture.callAs(chat, 'ria_chat_executor_config', { action: 'get' })
   assert.equal(list.ok, true)
   assert.deepEqual(list.presets, ['ptc', 'standard', 'minimal'])
   const listed = list.executors.find(item => item.sessionId === created.sessionId)
@@ -89,7 +89,7 @@ try {
   assert.deepEqual(listed.model, { provider: 'provider-ok', model: 'model-vision' })
 
   // ⑥ Model changes apply live and emit executor.config.changed.
-  const modelChanged = await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'set', executorId: created.sessionId, model: 'model-fast', provider: 'provider-ok' })
+  const modelChanged = await fixture.callAs(chat, 'ria_chat_executor_config', { action: 'set', executorId: created.sessionId, model: 'model-fast', provider: 'provider-ok' })
   assert.equal(modelChanged.ok, true, JSON.stringify(modelChanged))
   assert.equal(modelChanged.recreated, false)
   assert.equal(modelChanged.after.model, 'model-fast')
@@ -99,11 +99,11 @@ try {
   assert.equal(modelEvent.payload.executorId, created.sessionId)
   assert.equal(modelEvent.payload.before.model, 'model-vision')
   assert.equal(modelEvent.payload.after.model, 'model-fast')
-  const afterModel = await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'get' })
+  const afterModel = await fixture.callAs(chat, 'ria_chat_executor_config', { action: 'get' })
   assert.equal(afterModel.executors.find(item => item.sessionId === created.sessionId).model.model, 'model-fast')
 
   // ⑦ A preset change without recreate is refused with an actionable error.
-  const presetOnly = await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'set', executorId: created.sessionId, preset: 'minimal' })
+  const presetOnly = await fixture.callAs(chat, 'ria_chat_executor_config', { action: 'set', executorId: created.sessionId, preset: 'minimal' })
   assert.equal(presetOnly.ok, false)
   assert.equal(presetOnly.code, 'executor_preset_requires_recreate')
   assert.match(presetOnly.message, /重建 executor/)
@@ -111,7 +111,7 @@ try {
 
   // ⑧ recreate: old binding stops being selectable, a new Executor appears in the
   // same cwd/type with the new preset, and the old session is archived.
-  const recreated = await fixture.callAs(chat, 'ria_chat_worker_config', {
+  const recreated = await fixture.callAs(chat, 'ria_chat_executor_config', {
     action: 'set',
     executorId: created.sessionId,
     preset: 'minimal',
@@ -135,10 +135,10 @@ try {
   assert.equal(presetEvent.payload.newExecutorId, replacement.sessionId)
 
   // ⑨ Errors stay readable.
-  const missing = await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'set', executorId: 'session-nope', model: 'model-fast' })
+  const missing = await fixture.callAs(chat, 'ria_chat_executor_config', { action: 'set', executorId: 'session-nope', model: 'model-fast' })
   assert.equal(missing.ok, false)
   assert.equal(missing.code, 'executor_missing')
-  const badPreset = await fixture.callAs(chat, 'ria_chat_worker_config', { action: 'set', executorId: replacement.sessionId, preset: 'danger' })
+  const badPreset = await fixture.callAs(chat, 'ria_chat_executor_config', { action: 'set', executorId: replacement.sessionId, preset: 'danger' })
   assert.equal(badPreset.ok, false)
   assert.equal(badPreset.code, 'invalid_executor_preset')
   assert.match(badPreset.message, /ptc, standard, minimal/)

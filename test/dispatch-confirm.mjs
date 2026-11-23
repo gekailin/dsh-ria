@@ -52,7 +52,7 @@ function expire(fixture, ticketId) {
   }
 }
 
-// 2. A ria_worker_report(progress) is equally hard evidence: those events can be
+// 2. A ria_executor_report(progress) is equally hard evidence: those events can be
 // observed without a turn/start, and the report path must confirm before the
 // sweep runs. The reconcile scan also treats an existing progress record as
 // one-time evidence, covering a lost confirmation from an older build.
@@ -60,7 +60,7 @@ function expire(fixture, ticketId) {
   const { fixture, chat } = await setup()
   try {
     const { ticketId, executorId } = await dispatch(fixture, chat)
-    const reported = await fixture.callAs(executorId, 'ria_worker_report', {
+    const reported = await fixture.callAs(executorId, 'ria_executor_report', {
       ticketId,
       status: 'progress',
       summary: 'baseline checked',

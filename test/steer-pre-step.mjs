@@ -103,7 +103,7 @@ try {
   assert.equal(controller.state.pendingInbox(fourth.ticketId, executor).length, 0)
   assert.deepEqual((await preStep()).messages, [])
   const beforeDone = fixture.prompts.filter(item => item.sessionId === executor).length
-  assert.equal((await fixture.callAs(executor, 'ria_worker_report', { ticketId: fourth.ticketId, status: 'done', summary: 'consumed once', evidence: ['step input'] })).ok, true)
+  assert.equal((await fixture.callAs(executor, 'ria_executor_report', { ticketId: fourth.ticketId, status: 'done', summary: 'consumed once', evidence: ['step input'] })).ok, true)
   assert.equal(fixture.prompts.filter(item => item.sessionId === executor).length, beforeDone, 'done may notify the Chat but must not send the consumed inbox to the Executor again')
   const consumed = events().filter(item => item.event === 'steer.delivered' && item.ticketId === fourth.ticketId)
   assert.equal(consumed.length, 1)
@@ -113,7 +113,7 @@ try {
   const fifth = newTicket('done retry')
   fixture.setRunning(executor, true)
   await fixture.callAs(chat, 'ria_chat_steer', { ticketId: fifth.ticketId, message: 'never consumed' })
-  const done = await fixture.callAs(executor, 'ria_worker_report', { ticketId: fifth.ticketId, status: 'done', summary: 'finished', evidence: ['test'] })
+  const done = await fixture.callAs(executor, 'ria_executor_report', { ticketId: fifth.ticketId, status: 'done', summary: 'finished', evidence: ['test'] })
   assert.equal(done.ok, true, JSON.stringify(done))
   assert.equal(store.ticket(fifth.ticketId).status, 'done')
   assert.equal(controller.state.pendingInbox(fifth.ticketId, executor).length, 0)

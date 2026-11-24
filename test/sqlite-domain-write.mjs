@@ -50,14 +50,28 @@ try {
   const openTopic = store.addTopic({ title: 'Open' })
   store.linkTicket(openTopic.topicId, ticket.ticketId, 'related')
   assert.throws(() => store.archiveTopic(openTopic.topicId), { code: 'topic_unfinished' })
-  store.unlinkTicket(target.topicId, ticket.ticketId)
-  store.unlinkTicket(openTopic.topicId, ticket.ticketId)
-  assert.equal(store.archiveTopic(openTopic.topicId).archivedAt > 0, true)
+  // Reopen fresh runtime + store (simulating restart where store.data.links is empty) and verify archiveTopicSql still sees SQLite links.
+  await runtime.close()
+  const runtimeReopen = new SqliteTicketRuntime({ stateDir: dir, dbPath: join(dir, 'ria.sqlite') })
+  const storeReopen = new RiaStore(dir, { runtime: runtimeReopen })
+  assert.throws(() => storeReopen.archiveTopic(openTopic.topicId), { code: 'topic_unfinished' }, 'archiveTopicSql must query SQLite links after restart')
+  storeReopen.unlinkTicket(target.topicId, ticket.ticketId)
+  storeReopen.unlinkTicket(openTopic.topicId, ticket.ticketId)
+  assert.equal(storeReopen.archiveTopic(openTopic.topicId).archivedAt > 0, true)
+
+  // Verify RiaStore.addFeedback persists into SQLite ticket_feedback and survives restart.
+  storeReopen.addFeedback({ ticketId: ticket.ticketId, kind: 'note', code: 'check', body: 'persisted feedback', at: 12345 })
+  assert.equal(runtimeReopen.db.prepare('SELECT COUNT(*) n FROM ticket_feedback').get().n, 1)
+  await runtimeReopen.close()
+  const runtimeReload = new SqliteTicketRuntime({ stateDir: dir, dbPath: join(dir, 'ria.sqlite') })
+  const storeReload = new RiaStore(dir, { runtime: runtimeReload })
+  assert.equal(storeReload.data.ticketFeedback.length, 1)
+  assert.equal(storeReload.data.ticketFeedback[0].body, 'persisted feedback')
 
   const legacy = JSON.parse(readFileSync(join(dir, 'ria.json'), 'utf8'))
   assert.deepEqual(legacy.topics.map(item => item.topicId), ['legacy_topic'], 'ria.json topics stay legacy')
   assert.deepEqual(legacy.links, [], 'ria.json links stay legacy')
-  await runtime.close()
+  await runtimeReload.close()
   db.close()
   console.log('sqlite domain write ok')
 } finally { rmSync(dir, { recursive: true, force: true }) }

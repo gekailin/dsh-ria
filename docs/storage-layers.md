@@ -34,6 +34,15 @@
 
 派活过滤：`projectCwd` 必须位于该条 `cwd` 内；`allowDispatch=false` 不进入自动候选；WorkOrder 首行 `[WorkOrder #<ticketId>]`。
 
+### 已废弃：tickets.log.jsonl
+
+`tickets.log.jsonl` 曾是只写不读的终态工单 JSONL 镜像。当前 SQLite 是唯一归档权威（`archived_at`），mirror 不再写它，离线 source 也不再读它（`lib/state/sqlite/source.mjs` 直接读 SQLite）。老版本 state 目录可能残留该文件；启动时会做一次幂等归档：
+
+- 命名：`tickets.log.jsonl.bak-<UTC 秒级时间戳>`，目标已存在时追加 `-1`、`-2` 等序号，绝不覆盖。
+- 事件：`legacy.tickets_log.archived`，payload `{from, to, bytes}`。
+- 不存在时直接跳过、不记事件；归档失败只 warn，保留原文件。
+- 排查旧数据请直接查 `ria.sqlite`，不要再依赖该文件。
+
 ## 3. events.jsonl = 只追加日志
 
 `~/.dsh/state/ria/events.jsonl`：

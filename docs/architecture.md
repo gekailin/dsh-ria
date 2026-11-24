@@ -117,7 +117,7 @@ outbox 与 `ria.json` 不是同一个事务：派发已被接受、但 outbox �
 
 ### 4.6 归档与写入
 
-终态工单在写入成功后从热存移入 `tickets.log.jsonl`，同时按月写 `tickets-YYYY-MM.jsonl`（保留 12 个月）。热存保留所有非终态，加上最近 24 小时或最新 50 条终态；读取端合并两边，按 `ticketId + closedAt` 去重。`ria.json`、`outbox.json`、`memory.md` 都用 mutex + 临时文件 + fsync + rename 原子写，权限 0600。
+终态工单在写入成功后以 SQLite `archived_at` 标记为归档；热存保留所有非终态，加上最近 24 小时或最新 50 条终态。JSON 模式不再维护归档侧文件。历史遗留的 `tickets.log.jsonl` 会在启动时一次性归档为 `tickets.log.jsonl.bak-<ts>` 并记 `legacy.tickets_log.archived`，之后不再读取。`ria.json`、`outbox.json`、`memory.md` 都用 mutex + 临时文件 + fsync + rename 原子写，权限 0600。
 
 ### 4.7 可观测性与兜底边界
 
@@ -142,7 +142,7 @@ outbox 与 `ria.json` 不是同一个事务：派发已被接受、但 outbox �
 |---|---|
 | `ria.json` | 热状态 schema v5：Ria session、tickets、pending deliveries、recentExecutors、grants、settings、dispatchNotes、feedback |
 | `outbox.json` | 副作用待投递 / 失败 / 已送达记录；独立于 ria.json |
-| `tickets.log.jsonl` | 终态工单归档；按月文件保留 12 个月 |
+| `tickets.log.jsonl` | 已废弃；启动时归档为 `.bak-<ts>`，不再读写 |
 | `memory.md` | 稳定偏好，默认 2400 字符 / 12 条 / 单条 300，0600；超出归档到 `memory-archive/<slug>.md`（不注入） |
 | `reflections/` | 定期反思的 notes 与运行账本；P2 wiki 也规划在这里（尚未实现） |
 | `wechat-inbound/` / `wechat-claw-inbound/` | 微信入站图片原图；30 天 / 500 个上限 |

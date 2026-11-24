@@ -59,9 +59,10 @@ try {
   })
   await controller.sendWatchRelay({ watchId: 'watch-ticket', sessionId: 'session-trunc-ticket', titleSnapshot: 'Ticket Relay' }, long, {})
   const ticketRelay = controller.watchRelayLog.at(-1)
-  assert.ok(ticketRelay.text.includes('完整内容见工单 #' + doneTicket.ticketId.slice(-6)))
-  assert.equal(ticketRelay.fullBody, long)
-  assert.ok(controller.state.reportsFor(doneTicket.ticketId, 100).some(report => report.raw === long), 'full body stored in ticket report')
+  assert.ok(ticketRelay.text.startsWith('#' + doneTicket.ticketId.slice(-6) + ' done · '))
+  assert.ok([...ticketRelay.text].length <= 120)
+  assert.equal(ticketRelay.text.includes('长'.repeat(300)), false, 'terminal relay must not carry the full body')
+  assert.equal(ticketRelay.fullBody, undefined, 'terminal relay no longer stores a full relay body')
   console.log('state relay truncation ok')
 } finally {
   fixture.cleanup()

@@ -48,6 +48,22 @@ try {
   assert.equal(reloaded.executor('session-exec').sessionId, 'session-exec')
   assert.equal(reloaded.data.coManagement[0].sessionId, 'session-cm')
   assert.equal(reloaded.data.grants[0].grantId, 'grant-1')
+
+  // syncRiaControl copies all RiaStore-owned control keys (not only settings/grants).
+  state.syncRiaControl({
+    settings: () => ({ progressCards: false }),
+    grants: () => [{ grantId: 'g2' }],
+    recentExecutors: () => ({ 'session-exec': { lastUsedAt: 12345, lastTicketId: 't1' } }),
+    riaPreset: 'standard',
+    lastHumanMessageAt: 99999,
+    data: { createdAt: 11111 },
+  })
+  state.save()
+  const syncedDisk = JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8'))
+  assert.deepEqual(syncedDisk.recentExecutors, { 'session-exec': { lastUsedAt: 12345, lastTicketId: 't1' } })
+  assert.equal(syncedDisk.riaPreset, 'standard')
+  assert.equal(syncedDisk.createdAt, 11111)
+  assert.equal(syncedDisk.lastHumanMessageAt, 99999)
   runtime.close()
 
   console.log('control state synchronous write ok')

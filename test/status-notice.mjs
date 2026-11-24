@@ -78,22 +78,22 @@ import { Outbound } from '../lib/wechat/outbound.mjs'
     assert.equal(fixture.steered.at(-1).source.kind, 'notice')
     assert.match(fixture.steered.at(-1).source.rpcId, /^ria_/)
     assert.equal(fixture.steered.at(-1).content[0].text, notice.text)
-    assert.equal(sent[0].text, '🔔 ' + notice.text)
+    assert.equal(sent[0].text, notice.text)
     assert.match(sent[0].options.ref, /^ria_/)
-    assert.equal(sent[0].options.prefix, false)
+    assert.equal(sent[0].options.kind, 'notice')
     const alertSent = []
     claw.outbound = { enqueue: async (text, options) => { alertSent.push({ text, options }); return 'id' } }
     await claw.sendNote('⚠️ alert only')
     assert.ok(alertSent[0].text.startsWith('⚠️'))
-    assert.equal(alertSent[0].options.prefix, false)
+    assert.equal(alertSent[0].options.kind, 'raw')
     await claw.sendNote('🚨 emergency only')
     assert.ok(alertSent[1].text.startsWith('🚨'))
-    assert.equal(alertSent[1].options.prefix, false)
-    for (const text of ['📌 task note', '🔐 approval note', '【Ria·补发】retry']) {
+    assert.equal(alertSent[1].options.kind, 'raw')
+    for (const text of ['📌 task note', '🔐 approval note', '📎 file note', '【Ria·补发】retry']) {
       await claw.sendNote(text)
       const item = alertSent.at(-1)
       assert.ok(item.text.startsWith(text.split('\n')[0]))
-      assert.equal(item.options.prefix, false, text + ' must not gain wave prefix')
+      assert.equal(item.options.kind, 'raw', text + ' must use kind=raw')
     }
     assert.equal(claw.typingUsers.size, 0)
     assert.equal(notice.text.includes('证据'), false)
@@ -121,31 +121,67 @@ import { Outbound } from '../lib/wechat/outbound.mjs'
   } finally { fixture.cleanup() }
 }
 
-// Chat assistant replies inherit the bell only for a notice-originated turn.
+// Realistic DSH user/message events carry UserMessage directly (no `turn` field).
+// Assistant replies always use the default wave prefix regardless of interleaved
+// notice injections, while explicit notice paths (queueChatNotice / notifyClawStatus
+// / sendNote) always carry the bell prefix.
 {
   const fixture = await createFixture({ stateDefault: true })
   try {
+    const controller = fixture.service.controller
     const claw = fixture.service.wechatClaw
     const riaId = claw.getRiaId()
     const sent = []
+    claw.peer = { userId: 'user-1', contextToken: 'context-1' }
     claw.outbound = new Outbound({ send: async text => { sent.push(text); return 'id' }, log: () => {} })
+
+    // Interleaved realistic user/message (no turn field): notice then human, then assistant reply.
     claw.onSessionEvent({ header: { id: riaId } }, {
-      type: 'user/message', data: { turn: 42, message: { source: { kind: 'notice', rpcId: 'ria_x' } } },
+      type: 'user/message', data: { id: 'm1', role: 'user', source: { kind: 'notice', rpcId: 'ria_notice_1' } },
     })
     claw.onSessionEvent({ header: { id: riaId } }, {
-      type: 'assistant/message', data: { turn: 42, message: { content: [{ type: 'text', text: 'notice reply' }] } },
-    })
-    await new Promise(resolve => setTimeout(resolve, 20))
-    assert.equal(sent.at(-1), '🔔 notice reply')
-    claw.onSessionEvent({ header: { id: riaId } }, {
-      type: 'user/message', data: { turn: 43, message: { source: { kind: 'user' } } },
+      type: 'user/message', data: { id: 'm2', role: 'user', source: { kind: 'user', rpcId: 'wc_human_1' } },
     })
     claw.onSessionEvent({ header: { id: riaId } }, {
-      type: 'assistant/message', data: { turn: 43, message: { content: [{ type: 'text', text: 'normal reply' }] } },
+      type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'normal reply' }] } },
     })
     await new Promise(resolve => setTimeout(resolve, 20))
-    assert.equal(sent.at(-1), '🌊 normal reply')
+    assert.equal(sent.at(-1), '🌊 normal reply', 'assistant reply must never inherit bell from prior notice')
+
+    // queueChatNotice directly pushes a bell-prefixed notice to Claw as well as Chat.
+    controller.queueChatNotice('已自动放行低风险提权')
+    await new Promise(resolve => setTimeout(resolve, 20))
+    assert.equal(sent.at(-1), '🔔 已自动放行低风险提权')
+
+    // Generic sendNote without explicit emoji gets bell; file note with 📎 keeps single prefix.
+    await claw.sendNote('普通状态提示')
+    await new Promise(resolve => setTimeout(resolve, 20))
+    assert.equal(sent.at(-1), '🔔 普通状态提示')
+    await claw.sendNote('📎 附件说明', { prefix: false })
+    await new Promise(resolve => setTimeout(resolve, 20))
+    assert.equal(sent.at(-1), '📎 附件说明')
   } finally { fixture.cleanup() }
+}
+
+// WeChatService sendDispatchNote / sendApprovalNote must not double-prefix with 🌊.
+{
+  const { WechatService } = await import('../lib/wechat/service.mjs')
+  const { mkdtempSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const dir = mkdtempSync(join(tmpdir(), 'ria-wechat-prefix-'))
+  try {
+    const sent = []
+    const svc = new WechatService({ stateDir: dir, log: () => {} })
+    svc.outbound = new Outbound({ send: async text => { sent.push(text); return 'id' }, log: () => {} })
+    await svc.sendDispatchNote('ticket #123456')
+    await svc.sendApprovalNote('bash command')
+    await svc.sendNote('📎 report.md', { prefix: false })
+    await new Promise(resolve => setTimeout(resolve, 30))
+    assert.equal(sent[0], '📌 任务已派发：ticket #123456')
+    assert.equal(sent[1], '🔐 等待权限审批：bash command')
+    assert.equal(sent[2], '📎 report.md')
+  } finally { rmSync(dir, { recursive: true, force: true }) }
 }
 
 // A co-managed session working a ticket relays only the compact status line;
@@ -168,8 +204,9 @@ import { Outbound } from '../lib/wechat/outbound.mjs'
     const claw = fixture.service.wechatClaw
     const sent = []
     claw.peer = { userId: 'user-1', contextToken: 'context-1' }
-    claw.outbound = { enqueue: async text => { sent.push(text); return 'id' } }
+    claw.outbound = new Outbound({ send: async text => { sent.push(text); return 'id' }, log: () => {} })
     await controller.sendWatchRelay({ sessionId: id, titleSnapshot: 'CM Notice', watchId: 'watch-notice' }, '完整正文\n证据: secret\n代码块', {})
+    await new Promise(resolve => setTimeout(resolve, 20))
     const text = sent.at(-1)
     assert.ok(text.startsWith('🔔 #' + ticket.ticketId.slice(-6) + ' working · '))
     assert.equal(text.includes('完整正文'), false)
@@ -198,8 +235,9 @@ import { Outbound } from '../lib/wechat/outbound.mjs'
     const claw = fixture.service.wechatClaw
     const sent = []
     claw.peer = { userId: 'user-1', contextToken: 'context-1' }
-    claw.outbound = { enqueue: async text => { sent.push(text); return 'id' } }
+    claw.outbound = new Outbound({ send: async text => { sent.push(text); return 'id' }, log: () => {} })
     await controller.sendWatchRelay({ sessionId: id, titleSnapshot: 'CM Done', watchId: 'watch-done' }, '完整正文\n证据: secret\n代码块', {})
+    await new Promise(resolve => setTimeout(resolve, 20))
     const text = sent.at(-1)
     assert.ok(text.startsWith('🔔 #' + ticket.ticketId.slice(-6) + ' done · '))
     assert.equal(text.includes('完整正文'), false)
@@ -213,6 +251,7 @@ import { Outbound } from '../lib/wechat/outbound.mjs'
     controller.state.setTicketMeta(blocked.ticketId, { phase: 'blocked', executorId: id })
     controller.state.addExecutor(id, { status: 'idle', currentTicketId: blocked.ticketId })
     await controller.sendWatchRelay({ sessionId: id, titleSnapshot: 'CM Done', watchId: 'watch-blocked' }, '完整正文', {})
+    await new Promise(resolve => setTimeout(resolve, 20))
     const blockedText = sent.at(-1)
     assert.ok(blockedText.startsWith('🔔 #' + blocked.ticketId.slice(-6) + ' blocked · '))
     assert.ok(blockedText.includes('waitingOn=user'))

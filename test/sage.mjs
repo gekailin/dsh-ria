@@ -23,7 +23,7 @@ try {
   assert.equal(await titleOf(sage), 'Sage')
   assert.equal(controller.state.sageSessionId, sage)
   const sageTools = fixture.visibleTools(sage)
-  assert.deepEqual(sageTools.slice().sort(), ['ria_sage_read', 'ria_sage_request', 'ria_sage_topic', 'ria_sage_write'])
+  assert.deepEqual(sageTools.slice().sort(), ['ria_sage_decide', 'ria_sage_read', 'ria_sage_request', 'ria_sage_topic', 'ria_sage_write'])
   assert.equal(sageTools.includes('bash'), false)
   assert.equal(sageTools.includes('write'), false)
   assert.equal(sageTools.includes('edit'), false)

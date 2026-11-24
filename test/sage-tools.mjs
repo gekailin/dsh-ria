@@ -10,7 +10,7 @@ import { createFixture } from './support/ria-fixture.mjs'
 // regression in their agent creation/restriction paths fails this test too.
 // Router is not an agent or a session: lib/router/cli.mjs is a standalone
 // classifier process that registers no tools, so it has no surface to snapshot.
-const SAGE_TOOLS = ['ria_sage_read', 'ria_sage_request', 'ria_sage_topic', 'ria_sage_write']
+const SAGE_TOOLS = ['ria_sage_decide', 'ria_sage_read', 'ria_sage_request', 'ria_sage_topic', 'ria_sage_write']
 const SAGE_FORBIDDEN = [
   'bash', 'write', 'edit', 'read', 'read_image', 'grep', 'glob', 'task',
   'run_code', 'subagent', 'subagent_fork', 'list_agents', 'send_message',

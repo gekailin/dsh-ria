@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { readSageContext } from '../lib/reflection-sage-context.mjs'
+import { RiaService } from '../lib/index.js'
 import { openDatabase } from '../lib/state/sqlite/db.mjs'
 
 const root = mkdtempSync(join(tmpdir(), 'ria-sage-context-'))
@@ -55,5 +56,28 @@ try {
   assert.equal(empty.pendingProposals.items.length, 0)
   assert.equal(empty.decisionHistory.recorded, '无记录')
   assert.equal(empty.truncated, false)
+
+  // Verify toolReflectReadSageContext resolves sageSessionId from controller.state (not empty RiaStore.data).
+  const fakeService = Object.create(RiaService.prototype)
+  fakeService.stateDir = state
+  fakeService.log = () => {}
+  fakeService.store = { data: {} }
+  fakeService.reflectionRunFor = () => ({ runId: 'r1', status: 'running', sageContextRead: true })
+  fakeService.reflectionClosed = () => ({ ok: false, code: 'run_closed' })
+  let requestedSessionId = null
+  fakeService.controller = {
+    state: { sageSessionId: 'session-sage-from-state' },
+    cognition: null,
+    sessionEvents: async opts => {
+      requestedSessionId = opts.sessionId
+      return { ok: true, events: [{ type: 'turn/start', time: Date.parse('2026-11-23T05:00:00Z') }] }
+    },
+  }
+  const viaTool = await RiaService.prototype.toolReflectReadSageContext.call(fakeService, 'exec-1', 'r1', { since: '2026-11-22T00:00:00Z' }, {})
+  assert.equal(requestedSessionId, 'session-sage-from-state')
+  assert.equal(viaTool.sageActivity.available, true)
+  assert.equal(viaTool.sageActivity.sessionId, 'session-sage-from-state')
+  assert.equal(viaTool.sageActivity.counts.turns, 1)
+
   console.log('reflection sage context ok')
 } finally { rmSync(root, { recursive: true, force: true }) }

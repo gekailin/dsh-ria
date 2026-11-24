@@ -37,6 +37,41 @@ try {
   assert.equal(different.reason, 'different_content')
   assert.ok(existsSync(different.executorPath))
   assert.equal(readFileSync(target, 'utf8'), before)
+
+  // Verify run stats (compressedBytesRead / decompressedBytesRead / durationMs) are applied to front matter when writing canonical from a draft.
+  const runDate = '2026-11-21'
+  const runReq = await controller.requestTicket({ goal: 'reflect stats', acceptance: 'report' }, { agent: { id: chat } }, { mode: 'reflection' })
+  controller.state.setTicketMeta(runReq.ticketId, { reflectionForDate: runDate })
+  const draftPath = join(fixture.stateDir, 'reflections', 'runs', runReq.ticketId, 'report.partial.md')
+  const { mkdirSync, writeFileSync } = await import('node:fs')
+  mkdirSync(join(fixture.stateDir, 'reflections', 'runs', runReq.ticketId), { recursive: true })
+  writeFileSync(draftPath, [
+    '---',
+    'schema: 2',
+    'date: ' + runDate,
+    'compressedBytesRead: 0',
+    'decompressedBytesRead: 0',
+    'durationMs: 0',
+    '---',
+    '## 一句话',
+    'stats check',
+    '',
+  ].join('\n'))
+  service.reflections.set(runReq.ticketId, {
+    runId: runReq.ticketId,
+    forDate: runDate,
+    createdAt: 1000,
+    closedAt: 4500,
+    reportPartial: draftPath,
+    stats: { compressedBytesRead: 1234, decompressedBytesRead: 56789 },
+  })
+  const statsWritten = service.writeReflectionCanonicalFromTicket(runReq.ticketId, {})
+  assert.equal(statsWritten.skipped, false)
+  const statsContent = readFileSync(join(fixture.stateDir, 'reflections', runDate + '.md'), 'utf8')
+  assert.match(statsContent, /compressedBytesRead: 1234/)
+  assert.match(statsContent, /decompressedBytesRead: 56789/)
+  assert.match(statsContent, /durationMs: 3500/)
+
   console.log('reflection canonical ok')
 } finally {
   fixture.cleanup()

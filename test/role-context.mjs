@@ -84,6 +84,19 @@ try {
   const tool = RiaService.prototype.toolReflectReadRoleContext.call(fake, 's', 'r', { role: 'router', ticketId: 'ticket_test', limit: 1 })
   assert.equal(tool.role, 'router')
   assert.equal(tool.returned, 1)
+
+  // Compact mode trims verbose input.prompt and duplicate output.raw while keeping structured output.parsed.
+  appendRoleContext(root, {
+    at: at + 500, role: 'advisor', ticketId: 'ticket_parsed', phase: 'advisor.plan',
+    input: { prompt: 'A'.repeat(6000) },
+    output: { raw: JSON.stringify({ action: 'plan', workOrder: { summary: 'plan summary', steps: ['s1'] } }) + ' '.repeat(1000), parsed: { summary: 'plan summary', steps: ['s1'] } },
+  })
+  const compactWindow = readRoleContext(root, { role: 'advisor', ticketId: 'ticket_parsed', compact: true, maxChars: 20000, now: at + 1000 })
+  assert.equal(compactWindow.returned, 1)
+  assert.equal(compactWindow.entries[0].output.parsed.summary, 'plan summary')
+  assert.ok(compactWindow.entries[0].input.prompt.length <= 401)
+  assert.ok(compactWindow.entries[0].output.raw.length <= 201)
+
   console.log('role context ok')
 } finally {
   rmSync(root, { recursive: true, force: true })

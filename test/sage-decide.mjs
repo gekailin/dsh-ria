@@ -65,7 +65,7 @@ try {
   assert.equal(store.searchEntries({}).length, 1, 'invalid auto-upsert writes no entry')
   const dbFailedDecision = await fixture.callAs(sage, 'ria_sage_decide', { proposalId: 'prop_db_fail', decision: 'accepted', rationale: 'force db failure' })
   assert.equal(dbFailedDecision.ok, false)
-  assert.equal(dbFailedDecision.code, 'cognition_backend_error')
+  assert.equal(dbFailedDecision.code, 'cognition_db_error')
   assert.equal(store.getProposal('prop_db_fail').status, 'pending', 'DB failure rolls proposal state back')
   assert.equal(store.searchEntries({ text: 'force-db-fail' }).length, 0, 'DB failure leaves no entry')
 
@@ -112,21 +112,17 @@ try {
   })
   assert.equal(invalidWrite.code, 'cognition_invalid')
 
-  // DB unavailable: read falls back to files; write warns and falls back to file.
+  // DB unavailable: structured SQLite error, never a file fallback.
   store.db.close()
-  const fallback = new CognitionStore({ stateDir: fixture.stateDir, backend: 'sqlite', dbPath: join(fixture.stateDir, 'missing.sqlite'), log: (level, message) => { if (level === 'warn') audits.push({ level, message }) } })
-  controller.cognition = fallback
-  const fallbackRead = await fixture.callAs(sage, 'ria_sage_read', { path: 'INDEX.md' })
-  assert.equal(fallbackRead.ok, true)
-  assert.equal(typeof fallbackRead.content, 'string')
+  const unavailable = new CognitionStore({ stateDir: fixture.stateDir, dbPath: join(fixture.stateDir, 'missing.sqlite'), log: (level, message) => { if (level === 'warn') audits.push({ level, message }) } })
+  controller.cognition = unavailable
   const fallbackWrite = await fixture.callAs(sage, 'ria_sage_write', {
     entry: { scope: 'global', body: 'fallback body', cause: 'fallback cause', sources: [{ type: 'file', ref: 'test' }] },
     path: 'chat/fallback.md', content: 'fallback file', reason: 'fallback',
   })
-  assert.equal(fallbackWrite.ok, true, JSON.stringify(fallbackWrite))
-  assert.equal(fallbackWrite.path, 'chat/fallback.md')
-  assert.equal(readFileSync(join(fixture.stateDir, 'cognition', 'chat', 'fallback.md'), 'utf8'), 'fallback file')
-  assert.equal(audits.some(item => item.level === 'warn' && item.message.includes('sqlite unavailable')), true)
+  assert.equal(fallbackWrite.ok, false)
+  assert.equal(fallbackWrite.code, 'cognition_db_unavailable')
+  assert.equal(audits.some(item => item.level === 'warn' && item.message.includes('cognition database unavailable')), true)
   console.log('sage decide and DB tools ok')
 } finally {
   try { store.db.close() } catch { /* already closed */ }

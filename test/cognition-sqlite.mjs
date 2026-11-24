@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CognitionStore, normalizeCognitionSettings } from '../lib/roles/cognition.mjs'
@@ -27,13 +27,13 @@ try {
 
 const warnings = []
 try {
-  assert.deepEqual(normalizeCognitionSettings(undefined), { backend: 'file' })
-  assert.deepEqual(normalizeCognitionSettings({ backend: 'sqlite' }), { backend: 'sqlite' })
-  assert.deepEqual(normalizeCognitionSettings({ backend: 'nope' }), { backend: 'file' })
+  assert.deepEqual(normalizeCognitionSettings(undefined), {})
+  assert.deepEqual(normalizeCognitionSettings({ backend: 'sqlite' }), {})
+  assert.deepEqual(normalizeCognitionSettings({ backend: 'nope', voice: 'brief' }), { voice: 'brief' })
   const settingsStore = new RiaStore(join(dir, 'settings'))
-  assert.equal(settingsStore.settings().cognition.backend, 'file')
+  assert.equal(Object.hasOwn(settingsStore.settings().cognition, 'backend'), false)
   settingsStore.setSettings({ cognition: { backend: 'sqlite' } })
-  assert.equal(settingsStore.settings().cognition.backend, 'sqlite')
+  assert.equal(Object.hasOwn(settingsStore.settings().cognition, 'backend'), false)
 
   const audits = []
   const store = new CognitionStore({ stateDir: dir, backend: 'sqlite', dbPath, log: (level, message) => warnings.push({ level, message }), audit: event => audits.push(event) })
@@ -46,6 +46,9 @@ try {
   assert.match(created.entry.id, /^cog_\d+$/)
   assert.equal(created.created, true)
   assert.equal(store.getEntry(created.entry.id).body, entry.body)
+  const implicit = new CognitionStore({ stateDir: dir, dbPath })
+  assert.equal(implicit.getEntry(created.entry.id).body, entry.body, 'no backend config still uses SQLite')
+  implicit.db.close()
   const createdAgain = store.upsertEntry({ id: created.entry.id, ...entry })
   assert.equal(createdAgain.ok, true)
   assert.equal(createdAgain.idempotent, true)
@@ -110,23 +113,13 @@ try {
   assert.equal(store.searchEntries({}).length, count, 'invalid entries are not written')
   store.db.close()
 
-  // backend=file must never create/open the DB; existing file digest remains.
-  const fileDb = join(dir, 'file-only.sqlite')
-  const fileStore = new CognitionStore({ stateDir: dir, backend: 'file', dbPath: fileDb })
-  fileStore.ensure()
-  writeFileSync(join(dir, 'cognition', 'chat', 'preferences.md'), '用户偏好：简短回答。\n')
-  assert.equal(fileStore.chatDigest().text.includes('简短回答'), true)
-  assert.equal(fileStore.upsertEntry(entry).code, 'cognition_backend_file')
-  assert.equal(fileStore.getEntry('cog_1'), null)
-  assert.deepEqual(fileStore.searchEntries({}), [])
-  assert.equal(existsSync(fileDb), false, 'backend=file does not open/create the DB')
-
-  // sqlite configured but unavailable: reads/writes warn; file digest still works.
+  // No backend configuration: SQLite is the only store; missing DB is a hard error.
   const missingDb = join(dir, 'missing.sqlite')
-  const fallbackStore = new CognitionStore({ stateDir: dir, backend: 'sqlite', dbPath: missingDb, log: (level, message) => warnings.push({ level, message }) })
-  assert.equal(fallbackStore.getEntry('cog_1'), null)
-  assert.equal(fallbackStore.upsertEntry(entry).code, 'cognition_backend_unavailable')
-  assert.equal(fallbackStore.chatDigest().text.includes('简短回答'), true, 'file digest fallback remains')
-  assert.equal(warnings.some(item => item.level === 'warn' && item.message.includes('cognition sqlite unavailable')), true)
+  const unavailable = new CognitionStore({ stateDir: dir, dbPath: missingDb, log: (level, message) => warnings.push({ level, message }) })
+  assert.equal(unavailable.getEntry('cog_1'), null)
+  assert.equal(unavailable.upsertEntry(entry).code, 'cognition_db_unavailable')
+  assert.deepEqual(unavailable.searchEntries({}), [])
+  assert.equal(unavailable.dbError.code, 'cognition_db_unavailable')
+  assert.equal(existsSync(missingDb), false, 'no SQLite file is created on open failure')
   console.log('cognition sqlite backend ok')
 } finally { rmSync(dir, { recursive: true, force: true }) }

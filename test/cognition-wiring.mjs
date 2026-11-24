@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createFixture } from './support/ria-fixture.mjs'
-import { CognitionStore, normalizeProposalAuthor, projectKey } from '../lib/roles/cognition.mjs'
+import { CognitionStore, normalizeProposalAuthor } from '../lib/roles/cognition.mjs'
 import { openDatabase } from '../lib/state/sqlite/db.mjs'
 
 const fixture = await createFixture({ stateDefault: true })
@@ -12,36 +12,26 @@ try {
   const stateDir = fixture.stateDir
   const workspace = join(stateDir, 'workspace', 'dsh-ria')
   mkdirSync(workspace, { recursive: true })
-  controller.cognition.ensure()
-  writeFileSync(join(stateDir, 'cognition', 'projects', projectKey(workspace) + '.md'), 'File project overview.\n')
-
-  // Voice and project overview are appended without changing the memory block.
-  store.setSettings({ cognition: { voice: 'X'.repeat(600) } })
-  let dbResolveCalls = 0
-  const originalResolve = controller.cognition.resolveProjectsForWorkspace
-  controller.cognition.resolveProjectsForWorkspace = () => { dbResolveCalls += 1; return [] }
-  const prompt = controller.chatSystemPrompt('BASE PROMPT', { cwd: workspace })
-  assert.ok(prompt.startsWith('BASE PROMPT'))
-  assert.ok(prompt.includes('[说话风格]'))
-  assert.ok((prompt.match(/X/g) || []).length <= 500, 'voice capped at 500 chars')
-  assert.ok(prompt.includes('[活跃项目概况]'))
-  assert.ok(prompt.includes('File project overview.'))
-  assert.ok(prompt.includes('[长期记忆摘要]'))
-  assert.equal(dbResolveCalls, 0, 'backend=file never calls project DB resolver')
-  assert.ok(prompt.indexOf('[说话风格]') < prompt.indexOf('[活跃项目概况]'))
-  assert.ok(prompt.indexOf('[活跃项目概况]') < prompt.indexOf('[长期记忆摘要]'))
-
-  // SQLite project overview: at most 3 projects.
   const dbPath = join(stateDir, 'wiring.sqlite')
   const db = openDatabase(dbPath, { create: true })
   try {
     const insert = db.prepare('INSERT INTO cognition_projects(project_id,name,workspaces,overview,status,updated_at) VALUES(?,?,?,?,?,?)')
     for (let index = 1; index <= 4; index += 1) insert.run('p' + index, 'Project ' + index, JSON.stringify([workspace]), 'overview ' + index, 'active', index)
   } finally { db.close() }
-  controller.cognition = new CognitionStore({ stateDir, backend: 'sqlite', dbPath })
-  const sqlitePrompt = controller.chatSystemPrompt('BASE', { cwd: workspace })
-  assert.ok(sqlitePrompt.includes('Project 1') && sqlitePrompt.includes('Project 2') && sqlitePrompt.includes('Project 3'))
-  assert.equal(sqlitePrompt.includes('Project 4'), false, 'at most three project summaries')
+  controller.cognition = new CognitionStore({ stateDir, dbPath })
+
+  // Voice and project overview are appended without changing the memory block.
+  store.setSettings({ cognition: { voice: 'X'.repeat(600) } })
+  const prompt = controller.chatSystemPrompt('BASE PROMPT', { cwd: workspace })
+  assert.ok(prompt.startsWith('BASE PROMPT'))
+  assert.ok(prompt.includes('[说话风格]'))
+  assert.ok((prompt.match(/X/g) || []).length <= 500, 'voice capped at 500 chars')
+  assert.ok(prompt.includes('[活跃项目概况]'))
+  assert.ok(prompt.includes('Project 1') && prompt.includes('Project 2') && prompt.includes('Project 3'))
+  assert.equal(prompt.includes('Project 4'), false, 'at most three project summaries')
+  assert.ok(prompt.includes('[长期记忆摘要]'))
+  assert.ok(prompt.indexOf('[说话风格]') < prompt.indexOf('[活跃项目概况]'))
+  assert.ok(prompt.indexOf('[活跃项目概况]') < prompt.indexOf('[长期记忆摘要]'))
   controller.cognition.db.close()
 
   // Author normalization and old-record compatibility.

@@ -37,11 +37,13 @@ try {
   const fileSnapshot = readSageContext(fileDir, { since: '2026-11-22T00:00:00Z', now: Date.parse('2026-11-23T12:00:00Z') })
   assert.ok(fileSnapshot.cognitionSnapshot.files.some(file => file.file === 'chat/preferences.md'))
 
-  // SQLite unavailable: warn and fall back to files.
+  // SQLite unavailable: hard cognition_db_unavailable, no file fallback.
   const warnings = []
-  const missing = new CognitionStore({ stateDir: fileDir, backend: 'sqlite', dbPath: join(fileDir, 'missing.sqlite'), log: (level, message) => warnings.push({ level, message }) })
-  const fallback = readSageContext(fileDir, { since: '2026-11-22T00:00:00Z', now: Date.parse('2026-11-23T12:00:00Z'), cognition: missing, log: (level, message) => warnings.push({ level, message }) })
-  assert.ok(fallback.cognitionSnapshot.files.some(file => file.file === 'chat/preferences.md'))
+  const missing = new CognitionStore({ stateDir: fileDir, dbPath: join(fileDir, 'missing.sqlite'), log: (level, message) => warnings.push({ level, message }) })
+  assert.throws(
+    () => readSageContext(fileDir, { since: '2026-11-22T00:00:00Z', now: Date.parse('2026-11-23T12:00:00Z'), cognition: missing, log: (level, message) => warnings.push({ level, message }) }),
+    error => error && error.code === 'cognition_db_unavailable',
+  )
   assert.equal(warnings.some(item => item.level === 'warn'), true)
   console.log('reflection sqlite context ok')
 } finally { rmSync(root, { recursive: true, force: true }) }

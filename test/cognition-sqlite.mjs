@@ -31,9 +31,9 @@ try {
   assert.deepEqual(normalizeCognitionSettings({ backend: 'sqlite' }), {})
   assert.deepEqual(normalizeCognitionSettings({ backend: 'nope', voice: 'brief' }), { voice: 'brief' })
   const settingsStore = new RiaStore(join(dir, 'settings'))
-  assert.equal(Object.hasOwn(settingsStore.settings().cognition, 'backend'), false)
+  assert.equal(Object.hasOwn(settingsStore.settings(), 'cognition'), false)
   settingsStore.setSettings({ cognition: { backend: 'sqlite' } })
-  assert.equal(Object.hasOwn(settingsStore.settings().cognition, 'backend'), false)
+  assert.equal(Object.hasOwn(settingsStore.settings(), 'cognition'), false)
 
   const audits = []
   const store = new CognitionStore({ stateDir: dir, backend: 'sqlite', dbPath, log: (level, message) => warnings.push({ level, message }), audit: event => audits.push(event) })

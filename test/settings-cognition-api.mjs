@@ -19,8 +19,7 @@ try {
   const before = await call('GET')
   assert.equal(before.status, 200)
   assert.equal(Object.hasOwn(before.body, 'storage'), false)
-  assert.equal(Object.hasOwn(before.body.cognition || {}, 'backend'), false)
-  assert.equal(Object.hasOwn(before.body.cognition || {}, 'voice'), true)
+  assert.equal(Object.hasOwn(before.body, 'cognition'), false)
 
   const rejected = await call('POST', { cognition: { backend: 'sqlite' } })
   assert.equal(rejected.status, 400)
@@ -30,7 +29,7 @@ try {
   const after = await call('GET')
   assert.equal(after.status, 200)
   assert.equal(Object.hasOwn(after.body, 'storage'), false)
-  assert.equal(Object.hasOwn(after.body.cognition || {}, 'backend'), false)
+  assert.equal(Object.hasOwn(after.body, 'cognition'), false)
   assert.deepEqual(after.body.style, before.body.style)
   assert.deepEqual(after.body.memory, before.body.memory)
   console.log('settings no cognition backend ok')

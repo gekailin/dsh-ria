@@ -21,7 +21,9 @@ try {
   controller.cognition = new CognitionStore({ stateDir, dbPath })
 
   // Voice and project overview are appended without changing the memory block.
-  store.setSettings({ cognition: { voice: 'X'.repeat(600) } })
+  const noVoice = controller.chatSystemPrompt('BASE', { cwd: workspace })
+  assert.equal(noVoice.includes('[说话风格]'), false, 'empty style omits voice')
+  store.setSettings({ style: { enabled: true, custom: 'X'.repeat(600) } })
   const prompt = controller.chatSystemPrompt('BASE PROMPT', { cwd: workspace })
   assert.ok(prompt.startsWith('BASE PROMPT'))
   assert.ok(prompt.includes('[说话风格]'))

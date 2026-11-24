@@ -173,6 +173,7 @@ export async function createFixture(options = {}) {
         systemPrompt: { section(section) { return registerPromptSection(id, section) } },
       },
       model: { current() { return model } },
+      steer(message) { steered.push(message) },
       session: {
         snapshotEvents() { return options.sessionEvents && options.sessionEvents[id] ? options.sessionEvents[id].slice() : [] },
         append(event, data) {

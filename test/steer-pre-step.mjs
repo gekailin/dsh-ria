@@ -6,7 +6,10 @@ import { createFixture } from './support/ria-fixture.mjs'
 // Steer is injected at the turn's step boundary: after the current tool call
 // returns and before the next model step starts. No polling tool or done
 // report is needed, and nothing reaches into a running tool.
-const fixture = await createFixture({ stateDefault: true })
+const fixture = await createFixture({
+  stateDefault: true,
+  extraSessions: [{ sessionId: 'session-cm-steer', cwd: '/tmp', title: 'CM Steer' }],
+})
 try {
   const controller = fixture.service.controller
   const store = fixture.service.store
@@ -43,6 +46,8 @@ try {
   assert.equal(decision.kind, 'enter')
   assert.equal(decision.messages.length, 1, 'exactly one merged host message')
   const injected = decision.messages[0]
+  assert.equal(injected.source.kind, 'steer')
+  assert.match(injected.source.rpcId, /^ria_/)
   assert.equal(injected.source.form, 'steer')
   assert.equal(injected.source.source, 'steer')
   assert.equal(injected.source.ticketId, first.ticketId)
@@ -120,6 +125,26 @@ try {
   assert.ok(events().some(item => item.event === 'steer.delivered'
     && item.ticketId === fifth.ticketId
     && item.payload.deliveryMode === 'done-retry'))
+
+  // 6. Co-managed targets use the same pre-step steer injection path.
+  {
+    const co = 'session-cm-steer'
+    const registered = await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'add', sessionId: co, cwd: '/tmp', allowDispatch: false })
+    assert.equal(registered.ok, true, JSON.stringify(registered))
+    const coOwner = store.addTicket({ status: 'working', executor: co, goal: 'co-managed steer' })
+    controller.state.setTicketMeta(coOwner.ticketId, { phase: 'working', executorId: co })
+    controller.state.setWorkOrder(coOwner.ticketId, { ticketId: coOwner.ticketId, summary: 'plan', steps: ['do it'], acceptance: 'ok' })
+    controller.addManagerInbox(coOwner.ticketId, co, 'co-managed direction', 'chat')
+    const coDecision = await fixture.emit(
+      'agent/pre-step',
+      { agent: fixture.agentFor(co), turn: 1, step: 1 },
+      async () => ({ kind: 'enter', messages: [] }),
+    )
+    assert.equal(coDecision.messages[0].source.kind, 'steer')
+    assert.match(coDecision.messages[0].source.rpcId, /^ria_/)
+    assert.ok(coDecision.messages[0].content[0].text.includes('co-managed direction'))
+    assert.equal(controller.state.pendingInbox(coOwner.ticketId, co).length, 0)
+  }
 
   // Both shared entry points reject unknown modes before consuming anything.
   assert.throws(() => controller.recordInboxDelivered([], executor, 'unsupported'), /Unsupported manager inbox delivery mode/)

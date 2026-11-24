@@ -33,7 +33,11 @@ try {
   const forwarded = await controller.forwardRelay([{ type: 'text', text: 'next message' }], chat)
   assert.equal(forwarded, true)
   assert.equal(controller.forward, undefined, 'consumed after one message')
-  assert.ok(fixture.prompts.some(item => item.sessionId === target && String(item.content[0].text).includes('next message')))
+  const injectedForward = fixture.steered.find(item => item && item.source && item.source.kind === 'forward')
+  assert.ok(injectedForward, 'forward is injected as a user message with source.kind=forward')
+  assert.equal(injectedForward.source.kind, 'forward')
+  assert.match(injectedForward.source.rpcId, /^ria_/)
+  assert.ok(String(injectedForward.content[0].text).includes('next message'))
   assert.ok(fixture.service.routerEvents.query({ sessionId: target }).events.some(event => event.event === 'forward.delivered'))
   assert.equal(await controller.forwardRelay([{ type: 'text', text: 'second' }], chat), false, 'only one message')
 

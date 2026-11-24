@@ -81,6 +81,17 @@ try {
     assert.equal(result.messages, input)
   }
 
+  // Ria steer/forward injections carry explicit source kinds and pass the
+  // direct-user guard for both managed and co-managed targets. A plain user
+  // message still gets blocked on a managed executor.
+  for (const id of [executor, coManaged]) {
+    for (const kind of ['steer', 'forward']) {
+      const input = [message('ria_' + kind, 'injected ' + kind, kind)]
+      assert.equal((await preStep(id, input)).messages, input, kind + ' must pass for ' + id)
+    }
+    assert.equal((await preStep(id, [direct('user-' + id)])).messages[0].source.kind, id === coManaged ? 'user' : 'ria-task-host')
+  }
+
   // waitingOn=user: the user must be able to answer the clarification.
   {
     const ticket = fixture.service.store.addTicket({
@@ -133,6 +144,14 @@ try {
     assert.equal((await preStep(executor, replyInput)).messages, replyInput)
     const systemInput = [message('sys-1', 'system note', 'system')]
     assert.equal((await preStep(executor, systemInput)).messages, systemInput)
+  }
+
+  // Every prompt minted by dsh-ria now uses the ria_ namespace.
+  {
+    const before = fixture.prompts.length
+    await controller.promptSession(executor, 'prefix probe')
+    assert.equal(fixture.prompts.length, before + 1)
+    assert.match(fixture.prompts.at(-1).requestId, /^ria_/)
   }
 
   await settle()

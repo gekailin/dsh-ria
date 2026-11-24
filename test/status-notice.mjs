@@ -5,6 +5,7 @@ import {
   formatStatusNotice,
 } from '../lib/core/notifications.mjs'
 import { createFixture } from './support/ria-fixture.mjs'
+import { Outbound } from '../lib/wechat/outbound.mjs'
 
 // Formatting is pure: no report body, evidence or goal can pass through.
 {
@@ -88,8 +89,62 @@ import { createFixture } from './support/ria-fixture.mjs'
     await claw.sendNote('🚨 emergency only')
     assert.ok(alertSent[1].text.startsWith('🚨'))
     assert.equal(alertSent[1].options.prefix, false)
+    for (const text of ['📌 task note', '🔐 approval note', '【Ria·补发】retry']) {
+      await claw.sendNote(text)
+      const item = alertSent.at(-1)
+      assert.ok(item.text.startsWith(text.split('\n')[0]))
+      assert.equal(item.options.prefix, false, text + ' must not gain wave prefix')
+    }
     assert.equal(claw.typingUsers.size, 0)
     assert.equal(notice.text.includes('证据'), false)
+  } finally { fixture.cleanup() }
+}
+
+// Explicit forward prefixes: notice bell, false no prefix, and default wave for
+// ordinary assistant replies.
+{
+  const fixture = await createFixture({ stateDefault: true })
+  try {
+    const claw = fixture.service.wechatClaw
+    const sent = []
+    claw.peer = { userId: 'user-1', contextToken: 'context-1' }
+    claw.outbound = new Outbound({ send: async text => { sent.push(text); return 'id' }, log: () => {} })
+    claw.forwardAssistant('notice text', {}, { prefix: '🔔 ' })
+    await new Promise(resolve => setTimeout(resolve, 20))
+    assert.equal(sent.at(-1), '🔔 notice text')
+    claw.forwardAssistant('no prefix', {}, { prefix: false })
+    await new Promise(resolve => setTimeout(resolve, 20))
+    assert.equal(sent.at(-1), 'no prefix')
+    claw.forwardAssistant('ordinary chat', {})
+    await new Promise(resolve => setTimeout(resolve, 20))
+    assert.equal(sent.at(-1), '🌊 ordinary chat')
+  } finally { fixture.cleanup() }
+}
+
+// Chat assistant replies inherit the bell only for a notice-originated turn.
+{
+  const fixture = await createFixture({ stateDefault: true })
+  try {
+    const claw = fixture.service.wechatClaw
+    const riaId = claw.getRiaId()
+    const sent = []
+    claw.outbound = new Outbound({ send: async text => { sent.push(text); return 'id' }, log: () => {} })
+    claw.onSessionEvent({ header: { id: riaId } }, {
+      type: 'user/message', data: { turn: 42, message: { source: { kind: 'notice', rpcId: 'ria_x' } } },
+    })
+    claw.onSessionEvent({ header: { id: riaId } }, {
+      type: 'assistant/message', data: { turn: 42, message: { content: [{ type: 'text', text: 'notice reply' }] } },
+    })
+    await new Promise(resolve => setTimeout(resolve, 20))
+    assert.equal(sent.at(-1), '🔔 notice reply')
+    claw.onSessionEvent({ header: { id: riaId } }, {
+      type: 'user/message', data: { turn: 43, message: { source: { kind: 'user' } } },
+    })
+    claw.onSessionEvent({ header: { id: riaId } }, {
+      type: 'assistant/message', data: { turn: 43, message: { content: [{ type: 'text', text: 'normal reply' }] } },
+    })
+    await new Promise(resolve => setTimeout(resolve, 20))
+    assert.equal(sent.at(-1), '🌊 normal reply')
   } finally { fixture.cleanup() }
 }
 
@@ -120,6 +175,48 @@ import { createFixture } from './support/ria-fixture.mjs'
     assert.equal(text.includes('完整正文'), false)
     assert.equal(text.includes('secret'), false)
     assert.ok(text.length <= STATUS_NOTICE_MAX_CHARS)
+  } finally { fixture.cleanup() }
+}
+
+// A terminal ticket owned by the co-managed session also relays only its
+// status line, not the full assistant body.
+{
+  const fixture = await createFixture({
+    stateDefault: true,
+    extraSessions: [{ sessionId: 'session-cm-done', cwd: '/tmp', title: 'CM Done' }],
+  })
+  try {
+    const controller = fixture.service.controller
+    const id = 'session-cm-done'
+    const ticket = fixture.service.store.addTicket({ status: 'done', executor: id, goal: 'done work' })
+    controller.state.setTicketMeta(ticket.ticketId, { phase: 'done', executorId: id })
+    controller.state.addExecutor(id, { status: 'idle', currentTicketId: ticket.ticketId })
+    controller.state.addReport({
+      reportId: 'report_done_1', ticketId: ticket.ticketId, executorId: id,
+      status: 'done', summary: '已完成首句。证据: secret', evidence: ['secret'], at: Date.now(),
+    })
+    const claw = fixture.service.wechatClaw
+    const sent = []
+    claw.peer = { userId: 'user-1', contextToken: 'context-1' }
+    claw.outbound = { enqueue: async text => { sent.push(text); return 'id' } }
+    await controller.sendWatchRelay({ sessionId: id, titleSnapshot: 'CM Done', watchId: 'watch-done' }, '完整正文\n证据: secret\n代码块', {})
+    const text = sent.at(-1)
+    assert.ok(text.startsWith('🔔 #' + ticket.ticketId.slice(-6) + ' done · '))
+    assert.equal(text.includes('完整正文'), false)
+    assert.equal(text.includes('secret'), false)
+    assert.ok(text.length <= STATUS_NOTICE_MAX_CHARS)
+    const blocked = fixture.service.store.addTicket({
+      status: 'blocked', executor: id, waitingOn: 'user',
+      blockedReason: '需要用户决定下一步怎么办', goal: 'blocked work',
+    })
+    blocked.updatedAt = Date.now() + 1000
+    controller.state.setTicketMeta(blocked.ticketId, { phase: 'blocked', executorId: id })
+    controller.state.addExecutor(id, { status: 'idle', currentTicketId: blocked.ticketId })
+    await controller.sendWatchRelay({ sessionId: id, titleSnapshot: 'CM Done', watchId: 'watch-blocked' }, '完整正文', {})
+    const blockedText = sent.at(-1)
+    assert.ok(blockedText.startsWith('🔔 #' + blocked.ticketId.slice(-6) + ' blocked · '))
+    assert.ok(blockedText.includes('waitingOn=user'))
+    assert.ok(blockedText.length <= STATUS_NOTICE_MAX_CHARS)
   } finally { fixture.cleanup() }
 }
 

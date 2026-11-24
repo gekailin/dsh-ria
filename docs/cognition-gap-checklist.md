@@ -85,6 +85,8 @@
 ## 三、P1：补全 Sage 与 Reflection 闭环
 
 ### 3.1 `ria_sage_request` 升级与核查工单终态回调闭环
+
+- **状态：已实现。** sage_request 支持 workspace/relatedEntryIds/relatedProposalId（`lib/tools/registry.mjs:457`），meta 保存关联（`lib/core/controller.mjs:3576`）；终态回调 `notifySageResearchResult`（`:3588`）接入 done/no_report/failed/error/stop。测试：`test/sage-request.mjs`。
 - **现状问题**：`lib/tools/registry.mjs:437-446` 与 `lib/core/controller.mjs:3541-3547` 仍是旧实现，无 `workspace`/`relatedEntryIds`/`relatedProposalId`，且核查工单结束时不会通知 Sage。
 - **改动要求**：
   1. `ria_sage_request` 新增可选参数：
@@ -97,6 +99,8 @@
      - 命中时向 `sageSessionId` 发送 `[Sage 核查回执]`（`queue` 模式），包含：`ticketId`、`status`、`relatedEntryIds`、`relatedProposalId`、`summary`、`evidence`（或失败原因），并写一条 `sage.research.notified` router event。
 
 ### 3.2 补齐 `ria_sage_read` 与 `ria_sage_write` 的 SQLite 管理能力
+
+- **状态：已实现。** `setEntryStatus`/`upsertProject`/`summary`（`lib/roles/cognition.mjs:283/302/322`）；Sage read view（`lib/core/controller.mjs:3495`）与 write action（`:3523`）。测试：`test/sage-management.mjs`。
 - **现状问题**：Sage 无法维护 `cognition_projects`（表现在是 0 行），无法用专用动作变更条目状态（`disputed`/`retired` + `superseded_by`），`ria_sage_read` 也无法查库概况与项目列表。
 - **改动要求**：
   1. `CognitionStore` 新增：
@@ -111,6 +115,8 @@
      - `upsert_project` 传 `{ project: { projectId, name, workspaces, overview, status? } }`。
 
 ### 3.3 Reflection 兜底闭环直通 Sage
+
+- **状态：已实现。** readMemoryContext 读 SQLite digest/projects（`lib/reflection.mjs:875`）；Sage context 补 projects/disputedEntries（`lib/reflection-sage-context.mjs:118`）；reflect_report 接受并持久化 cognitionActions（`lib/index.js:5760`），done 后生成 high 提案并唤醒 Sage（`:5775`）。测试：`test/reflection-memory-context.mjs`、`test/reflection-sage-sqlite.mjs`、`test/reflection-actions.mjs`。
 - **现状问题**：`ria_reflect_report` 无 `cognitionActions` 字段；反思完只写 Markdown 报告，不产生提案也不唤醒 Sage；`readMemoryContext`（`lib/reflection.mjs:875`）仍在读旧 `cognition/chat/*.md`。
 - **改动要求**：
   1. `lib/reflection.mjs` 的 `readMemoryContext` 改读 SQLite（与 `chatDigest()` + `listProjects()` 一致）。
@@ -175,3 +181,9 @@
 - [ ] **Reflection 兜底**：反思报告附带 `cognitionActions` 完成 `done` 后，自动在 `cognition_proposals` 生成 `priority='high'` 提案并唤醒 Sage。
 - [ ] **Prompt 干净**：`Chat` & `Sage` 共用 `RIA_SHARED_HEAD`，`Advisor`/`Executor`/`Reflection` 无全局头；静态测试确认无 `2. Answer`、`cognition/chat/`、`Chatbot`、`worker_report` 等残留。
 - [ ] **本机数据干净**：`ria.sqlite` 中 `cognition_entries` 100% 为 `cog_<numeric>`、`truncated=0`、`cause` 非空、`cognition_projects` 已初始化；全量 `npm test` 通过。
+## blocked-by-decision
+
+| ID | 事项 | 原因 / 需要用户决定 |
+|---|---|---|
+| 4 | 五套 Prompt 完整重写 | 涉及产品文案、角色边界与行为措辞；本次仅完成 experience/SQLite 相关局部，不自行拍板整包替换。需要用户确认 RIA_SHARED_HEAD 文案、Chat/Sage/Advisor/Executor/Reflection 新提示词。 |
+| 5 | 清洗本机 ria.sqlite 存量数据 | 需要删除/改写 107 条历史 entries、重建 projects、消费 pending proposals；属于不可逆数据操作，需用户明确授权与备份方案，本票不执行。 |

@@ -54,8 +54,6 @@ try {
   store.unlinkTicket(openTopic.topicId, ticket.ticketId)
   assert.equal(store.archiveTopic(openTopic.topicId).archivedAt > 0, true)
 
-  runtime.exportMirror = () => true
-  runtime.flush()
   const legacy = JSON.parse(readFileSync(join(dir, 'ria.json'), 'utf8'))
   assert.deepEqual(legacy.topics.map(item => item.topicId), ['legacy_topic'], 'ria.json topics stay legacy')
   assert.deepEqual(legacy.links, [], 'ria.json links stay legacy')

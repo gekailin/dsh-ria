@@ -10,18 +10,18 @@ try {
   writeFileSync(file, JSON.stringify({
     schemaVersion: 1,
     tickets: { legacy: { ticketId: 'legacy', projectCwd: '/legacy' } },
-    ticketMirror: { generation: 7 },
+    ticketMirror: { stale: 7 },
     executors: {},
     meta: { executorSeq: 0, reflectionSeq: 0 },
   }))
   const store = new StateStore(dir, { metaAuthority: 'sqlite' })
   assert.equal(store.data.tickets, undefined, 'legacy ticket mirror removed on load')
-  assert.equal(store.data.ticketMirror, undefined, 'legacy mirror generation removed on load')
+  assert.equal(store.data.ticketMirror, undefined, 'legacy mirror field removed on load')
   store.save()
   assert.equal(store.pendingSave, true, 'SQLite save is deferred until the runtime attaches')
   const output = store.controlOutput()
   assert.equal(Object.hasOwn(output, 'tickets'), false, 'control output never writes ticket meta')
-  assert.equal(Object.hasOwn(output, 'ticketMirror'), false, 'control output never writes mirror generation')
+  assert.equal(Object.hasOwn(output, 'ticketMirror'), false, 'control output never writes mirror field')
 
   // Metadata reads must use the DB adapter, not the JSON mirror.
   store.sqliteRuntime = {

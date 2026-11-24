@@ -48,7 +48,7 @@ try {
   mkdirSync(sqliteDir, { recursive: true })
   writeFileSync(join(sqliteDir, 'ria.json'), JSON.stringify(makeState(), null, 2) + '\n')
   seedSqliteFromState({ stateDir: sqliteDir })
-  const runtime = new SqliteTicketRuntime({ stateDir: sqliteDir, exportMirror: () => {} })
+  const runtime = new SqliteTicketRuntime({ stateDir: sqliteDir })
   const sqliteStore = new RiaStore(sqliteDir, { runtime })
   const sqliteTopic = runtime.writeStore(() => sqliteStore.addTopic({ title: 'SQLite topic' }))
   runtime.writeStore(() => {

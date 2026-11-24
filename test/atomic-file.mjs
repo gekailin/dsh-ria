@@ -4,7 +4,6 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { writeAtomic } from '../lib/state/atomic-file.mjs'
 import { cleanupStaleStateTemps, STATE_TMP_MAX_AGE_MS } from '../lib/shared/fs.mjs'
-import { writeMirrorSnapshot } from '../lib/state/sqlite/mirror.mjs'
 
 const dir = fs.mkdtempSync(join(tmpdir(), 'ria-atomic-file-'))
 try {
@@ -49,37 +48,11 @@ try {
   writeAtomic(target, '')
   assert.equal(fs.statSync(target).size, 0)
 
-  // Serialization happens before staging: a circular state cannot create tmp
-  // and the existing state.json stays byte-for-byte intact.
-  {
-    const serializationDir = join(dir, 'serialization')
-    const serializationTarget = join(serializationDir, 'state.json')
-    writeAtomic(serializationTarget, 'old-complete')
-    const circular = { ok: true }
-    circular.self = circular
-    assert.throws(() => writeMirrorSnapshot({ stateDir: serializationDir, snapshot: { state: circular, ria: {}, archives: [], counts: {} } }), /circular/i)
-    assert.equal(fs.readFileSync(serializationTarget, 'utf8'), 'old-complete')
-    assert.equal(fs.readdirSync(serializationDir).some(name => name.includes('.tmp-')), false, 'no tmp after serialization failure')
-  }
-
   // Concurrency: microtask-parallel writers must not cross-contaminate; the
   // last scheduled complete write wins and no staging file remains.
   await Promise.all(Array.from({ length: 4 }, (_, index) => Promise.resolve().then(() => writeAtomic(target, 'concurrent-' + index))))
   assert.equal(fs.readFileSync(target, 'utf8'), 'concurrent-3')
   assert.equal(fs.readdirSync(join(dir, 'nested')).some(name => name.includes('.tmp-')), false)
-
-  // Two same-process mirror publishes: the last complete snapshot wins and no
-  // staging file is left behind.
-  {
-    const stateDir = join(dir, 'mirror-concurrent')
-    const snapshot = value => ({ state: { version: value }, ria: {}, archives: [], counts: {}, generation: value })
-    await Promise.all([
-      Promise.resolve().then(() => writeMirrorSnapshot({ stateDir, snapshot: snapshot(1) })),
-      Promise.resolve().then(() => writeMirrorSnapshot({ stateDir, snapshot: snapshot(2) })),
-    ])
-    assert.equal(JSON.parse(fs.readFileSync(join(stateDir, 'state.json'), 'utf8')).version, 2)
-    assert.equal(fs.readdirSync(stateDir).some(name => name.includes('.tmp-')), false)
-  }
 
   // Crash leftovers: only stale state.json tmp files are removed; current and
   // unrelated files stay intact.

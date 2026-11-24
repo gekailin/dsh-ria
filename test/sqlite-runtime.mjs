@@ -33,19 +33,8 @@ writeFileSync(join(state, 'ria.json'), JSON.stringify({ schemaVersion: 5, versio
 writeFileSync(join(state, 'state.json'), JSON.stringify({ tickets: { t1: { ticketId: 't1', phase: 'advisor', projectCwd: '/tmp/p' } } }))
 seedSqliteFromState({ stateDir: state, extraRecords: [{ ticket: archived, archivedAt: old }] })
 
-const mirror = () => {
-  let count = 0
-  const write = () => {
-    count += 1
-    const data = { ...store.data, storage: 'sqlite' }
-    data.tickets = store.data.tickets
-    writeFileSync(join(state, 'ria.json'), JSON.stringify(data, null, 2) + '\n')
-  }
-  return { write, get count() { return count } }
-}
-const mirrorState = mirror()
 let store
-const openRuntime = () => new SqliteTicketRuntime({ stateDir: state, exportMirror: mirrorState.write, debounceMs: 60_000 })
+const openRuntime = () => new SqliteTicketRuntime({ stateDir: state })
 const runtime = openRuntime()
 store = new RiaStore(state, { runtime })
 
@@ -65,18 +54,12 @@ try {
     try { return fn(new SqliteTicketAdapter(db)) } finally { db.close() }
   }
 
-  // A write commits the row inside the writer transaction; the JSON mirror is debounced.
-  const jsonBefore = readFileSync(join(state, 'ria.json'), 'utf8')
+  // A write commits the row inside the writer transaction.
   const revisionBefore = store.ticket('t1').revision
   const historyBefore = store.ticket('t1').history.length
   repository.runSync('note', () => store.noteTicket('t1', { actor: 'executor', reason: 'first' }))
   assert.equal(store.ticket('t1').revision, revisionBefore + 1)
   assert.equal(withReader(adapter => adapter.get('t1').revision), revisionBefore + 1, 'committed row is in the DB')
-  assert.equal(readFileSync(join(state, 'ria.json'), 'utf8'), jsonBefore, 'JSON is not written during the transaction')
-  assert.equal(runtime.flush(), true)
-  const mirrored = JSON.parse(readFileSync(join(state, 'ria.json'), 'utf8'))
-  assert.equal(mirrored.storage, 'sqlite')
-  assert.equal(mirrored.tickets.find(item => item.ticketId === 't1').revision, revisionBefore + 1, 'mirror catches up after commit')
 
   // 50 sequential writes: one transaction each, no lost updates.
   const start = store.ticket('t2').revision

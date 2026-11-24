@@ -18,13 +18,7 @@ export function exportTickets({ stateDir, dbPath = join(stateDir, 'ria.sqlite') 
     // or metadata. One read transaction pins DB rows/history/meta/archives.
     db.exec('BEGIN')
     try {
-      const mirror = JSON.parse(adapter.getSchemaMeta('ticket_mirror') || '{}')
-      // Failed/unfinished online export left a committed recovery payload. It
-      // is newer than disk; retain those non-ticket fields during offline export.
-      const dirty = mirror.dirty === true || (mirror.exportedGeneration ?? -1) < (mirror.generation ?? 0)
-      return buildMirrorSnapshot({ records: adapter.records(), counts: adapter.counts(),
-        ria: { ...ria, ...(dirty ? mirror.pendingRia : null) },
-        state: { ...state, ...(dirty ? mirror.pendingState : null) }, generation: mirror.generation || 0 })
+      return buildMirrorSnapshot({ records: adapter.records(), counts: adapter.counts(), ria, state })
     } finally { db.exec('ROLLBACK') }
   } finally { db.close() }
 }

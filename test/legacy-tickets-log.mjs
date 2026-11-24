@@ -26,7 +26,6 @@ try {
     writeMirrorSnapshot({
       stateDir: dir,
       snapshot: {
-        generation: 1,
         state: { chatSessionId: 'session-chat' },
         ria: { tickets: [] },
         archives: [{ ticket: { ticketId: 'archived' }, closedAt: 1 }],
@@ -75,8 +74,7 @@ try {
 
     // A real store write + mirror flush after ticket creation still does not
     // recreate the retired file.
-    const runtime = new SqliteTicketRuntime({ stateDir: dir, debounceMs: 0,
-      exportMirror: (snapshot, guard) => writeMirrorSnapshot({ stateDir: dir, snapshot, ...guard }) })
+    const runtime = new SqliteTicketRuntime({ stateDir: dir })
     try {
       const store = new RiaStore(dir, { runtime })
       const created = store.addTicket({ goal: 'new ticket after retirement', status: 'open', executor: 'advisor' })

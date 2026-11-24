@@ -13,7 +13,7 @@ try {
   let db = openDatabase(dbPath, { create: true })
   try {
     const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(row => row.name)
-    for (const name of ['cognition_entries', 'cognition_projects', 'cognition_proposals']) assert.ok(tables.includes(name), name + ' table exists')
+    for (const name of ['cognition_entries', 'cognition_projects', 'cognition_proposals', 'cognition_receipts']) assert.ok(tables.includes(name), name + ' table exists')
     const indexes = db.prepare("SELECT name FROM sqlite_master WHERE type='index'").all().map(row => row.name)
     for (const name of ['idx_cog_entries_scope_status', 'idx_cog_entries_status_updated', 'idx_cog_proposals_status_prio']) assert.ok(indexes.includes(name), name + ' index exists')
     assert.equal(Number(db.prepare('PRAGMA user_version').get().user_version), SCHEMA_VERSION)

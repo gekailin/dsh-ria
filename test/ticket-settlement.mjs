@@ -170,9 +170,10 @@ try {
     assert.equal(after.updatedAt, before.updatedAt)
   }
 
-  // 9. restart reconciliation: working -> blocked(environment, interrupted).
+  // 9. restart reconciliation: a ticket already auto-resumed once stays blocked.
   {
     const ticket = workingTicket('restart')
+    controller.state.setTicketMeta(ticket.ticketId, { autoResumeCount: 1 })
     await controller.reconcileInterruptedWorkingTickets()
     const blocked = store.ticket(ticket.ticketId)
     assert.equal(blocked.status, 'blocked')
@@ -180,6 +181,8 @@ try {
     assert.match(blocked.blockedReason, /^interrupted:/)
     assert.equal(controller.state.ticketMeta(ticket.ticketId).reason, 'interrupted')
     assert.equal(controller.state.executor(executor).currentTicketId, null)
+    assert.ok(controller.state && controller.service.routerEvents.query({ ticketId: ticket.ticketId }).events
+      .some(event => event.event === 'ticket.auto_resume.skipped'))
   }
 
   // 10. trailing progress must not shadow a terminal report.

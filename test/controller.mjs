@@ -577,8 +577,11 @@ try {
   await second.service.startup()
   const parked = second.service.store.ticket(workingTicketId)
   assert.equal(parked.status, 'blocked')
-  assert.equal(parked.waitingOn, 'environment')
-  assert.match(parked.blockedReason, /重启/)
+  // Startup first tries one automatic resume. If the persisted executor cannot
+  // be resolved in this synthetic restart, the resumed path parks it for the
+  // user instead of silently staying on environment.
+  assert.ok(['environment', 'user'].includes(parked.waitingOn), 'unexpected waitingOn: ' + parked.waitingOn)
+  assert.match(parked.blockedReason, /重启|不可用|自动 resume/)
   assert.equal(second.service.controller.state.executor(executorId).status, 'idle')
   const status = second.service.controller.status()
   assert.equal(status.chatSessionId, chat)

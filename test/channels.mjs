@@ -13,6 +13,7 @@ import {
   isQqRequestId,
   isWechatClawRequestId,
 } from '../lib/channels/request-ids.mjs'
+import { RIA_REQUEST_PREFIX, isHostRequestId, isRiaRequestId } from '../lib/wechat/request-ids.mjs'
 
 function fakeContext() {
   return {
@@ -149,6 +150,13 @@ async function waitForStatus(service, predicate, label) {
   assert.equal(isForeignChannelRequestId('qq_123', 'wc_'), true)
   assert.equal(isForeignChannelRequestId('wc_123', 'wc_'), false)
   assert.equal(isForeignChannelRequestId('host_123', 'wc_'), false)
+  assert.equal(isForeignChannelRequestId('ria_123', 'wc_'), false)
+  assert.equal(RIA_REQUEST_PREFIX, 'ria_')
+  assert.equal(isRiaRequestId('ria_123'), true)
+  assert.equal(isRiaRequestId('host_123'), true, 'legacy host_ ids remain inject ids')
+  assert.equal(isRiaRequestId('user-123'), false)
+  assert.equal(isHostRequestId('ria_123'), true, 'deprecated alias must follow the new helper')
+  assert.equal(isHostRequestId('host_123'), true)
 
   const key = randomBytes(32).toString('base64')
   const encrypted = encryptSecret('app-secret', key)

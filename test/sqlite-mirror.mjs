@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, basename } from 'node:path'
 import { RiaStore } from '../lib/index.js'
@@ -266,8 +266,8 @@ function setup() {
     let failed = false
     runtime.exportMirror = (snapshot, guard) => writeMirrorSnapshot({ stateDir: f.dir, snapshot, ...guard,
       write(file, text, options) {
-        if (!failed && basename(file) === 'tickets.log.jsonl') { failed = true; throw new Error('mirror file failed') }
         writeAtomic(file, text, options)
+        if (!failed && basename(file) === 'state.json') { failed = true; throw new Error('mirror file failed') }
       },
     })
     assert.throws(() => runtime.flush(), /mirror file failed/)
@@ -278,8 +278,8 @@ function setup() {
     assert.equal(f.external.record(record.ticket.ticketId).meta.projectId, 'archived-meta')
     runtime.exportMirror = (snapshot, guard) => writeMirrorSnapshot({ stateDir: f.dir, snapshot, ...guard })
     assert.equal(runtime.flush(), true)
-    const archiveLines = readFileSync(join(f.dir, 'tickets.log.jsonl'), 'utf8').trim().split('\n').map(JSON.parse)
-    assert.ok(archiveLines.some(item => item.ticket.ticketId === record.ticket.ticketId))
+    assert.equal(existsSync(join(f.dir, 'tickets.log.jsonl')), false, 'retired mirror file is not recreated')
+    assert.ok(exportTickets({ stateDir: f.dir }).archives.some(item => item.ticket.ticketId === record.ticket.ticketId))
     assert.deepEqual(f.external.record(record.ticket.ticketId).meta.projectId, 'archived-meta')
     assert.equal(f.read('ria.json').ticketMirror, undefined, 'ria.json is no longer a live mirror')
     assert.equal(f.read('state.json').ticketMirror, undefined, 'state.json has no mirror generation')

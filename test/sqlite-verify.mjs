@@ -28,8 +28,7 @@ try {
   const archived = ticket('t3', { status: 'done', closedAt: 200, resolution: { summary: 'done' } })
   writeFileSync(join(dir, 'ria.json'), JSON.stringify({ schemaVersion: 5, tickets: hot, settings: { keep: true } }))
   writeFileSync(join(dir, 'state.json'), JSON.stringify({ tickets: { t1: { ticketId: 't1', phase: 'advisor' } } }))
-  writeFileSync(join(dir, 'tickets.log.jsonl'), JSON.stringify({ ticket: archived, closedAt: 200 }) + '\n')
-  seedSqliteFromState({ stateDir: dir })
+  seedSqliteFromState({ stateDir: dir, extraRecords: [{ ticket: archived, archivedAt: 200 }] })
   const dbPath = join(dir, 'ria.sqlite')
   const dbBefore = sha(dbPath)
 
@@ -88,12 +87,13 @@ try {
     db.close()
   }
 
-  // T4: legacy ria.json mismatch but DB self-consistent => still ok, exit 0.
+  // T4: legacy ria.json is stale, but the offline source now reads SQLite; the
+  // DB stays self-consistent and verify-only remains ok/exit 0.
   writeFileSync(join(dir, 'ria.json'), JSON.stringify({ schemaVersion: 5, tickets: [hot[0]], settings: { keep: true } }))
   const stale = verifySqliteState({ stateDir: dir })
   assert.equal(stale.ok, true)
   assert.equal(stale.legacyComparison.informational, true)
-  assert.equal(stale.legacyComparison.matched, false)
+  assert.equal(stale.legacyComparison.matched, true, 'offline source reads SQLite, not ria.json')
   const staleCli = spawnSync(process.execPath, [script, '--state-dir', dir], { encoding: 'utf8' })
   assert.equal(staleCli.status, 0, staleCli.stderr)
   assert.equal(JSON.parse(staleCli.stdout).ok, true)

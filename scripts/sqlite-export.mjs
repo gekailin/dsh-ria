@@ -5,8 +5,6 @@ import { pathToFileURL } from 'node:url'
 import { openDatabase } from '../lib/state/sqlite/db.mjs'
 import { SqliteTicketAdapter } from '../lib/state/sqlite/adapter.mjs'
 
-const TICKET_LOG = 'tickets.log.jsonl'
-
 // legacy: offline rollback/export path; reads ria.json/state.json only to
 // rebuild a JSON-mode snapshot. Live runtime does not use this reader.
 export function exportTickets({ stateDir, dbPath = join(stateDir, 'ria.sqlite') }) {
@@ -32,8 +30,9 @@ export function exportTickets({ stateDir, dbPath = join(stateDir, 'ria.sqlite') 
 }
 
 /**
- * One-command rollback: rebuild ria.json / state.json / tickets.log.jsonl from the
- * DB and set storage=json. The DB file is left in place for a later retry.
+ * One-command rollback: rebuild ria.json / state.json from the DB and set
+ * storage=json. The retired tickets.log.jsonl is never recreated. The DB file
+ * is left in place for a later retry.
  */
 export function writeExport({ stateDir, dbPath = join(stateDir, 'ria.sqlite'), now = Date.now() }) {
   const exported = exportTickets({ stateDir, dbPath })
@@ -44,7 +43,7 @@ export function writeExport({ stateDir, dbPath = join(stateDir, 'ria.sqlite'), n
     storage: 'json',
     rolledBackAt: now,
     counts: exported.counts,
-    files: ['ria.json', 'state.json', TICKET_LOG],
+    files: ['ria.json', 'state.json'],
     next: 'Restart the service (or unset DSH_RIA_STORAGE) so storage=json takes effect; the DB file is kept for retry.',
   }
 }

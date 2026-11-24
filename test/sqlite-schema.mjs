@@ -21,10 +21,8 @@ try {
   writeFileSync(join(stateDir, 'ria.json'), JSON.stringify({ schemaVersion: 5, tickets: [ticket], settings: { keep: true }, grants: ['leave-json'] }))
   writeFileSync(join(stateDir, 'state.json'), JSON.stringify({ tickets: { [ticket.ticketId]: meta }, reports: ['leave-json'], workOrders: { keep: true } }))
   const archive = { ticket: archived, ticketId: archived.ticketId, closedAt: archived.closedAt, schema: 1 }
-  writeFileSync(join(stateDir, 'tickets.log.jsonl'), JSON.stringify(archive) + '\n')
-  writeFileSync(join(stateDir, 'tickets-2026-11.jsonl'), JSON.stringify(archive) + '\n')
   const before = readFileSync(join(stateDir, 'ria.json'), 'utf8')
-  const seeded = seedSqliteFromState({ stateDir })
+  const seeded = seedSqliteFromState({ stateDir, extraRecords: [{ ticket: archived, archivedAt: 200, archiveRecords: [archive] }] })
   assert.equal(seeded.ok, true)
   assert.deepEqual(seeded.counts, { tickets: 2, history: 2, hot: 1, archived: 1, meta: null })
   const exported = exportTickets({ stateDir })

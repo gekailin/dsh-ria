@@ -31,8 +31,7 @@ const closed = Array.from({ length: 52 }, (_, index) => ticket('done' + index, {
 const archived = ticket('t4', { status: 'done', closedAt: old, resolution: { summary: 'done' } })
 writeFileSync(join(state, 'ria.json'), JSON.stringify({ schemaVersion: 5, version: 5, tickets: [...hot, ...closed], settings: { progressCards: false } }))
 writeFileSync(join(state, 'state.json'), JSON.stringify({ tickets: { t1: { ticketId: 't1', phase: 'advisor', projectCwd: '/tmp/p' } } }))
-writeFileSync(join(state, 'tickets.log.jsonl'), JSON.stringify({ ticket: archived, closedAt: old }) + '\n')
-seedSqliteFromState({ stateDir: state })
+seedSqliteFromState({ stateDir: state, extraRecords: [{ ticket: archived, archivedAt: old }] })
 
 const mirror = () => {
   let count = 0

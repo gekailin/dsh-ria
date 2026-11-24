@@ -58,9 +58,9 @@ try {
     const planned = await fixture.callAs(chat, 'ria_chat_request', { goal: 'legacy role ticket' })
     assert.equal(planned.ok, true, JSON.stringify(planned))
     assert.equal(planned.stateless, true)
+    const rawBefore = readFileSync(join(dir, 'ria.json'), 'utf8')
     fixture.service.store.save()
-    const raw = readFileSync(join(dir, 'ria.json'), 'utf8')
-    assert.equal(raw.includes('"executor": "thinker"'), false)
+    assert.equal(readFileSync(join(dir, 'ria.json'), 'utf8'), rawBefore, 'SQLite runtime leaves the legacy ria.json read-only')
   } finally {
     fixture.cleanup()
   }

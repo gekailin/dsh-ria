@@ -663,6 +663,7 @@ export async function createFixture(options = {}) {
 
   const service = apply(ctx, { stateDir, ...(options.autoTagTurnThreshold !== undefined ? { autoTagTurnThreshold: options.autoTagTurnThreshold } : {}) })
   await service.ensure()
+  try { await service.runtime.flush() } catch { /* tests can inspect an explicit flush result */ }
   // Production Advisor planning is stateless (lib/core/controller.mjs). Most
   // suites here test Router/Executor mechanics and need a planned ticket whose
   // WorkOrder they control, plus an advisor-shaped session for the

@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { RiaStore } from '../lib/index.js'
 import { StateWriter } from '../lib/state/writer.mjs'
 import { TicketRepository } from '../lib/state/tickets-repository.mjs'
-import { SqliteTicketRuntime, resolveStorageMode } from '../lib/state/sqlite/runtime.mjs'
+import { SqliteTicketRuntime } from '../lib/state/sqlite/runtime.mjs'
 import { transaction as sqliteTransaction } from '../lib/state/sqlite/db.mjs'
 import { SqliteTicketAdapter } from '../lib/state/sqlite/adapter.mjs'
 import { openDatabase } from '../lib/state/sqlite/db.mjs'
@@ -50,12 +50,6 @@ const runtime = openRuntime()
 store = new RiaStore(state, { runtime })
 
 try {
-  // Default is json; the file field switches it, env wins, unknown values throw.
-  assert.equal(resolveStorageMode({ env: {}, state: {} }), 'json')
-  assert.equal(resolveStorageMode({ env: {}, state: { storage: 'sqlite' } }), 'sqlite')
-  assert.equal(resolveStorageMode({ env: { DSH_RIA_STORAGE: 'sqlite' }, state: { storage: 'json' } }), 'sqlite')
-  assert.throws(() => resolveStorageMode({ env: { DSH_RIA_STORAGE: 'postgres' }, state: {} }), { code: 'storage_invalid' })
-
   // Reads come from the DB, not from the mirrored JSON.
   assert.equal(store.storage, 'sqlite')
   assert.equal(store.tickets().length, hot.length + closed.length)

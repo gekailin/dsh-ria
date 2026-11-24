@@ -46,8 +46,7 @@ async function setup(options = {}) {
   return { fixture, controller, state, chat, register, makeTicket, plan, dispatch }
 }
 
-const events = stateDir => readFileSync(join(stateDir, 'events.jsonl'), 'utf8')
-  .split('\n').filter(Boolean).map(line => JSON.parse(line))
+const events = fixture => fixture.service.routerEvents.query({ limit: 500 }).events
 
 // (a) Core regression: register -> dispatch -> terminal -> registration remains.
 {
@@ -160,8 +159,8 @@ const events = stateDir => readFileSync(join(stateDir, 'events.jsonl'), 'utf8')
     })
     await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'remove', sessionId: 'session-cm' })
 
-    const rows = events(fixture.stateDir)
-    const forSession = kind => rows.filter(row => row.kind === kind && row.payload && row.payload.sessionId === 'session-cm')
+    const rows = events(fixture)
+    const forSession = kind => rows.filter(row => row.event === kind && row.payload && row.payload.sessionId === 'session-cm')
     const added = forSession('co_manage.added').at(-1)
     const updated = forSession('co_manage.updated').at(-1)
     const removed = forSession('co_manage.removed').at(-1)

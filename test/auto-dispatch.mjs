@@ -50,6 +50,7 @@ await withFixture(async fixture => {
   const controller = fixture.service.controller
   const first = await controller.ensureExecutor('global')
   assert.equal(first.meta.allowAutoDispatch, true)
+  await fixture.service.runtime.flush()
   assert.equal(JSON.parse(readFileSync(join(fixture.stateDir, 'state.json'), 'utf8')).executors[first.sessionId].allowAutoDispatch, true)
   const reused = await controller.ensureExecutor('global')
   assert.equal(reused.sessionId, first.sessionId)

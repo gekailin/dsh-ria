@@ -18,9 +18,10 @@ try {
   assert.equal(store.data.tickets, undefined, 'legacy ticket mirror removed on load')
   assert.equal(store.data.ticketMirror, undefined, 'legacy mirror generation removed on load')
   store.save()
-  const saved = JSON.parse(readFileSync(file, 'utf8'))
-  assert.equal(saved.tickets, undefined, 'save never writes ticket meta')
-  assert.equal(saved.ticketMirror, undefined, 'save never writes mirror generation')
+  assert.equal(store.pendingSave, true, 'SQLite save is deferred until the runtime attaches')
+  const output = store.controlOutput()
+  assert.equal(Object.hasOwn(output, 'tickets'), false, 'control output never writes ticket meta')
+  assert.equal(Object.hasOwn(output, 'ticketMirror'), false, 'control output never writes mirror generation')
 
   // Metadata reads must use the DB adapter, not the JSON mirror.
   store.sqliteRuntime = {

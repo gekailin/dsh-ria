@@ -78,7 +78,7 @@ try {
   assert.match(untaggedCo.excludedReason, /^rank \d+\/\d+ \(limit 3\)$/)
 
   // executing=true must be reported as the selection reason.
-  state.setTicketMeta('ticket_exec_probe', { executing: true, executorSessionId: 'session-probe-cm' })
+  state.setTicketMeta(ticket.ticketId, { executing: true, executorSessionId: 'session-probe-cm' })
   const busy = service.executorDiagnostics({ projectCwd: '/work/proj', tags: '', requireTagMatch: false })
   const busyCo = busy.rows.find(row => row.sessionId === 'session-probe-cm')
   assert.equal(busyCo.selectable, false)

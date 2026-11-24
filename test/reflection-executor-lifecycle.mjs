@@ -43,6 +43,7 @@ try {
   assert.notEqual(second.sessionId, first.sessionId)
   assert.equal(second.meta.seq, 4)
   assert.equal(second.meta.executorLabel, 'Ria Reflection Executor 4')
+  await fixture.service.runtime.flush()
   assert.equal(JSON.parse(readFileSync(join(fixture.stateDir, 'state.json'), 'utf8')).meta.reflectionSeq, 4)
   assert.equal(new StateStore(fixture.stateDir).data.meta.reflectionSeq, 4)
 

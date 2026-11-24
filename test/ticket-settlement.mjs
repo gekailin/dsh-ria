@@ -79,14 +79,27 @@ try {
     assert.equal(store.ticket(ticket.ticketId).status, 'done')
   }
 
-  // 2. turn/end without report -> done + no_report.
+  // 2. turn/end without report -> blocked(waitingOn=executor) + no_report.
   {
     const ticket = workingTicket('no report')
     const result = await settle(ticket.ticketId, { kind: 'completed' })
-    assert.equal(result.status, 'done')
+    assert.equal(result.status, 'blocked')
+    assert.equal(result.waitingOn, 'executor')
     assert.equal(result.no_report, true)
-    assert.equal(store.ticket(ticket.ticketId).status, 'done')
+    assert.equal(store.ticket(ticket.ticketId).status, 'blocked')
+    assert.equal(store.ticket(ticket.ticketId).waitingOn, 'executor')
+    assert.equal(store.ticket(ticket.ticketId).blockedReason, 'executor turn/end completed; no report was recorded')
     assert.equal(controller.state.ticketMeta(ticket.ticketId).no_report, true)
+  }
+
+  // 2b. an explicitly cancelled ticket is not resurrected by a late turn/end.
+  {
+    const ticket = workingTicket('cancelled before settlement')
+    const moved = store.transitionTicket(ticket.ticketId, 'cancelled', { actor: 'user', resolution: { kind: 'control', reason: 'user cancelled' }, reason: 'user cancelled' })
+    assert.equal(moved.ok, true, JSON.stringify(moved))
+    const result = await settle(ticket.ticketId, { kind: 'completed' })
+    assert.equal(result.settled, false)
+    assert.equal(store.ticket(ticket.ticketId).status, 'cancelled')
   }
 
   // 3. question -> blocked(waitingOn=user).

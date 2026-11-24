@@ -14,7 +14,7 @@
 | 事件 | 目标状态 | waitingOn | 附加字段 / 说明 |
 |---|---|---|---|
 | `turn/end` + `completed`，当前 executing，无 pending 提问、无待审批、无错误，最新 report = done | `done` | `none` | 使用该 report 的 summary/evidence；写 resolution；释放 executor |
-| `turn/end` + `completed`，同上，但没有 report | `done` | `none` | 写 `no_report: true`；resolution 使用 turn/end 的自动摘要 |
+| `turn/end` + `completed`，同上，但没有 report | `blocked` | `executor` | 不判完成；`reason=no_report`，保留 `no_report: true` 供审计 |
 | `turn/end` + `completed`，最新 report = progress | 保持 `working` | `executor` | progress 表示还有后续 turn；不提前结算 |
 | `turn/end` + `completed`，最新 report = blocked | `blocked` | `user` | 使用 report 的 question/summary；写 attention |
 | `turn/end` + `completed`，最新 report = failed | `failed` | `none` | failure 来自 report |
@@ -71,7 +71,8 @@
 - 只有“本次派发终结”的事件才结算；
 - 最新 report = `progress` 时，`turn/end` 保持 working，等待后续 turn；
 - 最新 report = `done|blocked|failed` 时，`turn/end` 结算；
-- 没有 report 的单 turn 结束，结算为 done 并记 `no_report: true`；
+- 没有 report 的单 turn 结束，结算为 `blocked(waitingOn=executor, reason=no_report)`，并保留 `no_report: true` 供审计；
+- 已被显式取消/停止的票是终态，后续 turn/end 不再结算，也不会被改回 blocked；
 - 已终态的票收到后续事件一律忽略（终态不可改）；
 - 重复的 `turn/end` 不会二次通知、不会二次迁移。
 

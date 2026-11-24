@@ -148,7 +148,7 @@ const noticesAbout = (fixture, chat, ticketId) => fixture.prompts
   }
 }
 
-// 4. A completed turn without a report settles done and records no_report.
+// 4. A completed turn without a report settles blocked(executor) and records no_report.
 {
   const { fixture, chat } = await setup()
   try {
@@ -157,8 +157,8 @@ const noticesAbout = (fixture, chat, ticketId) => fixture.prompts
     turnEnd(fixture, executorId, 1, { kind: 'completed' })
 
     const ticket = fixture.service.store.ticket(ticketId)
-    assert.equal(ticket.status, 'done')
-    assert.equal(ticket.waitingOn, 'none')
+    assert.equal(ticket.status, 'blocked')
+    assert.equal(ticket.waitingOn, 'executor')
     assert.equal(ticket.failure, null)
     assert.equal(fixture.service.controller.state.ticketMeta(ticketId).no_report, true)
     const executor = fixture.service.controller.state.executor(executorId)

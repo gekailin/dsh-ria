@@ -15,8 +15,8 @@
 `~/.dsh/state/ria/state.json` 只保留控制面：
 
 - `executors`、`settings`、`grants`、`recentExecutors`
-- `chatSessionId` / `sageSessionId` / `riaSessionId` / `riaPreset`
-- `meta`、`lastError`、`storage`、`version`、`createdAt`、`lastHumanMessageAt`
+- `chatSessionId` / `sageSessionId` / `riaPreset`
+- `meta`、`lastError`、`createdAt`、`lastHumanMessageAt`
 - `coManagement`（协管 watch 注册表；旧 co-management.json 仅迁移时读取）
 
 `executors[].executorLabel` 以实时 Session 标题为准，启动时由 `syncExecutorLabels()` 对齐；一次性对齐脚本已删除。
@@ -60,7 +60,7 @@
 
 SQLite 运行态从 Phase A 起不再写入；JSON 模式只用于离线迁移/测试。磁盘保留只读一版作为回滚材料。满足以下条件后删除：
 
-1. 线上连续一版启动 `state.json` 已有 `eventsMigratedAt` 且控制字段完整；
+1. 线上连续一版启动 `state.json` 不再包含 legacy 控制键，且控制字段完整；
 2. 无回滚到 JSON 模式的需求；
 3. `ria.json.bak.*` 与旧备份至少保留一份。
 
@@ -77,7 +77,7 @@ SQLite 运行态从 Phase A 起不再写入；JSON 模式只用于离线迁移/�
 ## 部署后首次启动会发生什么
 
 1. `RiaService` 先迁移控制字段：`ria.json` 的 settings/grants/... 缺则搬进 `state.json`，并备份 `ria.json.bak.<ISO>`。
-2. `StateStore` 发现 `state.json` 仍含六个日志键：备份 `state.json.bak.<ts>`，逐条 append 到当日 `events.jsonl`，写 `eventsMigratedAt`，原子重写 `state.json`（仅控制面）。
+2. `StateStore` 发现 `state.json` 仍含六个日志键：备份 `state.json.bak.<ts>`，逐条 append 到当日 `events.jsonl`，然后原子重写 `state.json`（仅控制面）。旧控制键 `recentWorkers`、`riaSessionId`、`eventsMigratedAt`、`version`、`storage` 只删除，不再写回；事件日志启用时，首次真实删除发一次 `state.legacy_keys.removed`。
 3. 后续 SQLite 启动从 `events.jsonl` 重建；运行态不再写 `ria.json`（JSON 模式除外）。
 
 ## 回滚

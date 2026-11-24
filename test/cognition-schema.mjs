@@ -62,13 +62,15 @@ try {
     assert.equal(tables.includes('cognition_receipts'), false, 'migration drops cognition_receipts')
     assert.equal(tables.includes('lessons'), false, 'migration drops lessons')
     assert.equal(tables.includes('cognition_lesson_candidates'), false, 'migration drops cognition_lesson_candidates')
-    const migrated = db.prepare('SELECT status,decided_by,decided_at,rationale,evidence_refs,affected_entries FROM cognition_proposals WHERE id=?').get('prop_old')
+    const migrated = db.prepare('SELECT status,decided_by,decided_at,rationale FROM cognition_proposals WHERE id=?').get('prop_old')
     assert.equal(migrated.status, 'accepted')
     assert.equal(migrated.decided_by, 'sage')
     assert.equal(migrated.decided_at, 42)
     assert.equal(migrated.rationale, 'verified')
-    assert.deepEqual(JSON.parse(migrated.evidence_refs), [{ type: 'file', ref: 'a.mjs' }])
-    assert.deepEqual(JSON.parse(migrated.affected_entries), ['cog_9'])
+    const entryColumns = db.prepare('PRAGMA table_info(cognition_entries)').all().map(col => col.name)
+    const proposalColumns = db.prepare('PRAGMA table_info(cognition_proposals)').all().map(col => col.name)
+    for (const column of ['recorded', 'truncated']) assert.equal(entryColumns.includes(column), false, column + ' must be dropped')
+    for (const column of ['evidence_refs', 'affected_entries']) assert.equal(proposalColumns.includes(column), false, column + ' must be dropped')
   } finally { db.close() }
   console.log('cognition schema slice ok')
 } finally { rmSync(dir, { recursive: true, force: true }) }

@@ -23,7 +23,7 @@ try {
   assert.ok(first.moved.includes('settings'))
   assert.ok(existsSync(first.backup))
   const state = JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8'))
-  for (const key of ['settings', 'grants', 'recentExecutors', 'ticketFeedback', 'riaSessionId', 'riaPreset', 'version', 'createdAt', 'lastHumanMessageAt', 'storage']) {
+  for (const key of ['settings', 'grants', 'recentExecutors', 'ticketFeedback', 'riaPreset', 'createdAt', 'lastHumanMessageAt']) {
     assert.ok(Object.hasOwn(state, key), 'state.json has ' + key)
   }
   assert.equal(hash(join(dir, 'ria.json')), riaHash, 'migration never rewrites ria.json')

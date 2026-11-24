@@ -17,6 +17,7 @@
   "scripts": {
     "router": "node lib/router/cli.mjs",
     "router:test": "node test/router.mjs",
+    "migrate:cognition": "node scripts/migrate-cognition.mjs",
     "test": "node scripts/run-tests.mjs"
   },
   "exports": {

@@ -118,12 +118,19 @@ try {
       // Slash co-management commands were removed. /协管列表 is ordinary Chat
       // text: it must not be parsed as a command or mutate co-management.
       assert.equal(typeof fixture.service.controller.handleWatchCommand, 'undefined')
+      assert.doesNotMatch(readFileSync(new URL('../lib/core/controller.mjs', import.meta.url), 'utf8'), new RegExp('function direct' + 'Command'))
       const watchCountBeforeSlash = fixture.service.controller.coManagement.watches().length
       const promptsBeforeSlash = fixture.prompts.length
       await fixture.service.wechatClaw.deliverText('/协管列表')
       const chatPrompts = fixture.prompts.slice(promptsBeforeSlash).filter(item => String(item.sessionId) === String(chat))
       assert.ok(chatPrompts.some(item => String(item.content[0].text).includes('/协管列表')))
       assert.equal(fixture.service.controller.coManagement.watches().length, watchCountBeforeSlash)
+      // All slash text is ordinary Chat input; no command parser intercepts /直通.
+      const promptsBeforeDirect = fixture.prompts.length
+      await fixture.service.wechatClaw.deliverText('/直通 任意会话')
+      const directTextPrompts = fixture.prompts.slice(promptsBeforeDirect).filter(item => String(item.sessionId) === String(chat))
+      assert.ok(directTextPrompts.some(item => String(item.content[0].text).includes('/直通 任意会话')))
+      assert.equal(fixture.service.controller.coManagement.watches().length, watchCountBeforeSlash, '/直通 must not mutate registration')
 
       const watch = () => fixture.service.controller.coManagement.watch('session-watch')
       const emitAssistant = (seq, text) => fixture.service.onSessionEvent(

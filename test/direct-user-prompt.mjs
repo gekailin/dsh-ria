@@ -16,6 +16,7 @@ const fixture = await createFixture({
   stateDefault: true,
   extraSessions: [
     { sessionId: 'session-independent', running: false, blank: false, updatedAt: 10, cwd: '/tmp', projections: { values: { title: 'Independent' } } },
+    { sessionId: 'session-cm-direct', running: false, blank: false, updatedAt: 10, cwd: '/tmp', projections: { values: { title: 'Co-managed direct' } } },
   ],
 })
 try {
@@ -25,6 +26,11 @@ try {
   const executor = (await controller.ensureExecutor('global')).sessionId
   const reflection = (await controller.ensureReflectionExecutor('global')).sessionId
   const sage = (await controller.ensureSage()).sessionId
+  const coManaged = 'session-cm-direct'
+  const registered = await fixture.callAs(chat, 'ria_chat_co_manage', {
+    action: 'add', sessionId: coManaged, cwd: '/tmp', allowDispatch: false,
+  })
+  assert.equal(registered.ok, true, JSON.stringify(registered))
   const agentOf = id => fixture.agentFor(id)
   const preStep = (id, messages) => controller.onPreStep(
     { agent: agentOf(id), turn: 1 },
@@ -48,6 +54,16 @@ try {
   await assertBlocked(executor)
   await assertBlocked(reflection)
   await assertBlocked(sage, SAGE_REPLY)
+
+  // Co-managed sessions are user-owned: direct user messages are normal input.
+  {
+    const input = [direct('user-cm-direct')]
+    const result = await preStep(coManaged, input)
+    assert.deepEqual(result.messages, input, 'co-managed user message must pass through')
+    assert.equal(result.messages[0].source.kind, 'user')
+    assert.equal(fixture.service.controller.state.executor(coManaged).status, 'idle')
+    assert.equal(fixture.service.controller.state.executor(coManaged).currentTicketId, null)
+  }
 
   // Sage also rejects direct input; host_ injection is allowed.
   {

@@ -2,7 +2,7 @@
 
 ## 存储三层化（phase A 已落地，B/C 待做）
 
-- **Phase A 已完成**：`ria.json` 不再被 mirror 写入（保留只读一版作为回滚材料）；`settings`/`grants`/`recentExecutors`/`ticketFeedback`/`riaSessionId`/`riaPreset`/`version`/`createdAt`/`lastHumanMessageAt`/`storage` 启动时一次性迁入 `state.json`（幂等、备份 `ria.json.bak-*`）；RiaStore 读优先 state，缺字段才回退 ria.json。
+- **Phase A 已完成**：SQLite 运行态的 `ria.json` 不再被 mirror 写入（保留只读一版作为回滚材料）；JSON 模式仅用于离线迁移/测试。`settings`/`grants`/`recentExecutors`/`ticketFeedback`/`riaSessionId`/`riaPreset`/`version`/`createdAt`/`lastHumanMessageAt`/`storage` 启动时一次性迁入 `state.json`（幂等、备份 `ria.json.bak-*`）；RiaStore 读优先 state，缺字段才回退 ria.json。
 - **Phase B 已完成**：`requests`/`reports`/`workOrders`/`inbox`/`ticketFeedback`/`lessonCandidates` 写 append `events.jsonl`（含 wheel rotation/retention），启动从日志重建（requests/reports/workOrders/ticketFeedback 500，inbox 全量，lessonCandidates 200）；state.json 不再含六键。lessonCandidates 暂用 JSONL（未改 SQLite schema）。
 - **Phase C 已完成**：下游读点复核、三层定位文档 `docs/storage-layers.md`、度量与启动/回滚说明已落地。
 - `ria.json` 删除时机：线上连续一版启动 `state.json` 有 `eventsMigratedAt`、控制字段完整且无回滚需求；删除前保留 `ria.json.bak.*` 一份。

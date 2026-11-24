@@ -39,7 +39,7 @@ executor 要么是 executor 的 sessionId，要么是 `self`：Ria 默认把任�
 
 ### 工单
 
-工单是耐久的工作单元，存放在 `ria.json`。八个状态：
+工单是耐久的工作单元，运行态存放在 SQLite `ria.sqlite`（`ria.json` 仅为历史兼容副本）。八个状态：
 
 | 状态 | 含义 | 默认 waitingOn |
 |---|---|---|
@@ -140,7 +140,7 @@ outbox 与 `ria.json` 不是同一个事务：派发已被接受、但 outbox �
 
 | 文件 / 目录 | 职责 |
 |---|---|
-| `ria.json` | 热状态 schema v5：Ria session、tickets、pending deliveries、recentExecutors、grants、settings、dispatchNotes、feedback |
+| `ria.json` | 历史兼容副本；SQLite 运行态不再 mirror 写入，JSON 模式仅离线迁移/测试 |
 | `outbox.json` | 副作用待投递 / 失败 / 已送达记录；独立于 ria.json |
 | `tickets.log.jsonl` | 已废弃；启动时归档为 `.bak-<ts>`，不再读写 |
 | `memory.md` | 稳定偏好，默认 2400 字符 / 12 条 / 单条 300，0600；超出归档到 `memory-archive/<slug>.md`（不注入） |

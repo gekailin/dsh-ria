@@ -34,27 +34,31 @@ try {
   await new Promise(resolve => setTimeout(resolve, 20))
   assert.equal(fixture.prompts.filter(item => String(item.sessionId) === String(sage)).length, beforeCompact)
 
-  // Cognition bootstrap is idempotent and creates the expected files.
+  // Cognition bootstrap is idempotent and seeds SQLite principles.
   const first = await controller.bootstrapCognition()
   assert.equal(first.bootstrapped, true)
-  for (const file of ['principles.md', 'projects/dsh-ria.md', 'chat/preferences.md', 'chat/agreements.md', 'chat/decisions.md', 'INDEX.md']) {
-    assert.equal(existsSync(join(controller.stateDir, 'cognition', file)), true, file)
-  }
+  assert.ok(first.entries.length >= 5)
   const second = await controller.bootstrapCognition()
   assert.equal(second.bootstrapped, false)
-  assert.ok(readFileSync(join(controller.stateDir, 'cognition', 'principles.md'), 'utf8').includes('全局唯一'))
+  const principles = cognition.searchEntries({ scopes: ['principle'], limit: 20 })
+  assert.ok(principles.some(entry => entry.body.includes('全局唯一')))
 
-  // Path traversal is rejected; normal write updates INDEX and audits.
-  assert.throws(() => cognition.read('../../ria.json'), /invalid|cognition/i)
+  // Sage writes structured entries to SQLite; reading back succeeds.
   const written = await fixture.callAs(sage, 'ria_sage_write', {
-    path: 'chat/preferences.md',
-    content: '用户偏好：回答简洁，先给结论。',
-    mode: 'replace',
+    entry: {
+      scope: 'user:preference',
+      kind: 'preference',
+      body: '用户偏好：回答简洁，先给结论。',
+      cause: '用户明确要求',
+      sources: [{ type: 'user', ref: 'chat' }],
+    },
     reason: 'test',
   })
   assert.equal(written.ok, true, JSON.stringify(written))
-  assert.ok(cognition.read('INDEX.md').includes('chat/preferences.md'))
-  assert.equal(cognition.read('chat/preferences.md').includes('先给结论'), true)
+  assert.equal(written.backend, 'sqlite')
+  const readBack = await fixture.callAs(sage, 'ria_sage_read', { id: written.entry.id })
+  assert.equal(readBack.ok, true)
+  assert.equal(readBack.entry.body.includes('先给结论'), true)
 
   // User proposals are high priority and land in proposals/.
   const proposed = await fixture.callAs(fixture.service.controller.state.chatSessionId, 'ria_chat_propose', {

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createFixture } from './support/ria-fixture.mjs'
 import { CoManagement } from '../lib/roles/co-management.mjs'
+import { StateStore } from '../lib/store/store.mjs'
 import { chatPrompt } from '../lib/prompts/shared.mjs'
 
 const tempDir = () => mkdtempSync(join(tmpdir(), 'ria-co-management-'))
@@ -17,8 +18,10 @@ try {
     let current = 1000
     const sent = []
     const notes = []
+    const state = new StateStore(dir)
     const manager = new CoManagement({
       stateDir: dir,
+      state,
       now: () => current,
       send: async (watch, body) => { sent.push({ watchId: watch.watchId, body }) },
       notify: message => notes.push(message),
@@ -26,7 +29,7 @@ try {
     })
     const added = manager.add({ sessionId: 'session-a', title: 'A', options: { rateLimit: { maxPerMin: 2, mergeWindowMs: 0, windowMs: 1000 } } })
     assert.equal(added.ok, true)
-    const file = join(dir, 'co-management.json')
+    const file = join(dir, 'state.json')
     assert.equal(statSync(file).mode & 0o777, 0o600)
     assert.equal(manager.add({ sessionId: 'session-a', title: 'A' }).existing, true)
     for (let index = 0; index < 19; index += 1) manager.add({ sessionId: 'session-' + index, title: 's' + index })
@@ -55,7 +58,7 @@ try {
     assert.match(sent.at(-1).body, /另有 1 条输出已省略/)
 
     // Reload keeps watches and cursors; restart must not replay old seq.
-    const reloaded = new CoManagement({ stateDir: dir, now: () => current, send: async () => {}, notify: () => {} })
+    const reloaded = new CoManagement({ stateDir: dir, state: new StateStore(dir), now: () => current, send: async () => {}, notify: () => {} })
     const loaded = reloaded.watch('session-a')
     assert.ok(loaded)
     assert.equal(loaded.cursors.lastRelayedSeq, 5)

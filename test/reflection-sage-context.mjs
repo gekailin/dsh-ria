@@ -1,24 +1,28 @@
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { readSageContext } from '../lib/reflection-sage-context.mjs'
+import { openDatabase } from '../lib/state/sqlite/db.mjs'
 
 const root = mkdtempSync(join(tmpdir(), 'ria-sage-context-'))
 try {
-  const state = join(root, 'state'); const cog = join(state, 'cognition'); mkdirSync(join(cog, 'chat'), { recursive: true }); mkdirSync(join(cog, 'proposals'), { recursive: true })
-  writeFileSync(join(cog, 'principles.md'), '# Principles\n\n## 2026-11-20 old\nold rule\n\n## 2026-11-23 new\nnew rule\n')
-  writeFileSync(join(cog, 'chat', 'decisions.md'), '# Decisions\n\n## 2026-11-22 decision\nkeep this\n')
-  writeFileSync(join(cog, 'chat', 'preferences.md'), '# Preferences\n\n## 2026-11-23 preference\nprefer concise reports\n')
-  writeFileSync(join(cog, 'chat', 'profile.md'), '# Profile\n\n## 2026-11-23 profile\ncontext profile\n')
-  writeFileSync(join(cog, 'proposals', 'p1.json'), JSON.stringify({ id: 'p1', text: 'pending proposal', scope: 'global', status: 'pending', createdAt: Date.parse('2026-11-23T01:00:00Z') }))
-  writeFileSync(join(cog, 'proposals', 'p2.json'), JSON.stringify({ id: 'p2', text: 'accepted proposal', scope: 'global', status: 'accepted', createdAt: Date.parse('2026-11-22T01:00:00Z'), reviewedAt: Date.parse('2026-11-23T02:00:00Z') }))
-  writeFileSync(join(cog, 'proposals', 'p3.json'), JSON.stringify({ id: 'p3', text: 'rejected proposal', scope: 'global', status: 'rejected', createdAt: Date.parse('2026-11-21T01:00:00Z'), reviewedAt: Date.parse('2026-11-21T02:00:00Z') }))
-  writeFileSync(join(cog, 'proposals', 'p4.json'), JSON.stringify({ id: 'p4', text: 'deferred proposal', scope: 'global', status: 'deferred', createdAt: Date.parse('2026-11-22T01:00:00Z'), decidedAt: Date.parse('2026-11-23T03:00:00Z'), decidedBy: 'sage', rationale: 'wait for evidence' }))
-  writeFileSync(join(cog, 'proposals', 'p5.json'), JSON.stringify({ id: 'p5', text: 'accepted but 暂缓 later', scope: 'global', status: 'accepted', createdAt: Date.parse('2026-11-22T02:00:00Z'), decidedAt: Date.parse('2026-11-23T04:00:00Z'), decidedBy: 'sage', rationale: 'keep' }))
-  const p5Path = join(cog, 'proposals', 'p5.json')
-  const p5Before = readFileSync(p5Path, 'utf8')
-  const p5Mtime = statSync(p5Path).mtimeMs
+  const state = join(root, 'state')
+  mkdirSync(state, { recursive: true })
+  const db = openDatabase(join(state, 'ria.sqlite'), { create: true })
+  try {
+    const insertEntry = db.prepare('INSERT INTO cognition_entries(id,scope,kind,status,tags,body,cause,sources,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+    insertEntry.run('cog_1', 'principle', 'preference', 'active', '[]', 'old rule', 'cause', '[]', 'sage', Date.parse('2026-11-20T00:00:00Z'), Date.parse('2026-11-20T00:00:00Z'))
+    insertEntry.run('cog_2', 'principle', 'preference', 'active', '[]', 'new rule', 'cause', '[]', 'sage', Date.parse('2026-11-23T00:00:00Z'), Date.parse('2026-11-23T00:00:00Z'))
+    insertEntry.run('cog_3', 'user:preference', 'preference', 'active', '[]', 'prefer concise reports', 'cause', '[]', 'sage', Date.parse('2026-11-23T00:00:00Z'), Date.parse('2026-11-23T00:00:00Z'))
+    const insertProp = db.prepare('INSERT INTO cognition_proposals(id,author,source,kind,scope,body,cause,sources,priority,status,decided_by,decided_at,rationale,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    insertProp.run('p1', 'executor', 't', 'add', 'global', 'pending proposal', '', '[]', 'normal', 'pending', null, null, null, Date.parse('2026-11-23T01:00:00Z'))
+    insertProp.run('p2', 'executor', 't', 'add', 'global', 'accepted proposal', '', '[]', 'normal', 'accepted', null, Date.parse('2026-11-23T02:00:00Z'), null, Date.parse('2026-11-22T01:00:00Z'))
+    insertProp.run('p3', 'executor', 't', 'add', 'global', 'rejected proposal', '', '[]', 'normal', 'rejected', 'sage', Date.parse('2026-11-21T02:00:00Z'), 'no', Date.parse('2026-11-21T01:00:00Z'))
+    insertProp.run('p4', 'executor', 't', 'add', 'global', 'deferred proposal', '', '[]', 'normal', 'deferred', 'sage', Date.parse('2026-11-23T03:00:00Z'), 'wait for evidence', Date.parse('2026-11-22T01:00:00Z'))
+    insertProp.run('p5', 'executor', 't', 'add', 'global', 'accepted but 暂缓 later', '', '[]', 'normal', 'accepted', 'sage', Date.parse('2026-11-23T04:00:00Z'), 'keep', Date.parse('2026-11-22T02:00:00Z'))
+  } finally { db.close() }
+
   const events = [{ type: 'turn/start', time: 1 }, { type: 'assistant/message', time: 2 }, { type: 'tool/result', time: 3 }, { type: 'approval/request', time: 4 }]
   const full = readSageContext(state, { since: '2026-11-22T00:00:00Z', maxChars: 20000, events, sageSessionId: 'sage-1', now: Date.parse('2026-11-23T12:00:00Z') })
   assert.ok(full.cognitionSnapshot && full.pendingProposals && full.decisionHistory && full.sageActivity)
@@ -38,18 +42,14 @@ try {
   assert.equal(full.decisionHistory.warnings.length, 1)
   assert.equal(full.decisionHistory.warnings[0].id, 'p5')
   assert.equal(full.decisionHistory.recorded, 'partial')
-  assert.equal(readFileSync(p5Path, 'utf8'), p5Before, 'accepted-but-deferred warning must not edit proposal')
-  assert.equal(statSync(p5Path).mtimeMs, p5Mtime, 'proposal mtime must not change')
   assert.equal(full.sageActivity.counts.turns, 1)
   assert.equal(full.counts.pendingProposals, 1)
   assert.equal(full.truncated, false)
-  assert.ok(full.cognitionSnapshot.files.some(file => file.file === 'principles.md' && file.items.some(item => item.anchor.includes('2026-11-23'))))
-  assert.ok(full.cognitionSnapshot.files.some(file => file.file === 'chat/preferences.md'), 'preferences.md must be in cognitionSnapshot')
-  assert.ok(full.cognitionSnapshot.files.some(file => file.file === 'chat/profile.md'), 'all cognition/chat/*.md must be enumerated')
-  // since excludes the 2026-11-20 entry.
-  assert.equal(full.cognitionSnapshot.files.find(file => file.file === 'principles.md').items.length, 1)
+  assert.equal(full.cognitionSnapshot.files.find(file => file.file === 'cognition_entries/principle').items.length, 1, 'since excludes old entry')
+
   const tiny = readSageContext(state, { since: '2026-11-22T00:00:00Z', maxChars: 80, events, sageSessionId: 'sage-1' })
   assert.equal(tiny.truncated, true)
+
   const empty = readSageContext(join(root, 'empty'), { since: 0, maxChars: 20000 })
   assert.equal(empty.counts.files, 0)
   assert.equal(empty.pendingProposals.items.length, 0)

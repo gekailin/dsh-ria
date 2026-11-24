@@ -7,7 +7,6 @@ import { StateWriter } from '../lib/state/writer.mjs'
 import { TicketRepository } from '../lib/state/tickets-repository.mjs'
 import { openDatabase, transaction } from '../lib/state/sqlite/db.mjs'
 import { SqliteTicketRuntime } from '../lib/state/sqlite/runtime.mjs'
-import { LessonStore } from '../lib/store/lessons.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'ria-domain-write-'))
 try {
@@ -54,16 +53,6 @@ try {
   store.unlinkTicket(target.topicId, ticket.ticketId)
   store.unlinkTicket(openTopic.topicId, ticket.ticketId)
   assert.equal(store.archiveTopic(openTopic.topicId).archivedAt > 0, true)
-
-  // lessons.json is read-only; writes go to SQLite.
-  const beforeLessons = readFileSync(join(dir, 'lessons.json'), 'utf8')
-  const lessons = new LessonStore({ stateDir: dir, runtime })
-  const accepted = lessons.accept({ scenario: 's new', approach: 'a new', pitfall: 'p new' })
-  assert.equal(runtime.db.prepare('SELECT COUNT(*) n FROM lessons').get().n, 2, 'legacy lesson is hydrated then new one added')
-  assert.equal(readFileSync(join(dir, 'lessons.json'), 'utf8'), beforeLessons)
-  assert.equal(lessons.get(accepted.entry.id).scenario, 's new')
-  lessons.bumpHits([accepted.entry.id])
-  assert.equal(runtime.db.prepare('SELECT COUNT(*) n FROM lessons').get().n, 2)
 
   runtime.exportMirror = () => true
   runtime.flush()

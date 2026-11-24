@@ -42,9 +42,7 @@ try {
   })
   assert.equal(shortReport.ok, true, JSON.stringify(shortReport))
 
-  const warnings = readFileSync(join(fixture.stateDir, 'operation-events.jsonl'), 'utf8')
-    .trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
-    .filter(item => item.event === 'tool.alias_warn')
+  const warnings = fixture.service.routerEvents.query({ types: ['tool.alias_warn'], limit: 100 }).events.map(item => item.payload || {})
   const configWarn = warnings.find(item => item.alias === 'ria_chat_worker_config')
   assert.ok(configWarn, JSON.stringify(warnings))
   assert.equal(configWarn.replacement, 'ria_chat_executor_config')

@@ -3,7 +3,6 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { RiaStore } from '../lib/index.js'
-import { LessonStore } from '../lib/store/lessons.mjs'
 import { openDatabase } from '../lib/state/sqlite/db.mjs'
 import { SqliteTicketAdapter } from '../lib/state/sqlite/adapter.mjs'
 import { SqliteTicketRuntime } from '../lib/state/sqlite/runtime.mjs'
@@ -22,7 +21,6 @@ try {
     db.prepare('INSERT INTO topics(id,title,project_key,tags,brief,archived_at,merged_into,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)')
       .run('topic_a', 'Alpha', 'p', '["t"]', 'b', null, null, 1, 2)
     db.prepare('INSERT INTO topic_links(topic_id,ticket_id,role,created_at) VALUES(?,?,?,?)').run('topic_a', 't1', 'primary', 3)
-    db.prepare('INSERT INTO lessons(id,status,scenario,approach,pitfall,created_at) VALUES(?,?,?,?,?,?)').run('l1', 'active', 's', 'a', 'p', 4)
     db.close()
   }
   const runtime = new SqliteTicketRuntime({ stateDir: dir })
@@ -36,15 +34,6 @@ try {
 
   runtime.db.prepare("UPDATE topics SET title='External' WHERE id='topic_a'").run()
   assert.equal(store.topics()[0].title, 'External', 'SQL is authoritative over the old cache')
-
-  const lessons = new LessonStore({ stateDir: dir, runtime })
-  assert.equal(lessons.list({ status: 'active' }).total, 1)
-  assert.equal(lessons.entries({ status: 'archived' }).length, 0)
-  const plan = runtime.db.prepare("EXPLAIN QUERY PLAN SELECT * FROM lessons WHERE status='active'").all()
-  assert.ok(plan.some(row => String(row.detail).includes('idx_lessons_status')), JSON.stringify(plan))
-  runtime.db.prepare("UPDATE lessons SET status='archived' WHERE id='l1'").run()
-  assert.equal(lessons.list({ status: 'active' }).total, 0, 'list re-reads SQL')
-  assert.equal(lessons.entries({ status: 'archived' }).length, 1)
 
   await runtime.close()
   const emptyDir = mkdtempSync(join(tmpdir(), 'ria-domain-empty-'))

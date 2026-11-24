@@ -21,7 +21,7 @@ try {
     const insertProposal = db.prepare('INSERT INTO cognition_proposals(id,author,source,kind,scope,body,cause,sources,priority,status,decided_by,decided_at,rationale,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
     insertProposal.run('prop_pending', 'executor', 'test', 'add', 'global', 'pending body', '', '[]', 'normal', 'pending', null, null, null, 30)
     insertProposal.run('prop_accepted', 'executor', 'test', 'add', 'global', 'accepted body', '', '[]', 'normal', 'accepted', 'sage', 40, 'ok', 20)
-    insertProposal.run('prop_merged', 'executor', 'test', 'merge', 'global', 'merged body', '', '[]', 'normal', 'merged', 'sage', 41, 'merge', 21)
+    insertProposal.run('prop_merged', 'executor', 'test', 'add', 'global', 'merged body', '', '[]', 'normal', 'merged', 'sage', 41, 'merge', 21)
   } finally { db.close() }
   const cognition = new CognitionStore({ stateDir, backend: 'sqlite', dbPath })
   const snapshot = readSageContext(stateDir, { since: 0, now: Date.parse('2026-11-24T00:00:00Z'), cognition })
@@ -34,14 +34,9 @@ try {
   assert.ok(snapshot.decisionHistory.items.some(item => item.id === 'prop_merged' && item.status === 'merged'))
   cognition.db.close()
 
-  // File fallback remains the original path and includes preferences.md.
-  const fileDir = join(root, 'file')
-  mkdirSync(join(fileDir, 'cognition', 'chat'), { recursive: true })
-  writeFileSync(join(fileDir, 'cognition', 'chat', 'preferences.md'), '# Preferences\n\n## 2026-11-23 preference\nprefer concise reports\n')
-  const fileSnapshot = readSageContext(fileDir, { since: '2026-11-22T00:00:00Z', now: Date.parse('2026-11-23T12:00:00Z') })
-  assert.ok(fileSnapshot.cognitionSnapshot.files.some(file => file.file === 'chat/preferences.md'))
-
   // SQLite unavailable: hard cognition_db_unavailable, no file fallback.
+  const fileDir = join(root, 'file')
+  mkdirSync(fileDir, { recursive: true })
   const warnings = []
   const missing = new CognitionStore({ stateDir: fileDir, dbPath: join(fileDir, 'missing.sqlite'), log: (level, message) => warnings.push({ level, message }) })
   assert.throws(

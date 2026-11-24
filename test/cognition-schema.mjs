@@ -5,17 +5,22 @@ import { join } from 'node:path'
 import { openDatabase } from '../lib/state/sqlite/db.mjs'
 import { SCHEMA_VERSION } from '../lib/state/sqlite/schema.mjs'
 
-// Phase 1 minimum slice: additive, idempotent cognition tables. This test does
-// not exercise CognitionStore; it locks the storage contract only.
 const dir = mkdtempSync(join(tmpdir(), 'ria-cognition-schema-'))
 const dbPath = join(dir, 'ria.sqlite')
 try {
   let db = openDatabase(dbPath, { create: true })
   try {
     const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(row => row.name)
-    for (const name of ['cognition_entries', 'cognition_projects', 'cognition_proposals', 'cognition_receipts']) assert.ok(tables.includes(name), name + ' table exists')
+    for (const name of ['cognition_entries', 'cognition_projects', 'cognition_proposals', 'schema_migrations']) {
+      assert.ok(tables.includes(name), name + ' table exists')
+    }
+    for (const retired of ['cognition_receipts', 'cognition_lesson_candidates', 'lessons']) {
+      assert.equal(tables.includes(retired), false, retired + ' retired table must not exist')
+    }
     const indexes = db.prepare("SELECT name FROM sqlite_master WHERE type='index'").all().map(row => row.name)
-    for (const name of ['idx_cog_entries_scope_status', 'idx_cog_entries_status_updated', 'idx_cog_proposals_status_prio']) assert.ok(indexes.includes(name), name + ' index exists')
+    for (const name of ['idx_cog_entries_scope_status', 'idx_cog_entries_status_updated', 'idx_cog_proposals_status_prio', 'idx_cog_proposals_ticket', 'idx_cog_proposals_target']) {
+      assert.ok(indexes.includes(name), name + ' index exists')
+    }
     assert.equal(Number(db.prepare('PRAGMA user_version').get().user_version), SCHEMA_VERSION)
 
     db.prepare('INSERT INTO cognition_projects(project_id,name,workspaces,overview,status,updated_at) VALUES(?,?,?,?,?,?)')
@@ -27,14 +32,43 @@ try {
     assert.equal(db.prepare('SELECT id FROM cognition_entries').get().id, 'cog_1')
     assert.equal(db.prepare('SELECT status FROM cognition_proposals').get().status, 'pending')
     assert.equal(Number(db.prepare('SELECT seq FROM cognition_entries').get().seq), 1)
+
+    // CHECK constraints reject bogus status/kind.
+    assert.throws(() => db.prepare("INSERT INTO cognition_entries(id,scope,kind,status,tags,body,cause,sources,created_by,created_at,updated_at) VALUES('cog_2','global','experience','bogus','[]','b','c','[]','sage',1,1)").run())
+    assert.throws(() => db.prepare("INSERT INTO cognition_proposals(id,author,source,kind,scope,body,cause,sources,priority,status,created_at) VALUES('prop_bad','executor','t','bogus','global','b','','[]','normal','pending',1)").run())
   } finally { db.close() }
 
-  // Existing DB with the old schema gets the new tables on the next writable open.
-  db = openDatabase(dbPath)
+  // Existing DB with legacy cognition_receipts/lessons/cognition_lesson_candidates migrates cleanly.
+  const legacyPath = join(dir, 'legacy.sqlite')
+  db = openDatabase(legacyPath, { create: true })
+  try {
+    db.exec('DELETE FROM schema_migrations')
+    db.exec(`CREATE TABLE cognition_receipts (
+      proposal_id TEXT PRIMARY KEY, decision TEXT NOT NULL, rationale TEXT NOT NULL,
+      decided_by TEXT NOT NULL, decided_at INTEGER NOT NULL,
+      evidence_refs TEXT NOT NULL DEFAULT '[]', affected_entries TEXT NOT NULL DEFAULT '[]', created_at INTEGER NOT NULL
+    )`)
+    db.exec('CREATE TABLE lessons (id TEXT PRIMARY KEY)')
+    db.exec('CREATE TABLE cognition_lesson_candidates (id TEXT PRIMARY KEY)')
+    db.prepare('INSERT INTO cognition_proposals(id,author,source,kind,scope,body,cause,sources,priority,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+      .run('prop_old', 'executor', 'test', 'add', 'global', 'old', 'cause', '[]', 'normal', 'pending', 1)
+    db.prepare('INSERT INTO cognition_receipts(proposal_id,decision,rationale,decided_by,decided_at,evidence_refs,affected_entries,created_at) VALUES(?,?,?,?,?,?,?,?)')
+      .run('prop_old', 'accepted', 'verified', 'sage', 42, '[{"type":"file","ref":"a.mjs"}]', '["cog_9"]', 42)
+  } finally { db.close() }
+
+  db = openDatabase(legacyPath)
   try {
     const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(row => row.name)
-    for (const name of ['cognition_entries', 'cognition_projects', 'cognition_proposals']) assert.ok(tables.includes(name))
-    assert.equal(Number(db.prepare('PRAGMA user_version').get().user_version), SCHEMA_VERSION)
+    assert.equal(tables.includes('cognition_receipts'), false, 'migration drops cognition_receipts')
+    assert.equal(tables.includes('lessons'), false, 'migration drops lessons')
+    assert.equal(tables.includes('cognition_lesson_candidates'), false, 'migration drops cognition_lesson_candidates')
+    const migrated = db.prepare('SELECT status,decided_by,decided_at,rationale,evidence_refs,affected_entries FROM cognition_proposals WHERE id=?').get('prop_old')
+    assert.equal(migrated.status, 'accepted')
+    assert.equal(migrated.decided_by, 'sage')
+    assert.equal(migrated.decided_at, 42)
+    assert.equal(migrated.rationale, 'verified')
+    assert.deepEqual(JSON.parse(migrated.evidence_refs), [{ type: 'file', ref: 'a.mjs' }])
+    assert.deepEqual(JSON.parse(migrated.affected_entries), ['cog_9'])
   } finally { db.close() }
   console.log('cognition schema slice ok')
 } finally { rmSync(dir, { recursive: true, force: true }) }

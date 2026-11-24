@@ -18,10 +18,10 @@ try {
     insert.run('prop_accept', 'executor', 'test', 'add', 'project:dsh-ria', 'Accepted cognition body', 'Accepted cause', source, 'normal', 'pending', 1)
     insert.run('prop_invalid', 'executor', 'test', 'add', 'global', 'Invalid body', '', '[]', 'normal', 'pending', 1)
     insert.run('prop_merge', 'executor', 'test', 'add', 'global', 'Merge body', 'Merge cause', source, 'normal', 'pending', 1)
-    insert.run('prop_legacy', 'executor', 'test', 'add', 'global', 'Legacy body', 'Legacy cause', source, 'normal', 'denied', 1)
     insert.run('prop_inbox', 'executor', 'test', 'add', 'global', 'Inbox body', 'Inbox cause', source, 'normal', 'pending', 1)
     insert.run('prop_db_fail', 'executor', 'test', 'add', 'global', 'force-db-fail', 'force-db-fail', source, 'normal', 'pending', 1)
     insert.run('prop_no_evidence', 'executor', 'test', 'add', 'global', 'No evidence body', 'No evidence cause', '[]', 'normal', 'pending', 1)
+    insert.run('prop_override', 'executor', 'test', 'add', 'dsh-ria/bad-scope', 'raw body', '', '[]', 'normal', 'pending', 1)
     db.exec("CREATE TRIGGER cognition_fail_test BEFORE INSERT ON cognition_entries WHEN NEW.body='force-db-fail' BEGIN SELECT RAISE(ABORT, 'forced cognition entry failure'); END")
   } finally { db.close() }
 
@@ -83,13 +83,24 @@ try {
   assert.equal(store.getReceipt('prop_no_evidence').decision, 'rejected')
   assert.equal(audits.some(item => item.level === 'warn' && item.message.includes('has no evidenceRefs')), true)
 
-  const firstMigration = store.migrateProposalStatuses()
-  assert.deepEqual(firstMigration.ids, ['prop_legacy'])
-  assert.equal(audits.filter(event => event.event === 'cognition.status.migrated').length, 1)
-  const secondMigration = store.migrateProposalStatuses()
-  assert.equal(secondMigration.migrated, 0)
-  assert.equal(audits.filter(event => event.event === 'cognition.status.migrated').length, 1)
-  assert.equal(store.getProposal('prop_legacy').status, 'rejected')
+  // Sage can accept a rough proposal by supplying normalized entry overrides atomically.
+  const overridden = await fixture.callAs(sage, 'ria_sage_decide', {
+    proposalId: 'prop_override',
+    decision: 'accepted',
+    rationale: 'normalized on accept',
+    entry: {
+      scope: 'project:dsh-ria',
+      kind: 'experience',
+      tags: ['settlement'],
+      body: 'Normalized body',
+      cause: 'Verified cause',
+      sources: [{ type: 'file', ref: 'lib/core/controller.mjs' }],
+    },
+  })
+  assert.equal(overridden.ok, true, JSON.stringify(overridden))
+  assert.equal(overridden.entry.scope, 'project:dsh-ria')
+  assert.equal(overridden.proposal.targetEntryId, overridden.entry.id)
+  assert.deepEqual(overridden.entry.tags, ['settlement'])
 
   // Sage read/write take the DB path when backend=sqlite.
   const byId = await fixture.callAs(sage, 'ria_sage_read', { id: accepted.entry.id })
@@ -118,7 +129,7 @@ try {
   controller.cognition = unavailable
   const fallbackWrite = await fixture.callAs(sage, 'ria_sage_write', {
     entry: { scope: 'global', body: 'fallback body', cause: 'fallback cause', sources: [{ type: 'file', ref: 'test' }] },
-    path: 'chat/fallback.md', content: 'fallback file', reason: 'fallback',
+    reason: 'fallback',
   })
   assert.equal(fallbackWrite.ok, false)
   assert.equal(fallbackWrite.code, 'cognition_db_unavailable')

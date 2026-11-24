@@ -23,11 +23,10 @@ try {
   assert.equal(calls.some(item => Array.isArray(item.scopes) && item.scopes.length === 1 && item.scopes[0] === 'principle' && 'text' in item), false)
 
   const emptyDir = join(root, 'empty')
-  mkdirSync(join(emptyDir, 'cognition'), { recursive: true })
-  writeFileSync(join(emptyDir, 'cognition', 'principles.md'), '文件兜底原则：中文内容')
+  mkdirSync(emptyDir, { recursive: true })
   const emptyDb = openDatabase(join(emptyDir, 'test.sqlite'), { create: true })
   emptyDb.exec(SCHEMA_SQL); emptyDb.close()
-  const fallback = new CognitionStore({ stateDir: emptyDir, dbPath: join(emptyDir, 'test.sqlite') }).retrieve({ workspace: root, goal: 'x' })
-  assert.ok(fallback.snapshot.includes('文件兜底原则：中文内容'))
+  const empty = new CognitionStore({ stateDir: emptyDir, dbPath: join(emptyDir, 'test.sqlite') }).retrieve({ workspace: root, goal: 'x' })
+  assert.equal(empty.snapshot, '')
   console.log('cognition principles ok')
 } finally { rmSync(root, { recursive: true, force: true }) }

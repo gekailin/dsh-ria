@@ -90,6 +90,15 @@ try {
     const old = new EventLog({ stateDir: rotDir, maxBytes: 120, retainDays: 1, now: () => 1_800_100_000_000 })
     assert.equal(requireArchive(rotDir), false, 'retention removes old archive')
   } finally { rmSync(rotDir, { recursive: true, force: true }) }
+
+  // Chronological replay across rotated archive + current file: newer event wins.
+  const orderDir = mkdtempSync(join(tmpdir(), 'ria-events-order-'))
+  try {
+    writeFileSync(join(orderDir, 'events-20261124T000001.jsonl'), JSON.stringify({ at: 1, kind: 'workorder.created', ticketId: 't1', payload: { ticketId: 't1', summary: 'old-version' } }) + '\n')
+    writeFileSync(join(orderDir, 'events.jsonl'), JSON.stringify({ at: 2, kind: 'workorder.updated', ticketId: 't1', payload: { ticketId: 't1', summary: 'new-version' } }) + '\n')
+    const replayed = new EventLog({ stateDir: orderDir }).rebuild()
+    assert.equal(replayed.data.workOrders.t1.summary, 'new-version', 'newer events.jsonl must override older archive')
+  } finally { rmSync(orderDir, { recursive: true, force: true }) }
   const fallbackDir = mkdtempSync(join(tmpdir(), 'ria-events-fallback-'))
   try {
     writeFileSync(join(fallbackDir, 'state.json'), JSON.stringify(seed()))

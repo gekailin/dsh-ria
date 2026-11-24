@@ -21,8 +21,8 @@ try {
   insertProposal.run('prop_accept', 'executor', 'test', 'add', 'global', 'body', '', '[]', 'normal', 'pending', 1)
   insertProposal.run('prop_defer', 'executor', 'test', 'add', 'global', 'body', '', '[]', 'normal', 'pending', 1)
   insertProposal.run('prop_deny', 'executor', 'test', 'add', 'global', 'body', '', '[]', 'normal', 'pending', 1)
-  insertProposal.run('prop_legacy', 'executor', 'test', 'add', 'global', 'body', '', '[]', 'normal', 'denied', 1)
   insertProposal.run('prop_merge', 'executor', 'test', 'add', 'global', 'body', '', '[]', 'normal', 'pending', 1)
+  assert.throws(() => insertProposal.run('prop_bad_status', 'executor', 'test', 'add', 'global', 'body', '', '[]', 'normal', 'denied', 1))
 } finally { db.close() }
 
 const warnings = []
@@ -91,14 +91,11 @@ try {
   assert.equal(merged.proposal.status, 'merged')
   assert.equal(merged.proposal.targetEntryId, created.entry.id)
 
-  // Old denied rows read as rejected, migration is one-shot and audited.
-  const legacy = store.getProposal('prop_legacy')
-  assert.equal(legacy.status, 'rejected')
-  const migrated = store.migrateProposalStatuses()
-  assert.deepEqual(migrated.ids, ['prop_legacy'])
-  assert.equal(audits.filter(event => event.event === 'cognition.status.migrated').length, 1)
-  assert.equal(store.migrateProposalStatuses().migrated, 0)
-  assert.equal(audits.filter(event => event.event === 'cognition.status.migrated').length, 1)
+  // propose() normalizes workspace paths and project prefixes to project:<id>.
+  const byWorkspace = store.propose({ author: 'advisor', scope: projectDir, body: 'workspace proposal', sources: [{ type: 'file', ref: 'x' }] })
+  assert.equal(byWorkspace.scope, 'project:dsh-ria')
+  const byPrefix = store.propose({ author: 'advisor', scope: 'dsh-ria/settlement', body: 'prefix proposal', sources: [{ type: 'file', ref: 'x' }] })
+  assert.equal(byPrefix.scope, 'project:dsh-ria')
 
   const count = store.searchEntries({}).length
   for (const missing of [

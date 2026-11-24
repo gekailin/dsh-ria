@@ -151,28 +151,24 @@ try {
   assert.equal(reflectValid.state, 'running')
 
   // 8. Audit is metadata-only: tool/code/field for each rejection and no input
-  //    value. The unknown-parameter secret must never reach either log.
-  const opInvalid = operationEvents().filter(item => item.event === 'tool.input.invalid')
+  //    value. The unknown-parameter secret must never reach router-events.jsonl.
   const routerInvalid = invalidEvents()
-  assert.ok(opInvalid.length >= 9, JSON.stringify(opInvalid))
   assert.ok(routerInvalid.length >= 9, JSON.stringify(routerInvalid))
   for (const code of ['unknown_parameter', 'missing_required', 'invalid_argument']) {
-    assert.ok(opInvalid.some(item => item.code === code), code)
     assert.ok(routerInvalid.some(item => item.payload && item.payload.code === code), code)
   }
-  const auditedTools = new Set(opInvalid.map(item => item.tool))
+  const auditedTools = new Set(routerInvalid.map(item => item.payload && item.payload.tool))
   for (const tool of ['ria_chat_request', 'chat_request', 'ria_ticket_block', 'ria_executor_report', 'ria_sage_read', 'ria_reflect_status', 'ria_session_events']) {
     assert.ok(auditedTools.has(tool), 'missing audit for ' + tool)
   }
-  const auditText = readFileSync(join(fixture.stateDir, 'operation-events.jsonl'), 'utf8')
-    + JSON.stringify(routerInvalid)
+  const auditText = JSON.stringify(routerInvalid)
   assert.equal(auditText.includes(SECRET), false, 'audit must not contain input values')
   assert.equal(auditText.includes('987654321'), false, 'audit must not contain input values')
-  for (const item of opInvalid) {
-    assert.equal(typeof item.tool, 'string')
-    assert.equal(typeof item.code, 'string')
-    assert.equal(typeof item.field, 'string')
-    assert.equal(typeof item.caller, 'string')
+  for (const item of routerInvalid) {
+    assert.equal(typeof item.payload.tool, 'string')
+    assert.equal(typeof item.payload.code, 'string')
+    assert.equal(typeof item.payload.field, 'string')
+    assert.equal(typeof item.sessionId, 'string')
   }
 
   // 9. Every registered ria_* root schema is strict, so the validator always

@@ -41,7 +41,7 @@ try {
   assert.equal(rule(verified, 'R2_meta_state_subtree_le_hot').ok, true)
   assert.equal(rule(verified, 'R3b_history_count_ge_ticket_count').ok, true)
   assert.equal(rule(verified, 'R4b_archived_topic_no_hot_primary').ok, true)
-  assert.equal(rule(verified, 'R5_lessons_status').ok, true)
+  assert.equal(rule(verified, 'R5_cognition_entry_status').ok, true)
   assert.equal(sha(dbPath), dbBefore, 'verification is read-only')
   const cli = spawnSync(process.execPath, [script, '--state-dir', dir, '--verify-only'], { encoding: 'utf8' })
   assert.equal(cli.status, 0, cli.stderr)

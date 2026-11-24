@@ -21,6 +21,8 @@ try {
   insertProposal.run('prop_accept', 'executor', 'test', 'add', 'global', 'body', '', '[]', 'normal', 'pending', 1)
   insertProposal.run('prop_defer', 'executor', 'test', 'add', 'global', 'body', '', '[]', 'normal', 'pending', 1)
   insertProposal.run('prop_deny', 'executor', 'test', 'add', 'global', 'body', '', '[]', 'normal', 'pending', 1)
+  insertProposal.run('prop_legacy', 'executor', 'test', 'add', 'global', 'body', '', '[]', 'normal', 'denied', 1)
+  insertProposal.run('prop_merge', 'executor', 'test', 'add', 'global', 'body', '', '[]', 'normal', 'pending', 1)
 } finally { db.close() }
 
 const warnings = []
@@ -33,7 +35,8 @@ try {
   settingsStore.setSettings({ cognition: { backend: 'sqlite' } })
   assert.equal(settingsStore.settings().cognition.backend, 'sqlite')
 
-  const store = new CognitionStore({ stateDir: dir, backend: 'sqlite', dbPath, log: (level, message) => warnings.push({ level, message }) })
+  const audits = []
+  const store = new CognitionStore({ stateDir: dir, backend: 'sqlite', dbPath, log: (level, message) => warnings.push({ level, message }), audit: event => audits.push(event) })
   const entry = {
     scope: 'project:dsh-ria', body: 'Use SQLite for cognition', cause: 'Markdown retrieval was brittle.',
     tags: ['sqlite', 'cognition'], sources: [{ type: 'file', ref: 'lib/roles/cognition.mjs' }],
@@ -74,7 +77,25 @@ try {
   assert.equal(conflict.ok, false)
   assert.equal(conflict.code, 'proposal_conflict')
   assert.equal(store.decideProposal('prop_defer', { decision: 'deferred', decidedBy: 'sage', rationale: 'later' }).proposal.status, 'deferred')
-  assert.equal(store.decideProposal('prop_deny', { decision: 'denied', decidedBy: 'sage', rationale: 'not useful' }).proposal.status, 'denied')
+  assert.equal(store.decideProposal('prop_deny', { decision: 'rejected', decidedBy: 'sage', rationale: 'not useful' }).proposal.status, 'rejected')
+
+  // merged requires an existing target entry id.
+  const missingTarget = store.decideProposal('prop_merge', { decision: 'merged', decidedBy: 'sage', rationale: 'merge', targetEntryId: 'cog_missing' })
+  assert.equal(missingTarget.ok, false)
+  assert.equal(missingTarget.code, 'proposal_target_missing')
+  const merged = store.decideProposal('prop_merge', { decision: 'merged', decidedBy: 'sage', rationale: 'merge', targetEntryId: created.entry.id })
+  assert.equal(merged.ok, true, JSON.stringify(merged))
+  assert.equal(merged.proposal.status, 'merged')
+  assert.equal(merged.proposal.targetEntryId, created.entry.id)
+
+  // Old denied rows read as rejected, migration is one-shot and audited.
+  const legacy = store.getProposal('prop_legacy')
+  assert.equal(legacy.status, 'rejected')
+  const migrated = store.migrateProposalStatuses()
+  assert.deepEqual(migrated.ids, ['prop_legacy'])
+  assert.equal(audits.filter(event => event.event === 'cognition.status.migrated').length, 1)
+  assert.equal(store.migrateProposalStatuses().migrated, 0)
+  assert.equal(audits.filter(event => event.event === 'cognition.status.migrated').length, 1)
 
   const count = store.searchEntries({}).length
   for (const missing of [

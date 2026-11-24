@@ -57,12 +57,8 @@ async function setup() {
     assert.equal(added.executor.title, 'CM Session')
     assert.equal(added.executor.allowAutoDispatch, true)
     // An ordinary session registered as co-managed is still an independent
-    // direct target. Managed and role sessions remain excluded.
+    // session. Managed and role sessions remain excluded.
     assert.equal(controller.isIndependentSummary({ sessionId: 'session-cm', blank: false, cwd: '/work/proj' }, new Set()), true)
-    const direct = await controller.enableDirect({ sessionId: 'session-cm' })
-    assert.equal(direct.ok, true)
-    assert.equal(controller.direct.sessionId, 'session-cm')
-    controller.direct = undefined
     const managed = await controller.ensureExecutor('global')
     assert.equal(controller.isIndependentSummary({ sessionId: managed.sessionId, blank: false, cwd: managed.cwd || '/work/proj' }, new Set()), false)
     assert.equal(controller.isIndependentSummary({ sessionId: chat, blank: false, cwd: '/work/proj' }, new Set()), false)

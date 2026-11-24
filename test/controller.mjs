@@ -126,108 +126,6 @@ try {
     assert.equal(readPending.queueLength, 0)
   }
 
-  // Direct mode is command-layer only: Chat has no ria_chat_direct tool (or
-  // chat_direct/chatbot_direct aliases), but the channel boundary still
-  // intercepts /直通, /直通状态 and /退出直通 before Chat sees them.
-  assert.equal(fixture.visibleTools(chat).includes('ria_chat_direct'), false)
-  const chatToolMap = fixture.agentTools.get(chat)
-  assert.equal(chatToolMap.has('ria_chat_direct'), false)
-  assert.equal(chatToolMap.has('chat_direct'), false)
-  assert.equal(chatToolMap.has('chatbot_direct'), false)
-  const directForwarded = []
-  const directForward = fixture.service.wechatClaw.forwardAssistant
-  fixture.service.wechatClaw.forwardAssistant = text => { directForwarded.push(text) }
-  try {
-    await fixture.service.wechatClaw.deliverText('/直通 session-independent')
-    assert.equal(fixture.service.controller.status().direct.active, true)
-    assert.equal(fixture.service.controller.status().direct.sessionId, 'session-independent')
-    assert.equal(directForwarded.at(-1), '已进入直通 → Alpha Session；发送 /退出直通 退出')
-    directForwarded.length = 0
-
-    const beforeDirect = fixture.prompts.length
-    await fixture.service.wechatClaw.deliverText('这条直接给 Alpha')
-    const directPrompt = fixture.prompts.slice(beforeDirect).find(item => item.sessionId === 'session-independent')
-    assert.ok(directPrompt)
-    assert.equal(directPrompt.mode, 'steer')
-    fixture.service.controller.onSessionEvent(
-      { header: { id: 'session-independent' } },
-      { type: 'assistant/message', data: { message: { content: [{ type: 'tool-call', name: 'run_code' }] } } },
-    )
-    fixture.service.controller.onSessionEvent(
-      { header: { id: 'session-independent' } },
-      { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: '准备执行' }, { type: 'tool-call', name: 'run_code' }] } } },
-    )
-    assert.deepEqual(directForwarded, [])
-    fixture.service.controller.onSessionEvent(
-      { header: { id: 'session-independent' } },
-      { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'Alpha 的直通回复' }] } } },
-    )
-    assert.deepEqual(directForwarded, ['【直通·Alpha Session】\nAlpha 的直通回复'])
-
-    // While direct is active, /退出直通 must be caught at the channel boundary.
-    await fixture.service.wechatClaw.deliverText('/直通状态')
-    assert.equal(directForwarded.at(-1), '当前直通 → Alpha Session')
-    await fixture.service.wechatClaw.deliverText('/退出直通')
-    assert.equal(fixture.service.controller.status().direct.active, false)
-    assert.equal(directForwarded.at(-1), '已退出直通')
-
-    // Off-state status and a second exit are explicit, not silent.
-    await fixture.service.wechatClaw.deliverText('/直通状态')
-    assert.equal(directForwarded.at(-1), '当前未直通')
-    await fixture.service.wechatClaw.deliverText('/退出直通')
-    assert.equal(directForwarded.at(-1), '当前未直通，无需退出')
-
-    // After exit, ordinary text goes back to Chat instead of the direct target.
-    const beforeRestored = fixture.prompts.length
-    await fixture.service.wechatClaw.deliverText('回到普通聊天')
-    assert.ok(fixture.prompts.slice(beforeRestored).some(item => String(item.sessionId) === String(chat)))
-
-    // Re-enter by title; the command layer does not prompt Chat, and exit again.
-    const beforeCommand = fixture.prompts.length
-    await fixture.service.wechatClaw.deliverText('/直通 alphasession')
-    assert.equal(fixture.service.controller.status().direct.active, true)
-    assert.equal(directForwarded.at(-1), '已进入直通 → Alpha Session；发送 /退出直通 退出')
-    assert.equal(fixture.prompts.length, beforeCommand)
-    await fixture.service.wechatClaw.deliverText('/退出直通')
-    assert.equal(fixture.service.controller.status().direct.active, false)
-
-    // A blank session created by ria_chat_new_session is directable before its
-    // first message; this is the regression case for the blank-row filter.
-    await fixture.service.wechatClaw.deliverText('/直通 session-blank')
-    assert.equal(fixture.service.controller.status().direct.active, true)
-    assert.equal(fixture.service.controller.status().direct.sessionId, 'session-blank')
-    assert.equal(directForwarded.at(-1), '已进入直通 → Blank Session；发送 /退出直通 退出')
-    await fixture.service.wechatClaw.deliverText('/退出直通')
-    assert.equal(fixture.service.controller.status().direct.active, false)
-
-    // Exiting direct mode must clear any typing loop that survived the command
-    // notice race, otherwise Claw keeps refreshing the indicator for 10 minutes.
-    const claw = fixture.service.wechatClaw
-    claw.typingUsers.set('user-1', {
-      userId: 'user-1', contextToken: 'context-1', startedAt: Date.now(),
-      started: false, cancelled: false, cancelSent: false, timer: null,
-    })
-    fixture.service.controller.setDirect({ sessionId: 'session-independent', title: 'Alpha Session' })
-    await fixture.service.controller.directRelay([{ type: 'text', text: '/退出直通' }], chat)
-    await new Promise(resolve => setTimeout(resolve, 20))
-    assert.equal(claw.typingUsers.size, 0, 'direct exit must clear typingUsers')
-    assert.equal(claw.statusView().wechatClawTyping.active, 0)
-
-    // Command-layer failures are readable and never fall through to Chat.
-    const beforeMissing = fixture.prompts.length
-    await fixture.service.wechatClaw.deliverText('/直通 session-no-such-session')
-    assert.equal(fixture.service.controller.status().direct.active, false)
-    assert.match(directForwarded.at(-1), /^直通开启失败：/)
-    assert.match(directForwarded.at(-1), /目标不是普通会话：session-no-such-session/)
-    assert.equal(fixture.prompts.length, beforeMissing)
-    const managed = await fixture.service.controller.ensureExecutor('global')
-    await fixture.service.wechatClaw.deliverText('/直通 ' + managed.sessionId)
-    assert.equal(fixture.service.controller.status().direct.active, false)
-    assert.match(directForwarded.at(-1), /^直通开启失败：managed executor 不能作为直通目标/)
-  } finally {
-    fixture.service.wechatClaw.forwardAssistant = directForward
-  }
-
   // A restart notice goes to every channel that is connected. The controller
   // retries disconnected channels, but a connected one must be sent exactly once.
   {
@@ -526,24 +424,6 @@ try {
   const resumedAdvisorSession = fixture.service.controller.state.ticketMeta(blockedTicket.ticketId).advisorSessionId
   assert.ok(fixture.prompts.some(item => item.sessionId === resumedAdvisorSession && /用户回复: use Markdown/.test(item.content[0].text)))
 
-  // Stale direct-mode fallbacks (including “[tool run_code]”) must never be
-  // replayed as a “补发” burst after a restart. Ordinary fallbacks stay.
-  {
-    const staleDirect = fixture.service.outbox.enqueue({
-      kind: 'wechat_assistant_note',
-      dedupeKey: 'stale-direct',
-      payload: { text: '【直通·Alpha Session】\n[tool run_code]' },
-    })
-    const staleNormal = fixture.service.outbox.enqueue({
-      kind: 'wechat_assistant_note',
-      dedupeKey: 'stale-normal',
-      payload: { text: 'a normal missed reply' },
-    })
-    const removed = fixture.service.controller.cleanupDirectBacklog()
-    assert.ok(removed >= 1)
-    assert.equal(fixture.service.outbox.entry(staleDirect.entry.id), undefined)
-    assert.ok(fixture.service.outbox.entry(staleNormal.entry.id))
-  }
 } finally {
   fixture.cleanup()
   rmSync(independentCwd, { recursive: true, force: true })

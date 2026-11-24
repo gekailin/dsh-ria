@@ -58,7 +58,7 @@ function inbound(messageId = 'msg-1', text = 'hello from Claw') {
   }
 }
 
-function serviceFor(dir, base, { events, prompts, typingOptions, directRelay } = {}) {
+function serviceFor(dir, base, { events, prompts, typingOptions } = {}) {
   return new WechatClawService({
     ctx: fakeContext(prompts),
     stateDir: dir,
@@ -66,7 +66,6 @@ function serviceFor(dir, base, { events, prompts, typingOptions, directRelay } =
     getRiaId: () => 'ria-session',
     log: () => {},
     typingOptions: typingOptions || (() => ({ enabled: true, refreshMs: 30, maxMs: 1000 })),
-    directRelay,
   })
 }
 
@@ -382,83 +381,6 @@ async function attachSession(service, base) {
     assert.equal(negative.lastInboundAt, 0)
   } finally {
     await claw.shutdown()
-    rmSync(dir, { recursive: true, force: true })
-  }
-}
-
-// A message consumed by direct mode must not start a typing loop for a Chat
-// turn that never happens.
-{
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-ria-claw-direct-typing-'))
-  let typingCalls = 0
-  const server = createServer(async (request, response) => {
-    const url = new URL(request.url, 'http://127.0.0.1')
-    if (url.pathname === '/ilink/bot/getconfig' || url.pathname === '/ilink/bot/sendtyping') {
-      typingCalls += 1
-      json(response, { ret: 0, typing_ticket: 'ticket-1' })
-      return
-    }
-    if (url.pathname === '/ilink/bot/sendmessage') {
-      await readJsonBody(request)
-      json(response, { ret: 0 })
-      return
-    }
-    response.writeHead(404)
-    response.end()
-  })
-  await listen(server)
-  const base = 'http://127.0.0.1:' + server.address().port
-  const claw = serviceFor(dir, base, { directRelay: async () => true })
-  await attachSession(claw, base)
-  try {
-    await claw.handleMessage(claw.session, inbound())
-    await new Promise(resolve => setTimeout(resolve, 40))
-    assert.equal(typingCalls, 0, 'direct-consumed messages must not start typing')
-    assert.equal(claw.statusView().wechatClawTyping.active, 0)
-    assert.equal(claw.typingUsers.size, 0)
-  } finally {
-    await claw.shutdown()
-    await new Promise(resolve => server.close(resolve))
-    rmSync(dir, { recursive: true, force: true })
-  }
-}
-
-// A direct relay error must propagate to the normal delivery failure path,
-// not be recorded as handled.
-{
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-ria-claw-direct-error-'))
-  const sent = []
-  let typingCalls = 0
-  const server = createServer(async (request, response) => {
-    const url = new URL(request.url, 'http://127.0.0.1')
-    if (url.pathname === '/ilink/bot/getconfig' || url.pathname === '/ilink/bot/sendtyping') {
-      typingCalls += 1
-      json(response, { ret: 0, typing_ticket: 'ticket-1' })
-      return
-    }
-    if (url.pathname === '/ilink/bot/sendmessage') {
-      const body = await readJsonBody(request)
-      sent.push(body.msg.item_list[0].text_item.text)
-      json(response, { ret: 0 })
-      return
-    }
-    response.writeHead(404)
-    response.end()
-  })
-  await listen(server)
-  const base = 'http://127.0.0.1:' + server.address().port
-  const claw = serviceFor(dir, base, { directRelay: async () => { throw new Error('relay boom') } })
-  await attachSession(claw, base)
-  claw.outbound = { enqueue: async text => { sent.push(text); return text }, setPaused() {} }
-  try {
-    await claw.handleMessage(claw.session, inbound())
-    await new Promise(resolve => setTimeout(resolve, 40))
-    assert.ok(sent.some(text => text.includes('消息未能交给 Ria')), JSON.stringify(sent))
-    assert.equal(typingCalls, 0, 'a failed direct relay must not leave typing behind')
-    assert.equal(claw.typingUsers.size, 0)
-  } finally {
-    await claw.shutdown()
-    await new Promise(resolve => server.close(resolve))
     rmSync(dir, { recursive: true, force: true })
   }
 }

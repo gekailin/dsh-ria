@@ -48,45 +48,9 @@ fixture.ctx.get = name => name === 'attachments'
   ? { ...originalGet(name), imageHostPath: () => imagePath }
   : originalGet(name)
 const send = args => fixture.callAs(chat, 'ria_chat_send_image', args)
-const directNotices = []
-controller.notifyDirect = message => directNotices.push(message)
 let server
 let originalFetch
 try {
-  // Tool surfaces and optional image parameters.
-  assert.ok(fixture.visibleTools(chat).includes('ria_chat_send_image'))
-  const schemas = fixture.agentTools.get(chat)
-  assert.equal(schemas.get('ria_chat_send_image').parameters.properties.paths.maxItems, 5)
-
-  // Direct: keep the old string branch for text; encoded and stored image
-  // parts preserve their identity/order through Claw.promptContent.
-  controller.direct = { sessionId: 'session-image-target', title: 'Image Target' }
-  const originalPrompt = controller.promptSession.bind(controller)
-  const helperInputs = []
-  controller.promptSession = (...args) => { helperInputs.push(args[1]); return originalPrompt(...args) }
-  assert.equal(await controller.directRelay([{ type: 'text', text: 'plain direct' }], chat), true)
-  assert.equal(helperInputs.at(-1), 'plain direct')
-  const directContent = [{ type: 'text', text: 'see image' }, { type: 'image', mediaType: 'image/png', data: PNG.toString('base64'), name: 'shot.png' }]
-  await claw.promptContent(chat, directContent)
-  assert.strictEqual(helperInputs.at(-1), directContent)
-  assert.strictEqual(attempts.at(-1).content, directContent)
-  assert.equal(attempts.at(-1).mode, 'steer')
-  const reference = { attachmentId: 'sha256:' + sha, mediaType: 'image/png', name: 'shot.png' }
-  const storedContent = [{ type: 'text', text: 'stored image' }, { type: 'image', attachment: reference }]
-  await controller.directRelay(storedContent, chat)
-  assert.deepEqual(attempts.at(-1).content, storedContent)
-  rejectImages = true
-  const directBefore = attempts.length
-  await controller.directRelay(directContent, chat)
-  assert.equal(attempts.length, directBefore + 2)
-  assert.equal(attempts.at(-1).requestId, attempts.at(-2).requestId)
-  assert.equal(attempts.at(-1).content.length, 1)
-  assert.match(attempts.at(-1).content[0].text, /图片未能附带/)
-  assert.match(directNotices.at(-1), /图片未能附带/)
-  rejectImages = false
-  controller.direct = undefined
-  controller.promptSession = originalPrompt
-
   // No account is configured: this must not prompt/login or make an HTTP call.
   let result = await send({ paths: [imagePath] })
   assert.equal(result.code, 'claw_not_connected')

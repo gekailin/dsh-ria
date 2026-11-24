@@ -41,10 +41,7 @@
 ### 2.2 `chatDigest()`、`chatProjectSummary()`、`retrieve()` 全部切 SQLite
 
 - **状态：已实现。** `chatDigest()` 查 SQLite user:preference/agreement（`lib/roles/cognition.mjs:503`）；`listProjects()`（`:283`）与 `chatProjectSummary()` 列全部活跃项目（`lib/core/controller.mjs:1196`）；`retrieve()` 用 SQLite scopes（`:481`）；CHAT_MEMORY_LIMIT=2800（`lib/core/controller.mjs:64`）。测试：`test/chat-memory-prompt.mjs`、`test/cognition-wiring.mjs`、`test/advisor-stateless.mjs`。
-- **现状问题**：
-  - `lib/roles/cognition.mjs:487-508` 的 `chatDigest()` 仍在读 `cognition/chat/{preferences,agreements,decisions}.md` 且截断在 1500 字；
-  - `lib/roles/cognition.mjs:458-480` 的 `retrieve()` 仍在读 `cognition/projects/<key>.md` 与 `chat/decisions.md`；
-  - `lib/core/controller.mjs:1196-1212` 的 `chatProjectSummary(context)` 只按 `context.cwd` 匹配项目，而 Chat 会话本身 `cwd` 是 `~/.dsh/state/ria`，永远匹配不到用户项目。
+- **历史问题（已修复）**：旧实现读 Markdown/1500 字并按 Chat cwd 过滤项目；现均走 SQLite。
 - **改动要求**：
   1. `CognitionStore.chatDigest()`：
      - 从 SQLite 查 `scope IN ('user:preference', 'user:agreement') AND status = 'active'`，按 `updated_at DESC, id ASC` 排序。
@@ -117,7 +114,7 @@
 ### 3.3 Reflection 兜底闭环直通 Sage
 
 - **状态：已实现。** readMemoryContext 读 SQLite digest/projects（`lib/reflection.mjs:875`）；Sage context 补 projects/disputedEntries（`lib/reflection-sage-context.mjs:118`）；reflect_report 接受并持久化 cognitionActions（`lib/index.js:5760`），done 后生成 high 提案并唤醒 Sage（`:5775`）。测试：`test/reflection-memory-context.mjs`、`test/reflection-sage-sqlite.mjs`、`test/reflection-actions.mjs`。
-- **现状问题**：`ria_reflect_report` 无 `cognitionActions` 字段；反思完只写 Markdown 报告，不产生提案也不唤醒 Sage；`readMemoryContext`（`lib/reflection.mjs:875`）仍在读旧 `cognition/chat/*.md`。
+- **历史问题（已修复）**：旧报告曾无 cognitionActions，readMemoryContext 曾读 Markdown。
 - **改动要求**：
   1. `lib/reflection.mjs` 的 `readMemoryContext` 改读 SQLite（与 `chatDigest()` + `listProjects()` 一致）。
   2. `lib/reflection-sage-context.mjs` 的 `buildSqliteContext` 补充返回 `projects` 列表和 `disputedEntries` 列表（不限 `since` 时间窗，确保反思能发现长期悬而未决的争议条目和全部项目状态）。
@@ -173,12 +170,12 @@
 
 ## 六、最终验收清单（全部打勾才算完成）
 
-- [ ] **提案全链路**：Chat / Advisor / Executor / Reflection 任一来源调用 `propose()` 后，记录直接进入 `ria.sqlite` 的 `cognition_proposals`（不再生成 `proposals/*.json`），且立即唤醒 Sage。
-- [ ] **Chat 注入**：`assembleSystemPrompt(chat)` 同时包含 `[说话风格]`、`[活跃项目概况]`（列出所有活跃项目及 workspaces）、`[长期记忆摘要]`（来自 SQLite `user:preference` + `user:agreement`，不含 `cause`/`sources`）。
-- [ ] **Advisor → Executor 链路**：新建 `dsh-ria` 测试工单，Advisor 收到由 `resolveProjectsForWorkspace` + 分词检索召回的候选经验，输出 `workOrder.experience`，Executor Brief（直管 & 协管）正确渲染 `[相关历史经验（必读）]`。
-- [ ] **Sage 核查闭环**：Sage 调用 `ria_sage_request(workspace, relatedEntryIds, relatedProposalId)` 派发核查工单，工单 `done`/`failed` 后 Sage 自动收到 `[Sage 核查回执]`。
-- [ ] **Sage 管理能力**：`ria_sage_read(view=...)`、`ria_sage_write(action=upsert_entry|set_status|upsert_project)`、`ria_sage_decide` 全通。
-- [ ] **Reflection 兜底**：反思报告附带 `cognitionActions` 完成 `done` 后，自动在 `cognition_proposals` 生成 `priority='high'` 提案并唤醒 Sage。
+- [x] **提案全链路**：Chat / Advisor / Executor / Reflection 任一来源调用 `propose()` 后，记录直接进入 `ria.sqlite` 的 `cognition_proposals`（不再生成 `proposals/*.json`），且立即唤醒 Sage。
+- [x] **Chat 注入**：`assembleSystemPrompt(chat)` 同时包含 `[说话风格]`、`[活跃项目概况]`（列出所有活跃项目及 workspaces）、`[长期记忆摘要]`（来自 SQLite `user:preference` + `user:agreement`，不含 `cause`/`sources`）。
+- [x] **Advisor → Executor 链路**：新建 `dsh-ria` 测试工单，Advisor 收到由 `resolveProjectsForWorkspace` + 分词检索召回的候选经验，输出 `workOrder.experience`，Executor Brief（直管 & 协管）正确渲染 `[相关历史经验（必读）]`。
+- [x] **Sage 核查闭环**：Sage 调用 `ria_sage_request(workspace, relatedEntryIds, relatedProposalId)` 派发核查工单，工单 `done`/`failed` 后 Sage 自动收到 `[Sage 核查回执]`。
+- [x] **Sage 管理能力**：`ria_sage_read(view=...)`、`ria_sage_write(action=upsert_entry|set_status|upsert_project)`、`ria_sage_decide` 全通。
+- [x] **Reflection 兜底**：反思报告附带 `cognitionActions` 完成 `done` 后，自动在 `cognition_proposals` 生成 `priority='high'` 提案并唤醒 Sage。
 - [ ] **Prompt 干净**：`Chat` & `Sage` 共用 `RIA_SHARED_HEAD`，`Advisor`/`Executor`/`Reflection` 无全局头；静态测试确认无 `2. Answer`、`cognition/chat/`、`Chatbot`、`worker_report` 等残留。
 - [ ] **本机数据干净**：`ria.sqlite` 中 `cognition_entries` 100% 为 `cog_<numeric>`、`truncated=0`、`cause` 非空、`cognition_projects` 已初始化；全量 `npm test` 通过。
 ## blocked-by-decision

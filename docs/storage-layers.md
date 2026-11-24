@@ -52,13 +52,13 @@
 - 只追加，不就地改写
 - 默认按 **50MB** 轮转到 `events-<timestamp>.jsonl`，保留 **14 天**（可配 `maxBytes` / `retainDays`）
 - 启动从当前文件 + archive 新到旧重建：requests/reports/workOrders/ticketFeedback 各 500，inbox 全量；lessonCandidates 不再写入（兼容读取只用于旧数据）
-- 历史事件行保留旧 `worker*` 键，不改写；读取端经 `lib/state/worker-executor-keys.mjs` 兼容读出（下个版本删除该兼容层）。
+- 历史事件行中的旧 `worker*` 键不再读取；兼容层已删除（state 已确认无旧键）。
 
 `operation-events.jsonl` 仍是独立审计流，不承载业务状态。
 
 ## 4. ria.json = 已退场
 
-Phase A 起不再写入；磁盘保留只读一版作为回滚材料。下个版本满足以下条件后删除：
+SQLite 运行态从 Phase A 起不再写入；JSON 模式只用于离线迁移/测试。磁盘保留只读一版作为回滚材料。满足以下条件后删除：
 
 1. 线上连续一版启动 `state.json` 已有 `eventsMigratedAt` 且控制字段完整；
 2. 无回滚到 JSON 模式的需求；
@@ -78,7 +78,7 @@ Phase A 起不再写入；磁盘保留只读一版作为回滚材料。下个版
 
 1. `RiaService` 先迁移控制字段：`ria.json` 的 settings/grants/... 缺则搬进 `state.json`，并备份 `ria.json.bak.<ISO>`。
 2. `StateStore` 发现 `state.json` 仍含六个日志键：备份 `state.json.bak.<ts>`，逐条 append 到当日 `events.jsonl`，写 `eventsMigratedAt`，原子重写 `state.json`（仅控制面）。
-3. 后续启动从 `events.jsonl` 重建；`ria.json` 不再被写。
+3. 后续 SQLite 启动从 `events.jsonl` 重建；运行态不再写 `ria.json`（JSON 模式除外）。
 
 ## 回滚
 

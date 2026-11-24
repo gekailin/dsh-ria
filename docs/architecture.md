@@ -31,7 +31,7 @@ executor 要么是 executor 的 sessionId，要么是 `self`：Ria 默认把任�
 不做的部分：
 
 - 不轮询 executor 进度，不维护独立 bridge，不额外占端口；只监听宿主事件与 executor idle。
-- 默认按风险代批 executor 的权限请求：低风险只放行本次调用，高风险只能转给用户或拒绝；只有在用户明确要求时才通过 `ria_grant` 调整会话权限；纯降权永久，任何提权都必须带 TTL 并自动恢复，从不自动放宽。
+- 默认按风险代批 executor 的权限请求：低风险只放行本次调用，高风险只能转给用户或拒绝；只有在用户明确要求时才通过 `ria_chat_grant` 调整会话权限；纯降权永久，任何提权都必须带 TTL 并自动恢复，从不自动放宽。
 - 不把 subagent 当 executor；派发目标必须是顶层会话。
 - 不写 transcript；Ria 与 executor 的会话日志仍由 DSH 管理。
 
@@ -164,7 +164,7 @@ outbox 与 `ria.json` 不是同一个事务：派发已被接受、但 outbox �
 
 ## 7. 记忆与反省
 
-`memory.md` 只放稳定偏好与长期约定，由 `ria_memory` 显式读写；默认上限 2400 字符 / 12 条 / 单条 300（warn 阈值 2160 / 11 / 270），超限拒绝写入，长内容归档到 `memory-archive/<slug>.md`（不注入）；不抄工单状态、时间戳或逐轮流水。定期反思已实现：设置页可开启每天/每周的 schedule，到点后 Ria 启动一个独立的只读 executor（只有 6 个 `ria_reflect_*` 工具），读当天/当周的工单、turn 与 outbox（会话默认 `summary`，异常再按 `ref`/窗口 `full` 定点读），把报告写到 `reflections/YYYY-MM-DD.md`；executor 只提议隐性规则，不自动改写记忆。报告在写入草稿前就跑与 finish 相同的校验，失败不落盘；Ria 也可用 `ria_reflect action=validate` 先验后写。每次 dispatch 自动在固定主题「记忆与反思」下建一张监控工单（executor=本次反思 executor，status=working，run.json 记 watchTicketId）；finish 把它置 done 并写 reportPath/bytes，abort 置 cancelled，报告失败/超时置 blocked 并写原因；重启恢复会跳过这类监控单。报告渲染/归档 UI、多天回填与 P2 wiki 尚未实现。
+长期记忆由 SQLite cognition entries（user:preference / user:agreement）驱动；旧 memory.md 已退场。默认上限 2400 字符 / 12 条 / 单条 300（warn 阈值 2160 / 11 / 270），超限拒绝写入，长内容归档到 `memory-archive/<slug>.md`（不注入）；不抄工单状态、时间戳或逐轮流水。定期反思已实现：设置页可开启每天/每周的 schedule，到点后 Ria 启动一个独立的只读 executor（只有 6 个 `ria_reflect_*` 工具），读当天/当周的工单、turn 与 outbox（会话默认 `summary`，异常再按 `ref`/窗口 `full` 定点读），把报告写到 `reflections/YYYY-MM-DD.md`；executor 只提议隐性规则，不自动改写记忆。报告在写入草稿前就跑与 finish 相同的校验，失败不落盘；Ria 也可用 `ria_reflect action=validate` 先验后写。每次 dispatch 自动在固定主题「记忆与反思」下建一张监控工单（executor=本次反思 executor，status=working，run.json 记 watchTicketId）；finish 把它置 done 并写 reportPath/bytes，abort 置 cancelled，报告失败/超时置 blocked 并写原因；重启恢复会跳过这类监控单。报告渲染/归档 UI、多天回填与 P2 wiki 尚未实现。
 
 ## 8. 扩展点
 

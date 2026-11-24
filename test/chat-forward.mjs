@@ -58,7 +58,7 @@ try {
   const injected = fixture.steered.at(-1)
   assert.ok(injected, 'target received the forward as a user message')
   assert.deepEqual(injected.content, [{ type: 'text', text: exact }], 'content is byte-for-byte identical')
-  assert.equal(injected.source.kind, 'forward')
+  assert.equal(injected.source.kind, 'user')
   assert.equal(injected.source.rpcId, sent.rpcId)
   const watcher = controller.coManagement.watch(target)
   assert.ok(watcher)
@@ -87,7 +87,7 @@ try {
   assert.equal(second.sessionId, 'session-forward-other')
   const secondInjected = fixture.steered.at(-1)
   assert.deepEqual(secondInjected.content, [{ type: 'text', text: 'second by title' }])
-  assert.equal(secondInjected.source.kind, 'forward')
+  assert.equal(secondInjected.source.kind, 'user')
   assert.equal(controller.coManagement.watch('session-forward-other').allowDispatch, false)
 
   // Managed executors and role sessions are rejected before any delivery.

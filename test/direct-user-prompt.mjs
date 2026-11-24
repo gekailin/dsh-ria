@@ -85,10 +85,8 @@ try {
   // direct-user guard for both managed and co-managed targets. A plain user
   // message still gets blocked on a managed executor.
   for (const id of [executor, coManaged]) {
-    for (const kind of ['steer', 'forward']) {
-      const input = [message('ria_' + kind, 'injected ' + kind, kind)]
-      assert.equal((await preStep(id, input)).messages, input, kind + ' must pass for ' + id)
-    }
+    const injected = [message('ria_injected', 'injected by Ria', 'user')]
+    assert.equal((await preStep(id, injected)).messages, injected, 'rpcId ria_ injection must pass for ' + id)
     assert.equal((await preStep(id, [direct('user-' + id)])).messages[0].source.kind, id === coManaged ? 'user' : 'ria-task-host')
   }
 

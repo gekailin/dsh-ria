@@ -73,11 +73,21 @@ import { createFixture } from './support/ria-fixture.mjs'
     claw.peer = { userId: 'user-1', contextToken: 'context-1' }
     claw.outbound = { enqueue: async (text, options) => { sent.push({ text, options }); return 'id' } }
     const notice = await controller.notifyTicketStatus('ticket_abcdef123456', 'done', '首句完成。证据 secret')
-    assert.equal(fixture.prompts.at(-1).sessionId, chat)
-    assert.equal(fixture.prompts.at(-1).content[0].text, notice.text)
-    assert.match(fixture.prompts.at(-1).requestId, /^ria_/)
-    assert.equal(sent[0].text, notice.text)
+    assert.equal(fixture.steered.at(-1).sessionId, undefined)
+    assert.equal(fixture.steered.at(-1).source.kind, 'notice')
+    assert.match(fixture.steered.at(-1).source.rpcId, /^ria_/)
+    assert.equal(fixture.steered.at(-1).content[0].text, notice.text)
+    assert.equal(sent[0].text, '🔔 ' + notice.text)
     assert.match(sent[0].options.ref, /^ria_/)
+    assert.equal(sent[0].options.prefix, false)
+    const alertSent = []
+    claw.outbound = { enqueue: async (text, options) => { alertSent.push({ text, options }); return 'id' } }
+    await claw.sendNote('⚠️ alert only')
+    assert.ok(alertSent[0].text.startsWith('⚠️'))
+    assert.equal(alertSent[0].options.prefix, false)
+    await claw.sendNote('🚨 emergency only')
+    assert.ok(alertSent[1].text.startsWith('🚨'))
+    assert.equal(alertSent[1].options.prefix, false)
     assert.equal(claw.typingUsers.size, 0)
     assert.equal(notice.text.includes('证据'), false)
   } finally { fixture.cleanup() }
@@ -106,7 +116,7 @@ import { createFixture } from './support/ria-fixture.mjs'
     claw.outbound = { enqueue: async text => { sent.push(text); return 'id' } }
     await controller.sendWatchRelay({ sessionId: id, titleSnapshot: 'CM Notice', watchId: 'watch-notice' }, '完整正文\n证据: secret\n代码块', {})
     const text = sent.at(-1)
-    assert.ok(text.startsWith('#' + ticket.ticketId.slice(-6) + ' working · '))
+    assert.ok(text.startsWith('🔔 #' + ticket.ticketId.slice(-6) + ' working · '))
     assert.equal(text.includes('完整正文'), false)
     assert.equal(text.includes('secret'), false)
     assert.ok(text.length <= STATUS_NOTICE_MAX_CHARS)

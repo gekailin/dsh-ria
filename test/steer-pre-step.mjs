@@ -42,7 +42,7 @@ try {
   assert.equal(decision.kind, 'enter')
   assert.equal(decision.messages.length, 1, 'exactly one merged host message')
   const injected = decision.messages[0]
-  assert.equal(injected.source.kind, 'steer')
+  assert.equal(injected.source.kind, 'user')
   assert.match(injected.source.rpcId, /^ria_/)
   assert.equal(injected.source.form, 'steer')
   assert.equal(injected.source.source, 'steer')
@@ -136,7 +136,7 @@ try {
       { agent: fixture.agentFor(co), turn: 1, step: 1 },
       async () => ({ kind: 'enter', messages: [] }),
     )
-    assert.equal(coDecision.messages[0].source.kind, 'steer')
+    assert.equal(coDecision.messages[0].source.kind, 'user')
     assert.match(coDecision.messages[0].source.rpcId, /^ria_/)
     assert.ok(coDecision.messages[0].content[0].text.includes('co-managed direction'))
     assert.equal(controller.state.pendingInbox(coOwner.ticketId, co).length, 0)

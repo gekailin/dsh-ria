@@ -139,6 +139,14 @@ export async function createFixture(options = {}) {
     systemPrompts.set(String(id), String(typeof section.text === 'function' ? section.text({}) : section.text))
     return () => {}
   }
+  const recordSteer = (id, message) => {
+    steered.push(message)
+    // Chat notices are injected as source.kind=notice; mirror them into the
+    // prompt record so existing notice assertions keep their entry point.
+    if (message && message.source && message.source.kind === 'notice') {
+      prompts.push({ sessionId: id, content: message.content, requestId: message.source.rpcId, source: message.source })
+    }
+  }
   const riaAgent = {
     id: riaId,
     ctx: {
@@ -146,7 +154,7 @@ export async function createFixture(options = {}) {
       systemPrompt: { section(section) { return registerPromptSection(riaAgent.id, section) } },
     },
     model: { current() { return models.get(String(riaAgent.id)) } },
-    steer(message) { steered.push(message) },
+    steer(message) { recordSteer(riaAgent.id, message) },
     followup(message) { followups.push(message) },
     session: {
       snapshotEvents() { return options.sessionEvents && options.sessionEvents[riaId] ? options.sessionEvents[riaId].slice() : [] },
@@ -175,7 +183,7 @@ export async function createFixture(options = {}) {
         systemPrompt: { section(section) { return registerPromptSection(id, section) } },
       },
       model: { current() { return model } },
-      steer(message) { steered.push(message) },
+      steer(message) { recordSteer(id, message) },
       session: {
         snapshotEvents() { return options.sessionEvents && options.sessionEvents[id] ? options.sessionEvents[id].slice() : [] },
         append(event, data) {

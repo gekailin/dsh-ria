@@ -158,6 +158,7 @@ try {
         { type: 'user/message', seq: 20, time: Date.now(), data: { content: [{ type: 'text', text: 'please also do X' }], source: { kind: 'user', rpcId: 'user-direct-1' } } },
       )
       assert.equal(watch().cursors.lastUserSeq, 20)
+      await new Promise(resolve => setTimeout(resolve, 0))
       assert.ok(notices().some(text => text.includes('用户直接对会话说') && text.includes('please also do X')))
       fixture.service.onSessionEvent(
         { header: { id: 'session-watch' } },

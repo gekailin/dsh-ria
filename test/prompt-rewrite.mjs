@@ -11,6 +11,9 @@ for (const mod of [chat, advisor, sage, executor, reflection]) assert.equal(mod.
 
 const chatText = chatPrompt()
 assert.ok(chatText.startsWith(RIA_SHARED_HEAD))
+assert.ok(chatText.includes('无工单的直转/会话类任务完成后'))
+assert.ok(chatText.includes('ria_chat_read'))
+assert.ok(chatText.includes('主动'))
 assert.ok(chatText.includes('[说话风格]'))
 assert.ok(chatText.includes('[活跃项目概况]'))
 assert.ok(chatText.includes('ria_chat_propose'))

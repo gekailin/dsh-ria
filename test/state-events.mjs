@@ -29,14 +29,14 @@ try {
   assert.ok(statSync(join(dir, 'state.json')).size < 100 * 1024, 'control state under 100KB')
   assert.ok(readdirSync(dir).some(name => name.startsWith('state.json.bak.')), 'state backup exists')
   const kinds = new Set(readFileSync(join(dir, 'events.jsonl'), 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line).kind))
-  for (const kind of ['request.created', 'report.created', 'workorder.created', 'inbox.created', 'feedback.created', 'lesson.created']) assert.ok(kinds.has(kind), 'events contain ' + kind)
+  for (const kind of ['request.created', 'report.created', 'workorder.created', 'inbox.created', 'feedback.created']) assert.ok(kinds.has(kind), 'events contain ' + kind)
+  assert.equal(kinds.has('lesson.created'), false, 'lesson candidates no longer enter events')
   const sample = JSON.parse(readFileSync(join(dir, 'events.jsonl'), 'utf8').split('\n')[0])
   assert.deepEqual(Object.keys(sample).sort(), ['at', 'kind', 'payload', 'ticketId'])
   assert.equal(store.request('req1').goal, 'g')
   assert.equal(store.reportsFor('t1').length, 1)
   assert.equal(store.workOrder('t1').summary, 'work')
   assert.equal(store.pendingInbox('t1', 'w1').length, 1)
-  assert.equal(store.lessonCandidate('lc1').scenario, 's')
 
   const beforeLines = readFileSync(join(dir, 'events.jsonl'), 'utf8').split('\n').filter(Boolean).length
   const beforePrefix = readFileSync(join(dir, 'events.jsonl'), 'utf8').slice(0, 2000)

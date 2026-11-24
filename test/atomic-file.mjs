@@ -3,6 +3,8 @@ import * as fs from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { writeAtomic } from '../lib/state/atomic-file.mjs'
+import { cleanupStaleStateTemps, STATE_TMP_MAX_AGE_MS } from '../lib/shared/fs.mjs'
+import { writeMirrorSnapshot } from '../lib/state/sqlite/mirror.mjs'
 
 const dir = fs.mkdtempSync(join(tmpdir(), 'ria-atomic-file-'))
 try {
@@ -27,7 +29,7 @@ try {
   writeAtomic(target, '新内容🙂complete', { io })
   assert.equal(fs.readFileSync(target, 'utf8'), '新内容🙂complete')
   assert.ok(order.filter(item => item === 'write').length > 1, 'short writes retried')
-  assert.deepEqual(order.slice(-3), ['fsync', 'close', 'rename'])
+  assert.deepEqual(order.slice(-5), ['fsync', 'close', 'rename', 'fsync', 'close'])
   assert.equal(fs.statSync(target).mode & 0o777, 0o600)
   assert.deepEqual(fs.readdirSync(join(dir, 'nested')), ['state.json'])
 
@@ -46,5 +48,60 @@ try {
   assert.deepEqual(fs.readFileSync(target), Buffer.from([0, 255, 10]))
   writeAtomic(target, '')
   assert.equal(fs.statSync(target).size, 0)
+
+  // Serialization happens before staging: a circular state cannot create tmp
+  // and the existing state.json stays byte-for-byte intact.
+  {
+    const serializationDir = join(dir, 'serialization')
+    const serializationTarget = join(serializationDir, 'state.json')
+    writeAtomic(serializationTarget, 'old-complete')
+    const circular = { ok: true }
+    circular.self = circular
+    assert.throws(() => writeMirrorSnapshot({ stateDir: serializationDir, snapshot: { state: circular, ria: {}, archives: [], counts: {} } }), /circular/i)
+    assert.equal(fs.readFileSync(serializationTarget, 'utf8'), 'old-complete')
+    assert.equal(fs.readdirSync(serializationDir).some(name => name.includes('.tmp-')), false, 'no tmp after serialization failure')
+  }
+
+  // Concurrency: microtask-parallel writers must not cross-contaminate; the
+  // last scheduled complete write wins and no staging file remains.
+  await Promise.all(Array.from({ length: 4 }, (_, index) => Promise.resolve().then(() => writeAtomic(target, 'concurrent-' + index))))
+  assert.equal(fs.readFileSync(target, 'utf8'), 'concurrent-3')
+  assert.equal(fs.readdirSync(join(dir, 'nested')).some(name => name.includes('.tmp-')), false)
+
+  // Two same-process mirror publishes: the last complete snapshot wins and no
+  // staging file is left behind.
+  {
+    const stateDir = join(dir, 'mirror-concurrent')
+    const snapshot = value => ({ state: { version: value }, ria: {}, archives: [], counts: {}, generation: value })
+    await Promise.all([
+      Promise.resolve().then(() => writeMirrorSnapshot({ stateDir, snapshot: snapshot(1) })),
+      Promise.resolve().then(() => writeMirrorSnapshot({ stateDir, snapshot: snapshot(2) })),
+    ])
+    assert.equal(JSON.parse(fs.readFileSync(join(stateDir, 'state.json'), 'utf8')).version, 2)
+    assert.equal(fs.readdirSync(stateDir).some(name => name.includes('.tmp-')), false)
+  }
+
+  // Crash leftovers: only stale state.json tmp files are removed; current and
+  // unrelated files stay intact.
+  {
+    const stateDir = join(dir, 'state')
+    fs.mkdirSync(stateDir, { recursive: true })
+    const stateFile = join(stateDir, 'state.json')
+    fs.writeFileSync(stateFile, 'current-state')
+    const oldA = join(stateDir, 'state.json.tmp-999-stale')
+    const oldB = join(stateDir, 'state.json.888.legacy.tmp')
+    const fresh = join(stateDir, 'state.json.tmp-777-fresh')
+    fs.writeFileSync(oldA, 'stale-a')
+    fs.writeFileSync(oldB, 'stale-b')
+    fs.writeFileSync(fresh, 'fresh')
+    const old = new Date(Date.now() - STATE_TMP_MAX_AGE_MS - 1000)
+    fs.utimesSync(oldA, old, old)
+    fs.utimesSync(oldB, old, old)
+    const cleaned = cleanupStaleStateTemps(stateDir)
+    assert.deepEqual(cleaned.removed.map(item => item.name).sort(), ['state.json.888.legacy.tmp', 'state.json.tmp-999-stale'])
+    assert.equal(fs.readFileSync(stateFile, 'utf8'), 'current-state')
+    assert.equal(fs.existsSync(fresh), true)
+  }
+
   console.log('atomic file replacement and failure safety ok')
 } finally { fs.rmSync(dir, { recursive: true, force: true }) }

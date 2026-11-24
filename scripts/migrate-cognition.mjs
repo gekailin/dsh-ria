@@ -33,6 +33,7 @@ function parseArgs(argv = []) {
     else if (arg === '--cognition-dir') out.cognitionDir = argv[++index]
     else if (arg === '--db') out.dbPath = argv[++index]
     else if (arg === '--sample') out.sample = Number(argv[++index])
+    else if (arg === '--strict') out.strict = true
     else throw new Error('Unknown argument: ' + arg)
   }
   out.stateDir = resolve(out.stateDir)
@@ -68,7 +69,7 @@ function sectionsOf(lines) {
   }))
 }
 
-function readMarkdownEntries(file, cognitionDir) {
+function readMarkdownEntries(file, cognitionDir, { strict = false } = {}) {
   const rel = relative(cognitionDir, file).split(sep).join('/')
   const lines = readFileSync(file, 'utf8').split(/\r?\n/)
   const mtime = statSync(file).mtimeMs
@@ -89,27 +90,47 @@ function readMarkdownEntries(file, cognitionDir) {
       else if (ticket) extraSources.push({ type: 'ticket', ref: ticket[1].trim() })
       else if (!evidence) bodyLines.push(line)
     }
-    const body = bodyLines.join('\n').trim()
-    const cause = causeLines.join(' ').trim()
-    const dateMatch = String(section.heading).match(/(20\d\d[-/]\d{1,2}[-/]\d{1,2})/)
-    const at = dateMatch ? Date.parse(dateMatch[1].replace(/\//g, '-')) : mtime
+    let body = bodyLines.join('\n').trim()
+    let cause = causeLines.join(' ').trim()
+    let truncated = false
     const scope = scopeFor(rel)
-    const missing = []
-    if (!scope) missing.push('scope')
-    if (!body) missing.push('body')
-    if (!cause) missing.push('cause')
-    if (!Number.isFinite(at)) missing.push('sources')
-    if (missing.length) {
-      skipped.push({ kind: 'entry', file: rel, line: section.line, missing, reason: 'four_elements_incomplete' })
+    const at = Number.isFinite(Date.parse(String(section.heading).match(/(20\d\d[-/]\d{1,2}[-/]\d{1,2})/)?.[1]?.replace(/\//g, '-') || ''))
+      ? Date.parse(String(section.heading).match(/(20\d\d[-/]\d{1,2}[-/]\d{1,2})/)[1].replace(/\//g, '-'))
+      : mtime
+    if (!body) {
+      // A bare document title is not a cognition entry; do not count it as a
+      // skipped candidate. Only a real section with no body is unimportable.
+      if (section.start === 0 && /^#\s/.test(lines[section.start] || '')) continue
+      skipped.push({ kind: 'entry', file: rel, line: section.line, missing: ['body'], reason: 'body_empty' })
       continue
     }
-    if ([...body].length > ENTRY_LIMIT) { skipped.push({ kind: 'entry', file: rel, line: section.line, missing: ['body'], reason: 'body_too_long' }); continue }
-    if ([...cause].length > CAUSE_LIMIT) { skipped.push({ kind: 'entry', file: rel, line: section.line, missing: ['cause'], reason: 'cause_too_long' }); continue }
+    if ([...body].length > ENTRY_LIMIT) {
+      if (strict) {
+        skipped.push({ kind: 'entry', file: rel, line: section.line, missing: ['body'], reason: 'body_too_long' })
+        continue
+      }
+      body = [...body].slice(0, ENTRY_LIMIT).join('')
+      truncated = true
+    }
+    // Cause is optional in lenient mode: use an explicit cause first, then the
+    // section heading as derived context; otherwise persist null + partial.
+    if (!cause && !strict && section.heading && !/^(preferences|agreements|decisions|principles|todos?)$/i.test(section.heading)) {
+      cause = '来自小节：' + section.heading
+    }
+    if (!cause && strict) {
+      skipped.push({ kind: 'entry', file: rel, line: section.line, missing: ['cause'], reason: 'four_elements_incomplete' })
+      continue
+    }
+    if (cause && [...cause].length > CAUSE_LIMIT) cause = [...cause].slice(0, CAUSE_LIMIT).join('')
+    if (!cause) cause = null
+    const sources = [{ type: 'file', ref: rel + ':' + section.line, at: Number.isFinite(at) ? at : mtime }, ...extraSources]
+    // A file + line + mtime source is always available as the fallback.
+    if (!sources.length) sources.push({ type: 'file', ref: rel + ':' + section.line, at: mtime })
+    const recorded = cause ? 'complete' : 'partial'
     const id = 'cog_md_' + sha(scope + '\u0000' + normalizeBody(body)).slice(0, 24)
     entries.push({
-      id, scope, kind: kindFor(scope), status: 'active', tags: [], body, cause,
-      sources: [{ type: 'file', ref: rel + ':' + section.line, at }, ...extraSources],
-      createdAt: at, updatedAt: at, raw: { file: rel, line: section.line },
+      id, scope, kind: kindFor(scope), status: 'active', tags: [], body, cause, recorded, truncated,
+      sources, createdAt: at, updatedAt: at, raw: { file: rel, line: section.line },
     })
   }
   return { entries, skipped }
@@ -176,19 +197,72 @@ function buildPlan(options) {
   for (const file of candidates) {
     if (!existsSync(file) || seenFiles.has(file)) continue
     seenFiles.add(file)
-    const parsed = readMarkdownEntries(file, options.cognitionDir)
+    const parsed = readMarkdownEntries(file, options.cognitionDir, { strict: options.strict === true })
     entry.entries.push(...parsed.entries)
     entry.skipped.push(...parsed.skipped)
   }
   const proposals = readProposals(options.cognitionDir)
-  return { entries: entry.entries, proposals: proposals.proposals, skipped: [...entry.skipped, ...proposals.skipped] }
+  return { entries: entry.entries, proposals: proposals.proposals, skipped: [...entry.skipped, ...proposals.skipped], entrySkipped: entry.skipped }
 }
 
 function readSettings(stateDir) {
   try { return JSON.parse(readFileSync(join(stateDir, 'ria.json'), 'utf8')) } catch { return {} }
 }
 
+function ensureEntriesSchema(db) {
+  const info = db.prepare('PRAGMA table_info(cognition_entries)').all()
+  if (!info.length) return
+  const byName = new Map(info.map(row => [row.name, row]))
+  const cause = byName.get('cause')
+  const needs = !cause || Number(cause.notnull) === 1 || !byName.has('recorded') || !byName.has('truncated')
+  if (!needs) return
+  const old = 'cognition_entries_migration_old'
+  db.exec('BEGIN')
+  try {
+    db.exec('ALTER TABLE cognition_entries RENAME TO ' + old)
+    db.exec(`CREATE TABLE cognition_entries (
+      seq INTEGER PRIMARY KEY AUTOINCREMENT,
+      id TEXT NOT NULL UNIQUE,
+      scope TEXT NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'experience',
+      status TEXT NOT NULL DEFAULT 'active',
+      tags TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(tags)),
+      body TEXT NOT NULL,
+      cause TEXT,
+      recorded TEXT,
+      truncated INTEGER NOT NULL DEFAULT 0,
+      sources TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(sources)),
+      superseded_by TEXT,
+      dispute_reason TEXT,
+      created_by TEXT NOT NULL DEFAULT 'sage',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      verified_at INTEGER,
+      migrated_at INTEGER,
+      migration_run_id TEXT
+    )`)
+    const select = [
+      'seq', 'id', 'scope', 'kind', 'status', 'tags', 'body',
+      byName.has('cause') ? 'cause' : 'NULL',
+      byName.has('recorded') ? 'recorded' : 'NULL',
+      byName.has('truncated') ? 'truncated' : '0',
+      'sources', 'superseded_by', 'dispute_reason', 'created_by', 'created_at', 'updated_at', 'verified_at',
+      byName.has('migrated_at') ? 'migrated_at' : 'NULL',
+      byName.has('migration_run_id') ? 'migration_run_id' : 'NULL',
+    ].join(',')
+    db.exec('INSERT INTO cognition_entries(seq,id,scope,kind,status,tags,body,cause,recorded,truncated,sources,superseded_by,dispute_reason,created_by,created_at,updated_at,verified_at,migrated_at,migration_run_id) SELECT ' + select + ' FROM ' + old)
+    db.exec('DROP TABLE ' + old)
+    db.exec('CREATE INDEX IF NOT EXISTS idx_cog_entries_scope_status ON cognition_entries(scope, status)')
+    db.exec('CREATE INDEX IF NOT EXISTS idx_cog_entries_status_updated ON cognition_entries(status, updated_at)')
+    db.exec('COMMIT')
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+}
+
 function ensureMigrationColumns(db) {
+  ensureEntriesSchema(db)
   for (const table of ['cognition_entries', 'cognition_proposals']) {
     const cols = db.prepare('PRAGMA table_info(' + table + ')').all().map(row => row.name)
     if (!cols.includes('migrated_at')) db.exec('ALTER TABLE ' + table + ' ADD COLUMN migrated_at INTEGER')
@@ -226,13 +300,13 @@ function applyPlan(options, plan, now = Date.now()) {
     const before = count(db)
     let imported = 0
     let existing = 0
-    const insertEntry = db.prepare(`INSERT INTO cognition_entries(id,scope,kind,status,tags,body,cause,sources,created_by,created_at,updated_at,migrated_at,migration_run_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    const insertEntry = db.prepare(`INSERT INTO cognition_entries(id,scope,kind,status,tags,body,cause,recorded,truncated,sources,created_by,created_at,updated_at,migrated_at,migration_run_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
     const insertProposal = db.prepare(`INSERT INTO cognition_proposals(id,author,source,kind,scope,target_entry_id,ticket_id,body,cause,sources,priority,status,decided_by,decided_at,rationale,created_at,migrated_at,migration_run_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
     transaction(db, () => {
       for (const item of plan.entries) {
         if (db.prepare('SELECT 1 FROM cognition_entries WHERE id=?').get(item.id)) { existing += 1; continue }
         insertEntry.run(item.id, item.scope, item.kind, item.status, JSON.stringify(item.tags), item.body, item.cause,
-          JSON.stringify(item.sources), 'migration', item.createdAt, now, now, runId)
+          item.recorded || 'complete', item.truncated ? 1 : 0, JSON.stringify(item.sources), 'migration', item.createdAt, now, now, runId)
         imported += 1
       }
       for (const item of plan.proposals) {
@@ -254,10 +328,10 @@ function sampleVerify(options, plan, result) {
     const sampleEntries = plan.entries.slice(0, Math.min(options.sample, plan.entries.length))
     const diffs = []
     for (const source of sampleEntries) {
-      const row = db.prepare('SELECT scope,body,cause,sources FROM cognition_entries WHERE id=?').get(source.id)
+      const row = db.prepare('SELECT scope,body,cause,recorded,truncated,sources FROM cognition_entries WHERE id=?').get(source.id)
       if (!row) { diffs.push({ kind: 'entry', id: source.id, reason: 'missing' }); continue }
       const sources = JSON.parse(row.sources || '[]')
-      if (row.scope !== source.scope || row.body !== source.body || row.cause !== source.cause || sources[0]?.ref !== source.sources[0]?.ref) {
+      if (row.scope !== source.scope || row.body !== source.body || row.cause !== source.cause || row.recorded !== source.recorded || Boolean(row.truncated) !== Boolean(source.truncated) || sources[0]?.ref !== source.sources[0]?.ref) {
         diffs.push({ kind: 'entry', id: source.id, expected: source, actual: row })
       }
     }
@@ -313,8 +387,22 @@ function rollback(options) {
   } finally { db.close() }
 }
 
+function entryStats(plan) {
+  const complete = plan.entries.filter(item => item.recorded !== 'partial').length
+  const partial = plan.entries.filter(item => item.recorded === 'partial').length
+  const truncated = plan.entries.filter(item => item.truncated === true).length
+  const entrySkipped = Array.isArray(plan.entrySkipped) ? plan.entrySkipped.length : plan.skipped.filter(item => item.kind === 'entry').length
+  const total = plan.entries.length + entrySkipped
+  return {
+    imported: complete, importedPart: partial, truncated,
+    importedTotal: plan.entries.length, entrySkipped,
+    coverage: total ? Math.round((plan.entries.length / total) * 1000) / 10 : 100,
+  }
+}
+
 export function migrate(options, { log = () => {} } = {}) {
   const plan = buildPlan(options)
+  const stats = entryStats(plan)
   const settingsBefore = readSettings(options.stateDir)
   const backendBefore = settingsBefore.settings?.cognition?.backend || 'file'
   if (options.mode === 'rollback') return { ok: true, mode: 'rollback', ...rollback(options), backend: backendBefore }
@@ -325,17 +413,42 @@ export function migrate(options, { log = () => {} } = {}) {
     return {
       ok: sampling.diffs.length === 0, mode: 'apply', stateDir: options.stateDir, cognitionDir: options.cognitionDir,
       dbPath: options.dbPath, backup: applied.backup, runId: applied.runId,
-      counts: { imported: applied.imported, existing: applied.existing, skipped: applied.skipped.length, entries: applied.after.entries, proposals: applied.after.proposals, receiptsBefore: applied.before.receipts, receiptsAfter: applied.after.receipts },
+      counts: {
+        imported: applied.imported, existing: applied.existing, skipped: applied.skipped.length,
+        imported_complete: stats.imported, imported_partial: stats.importedPart, truncated: stats.truncated, coverage: stats.coverage,
+        entries: applied.after.entries, proposals: applied.after.proposals,
+        receiptsBefore: applied.before.receipts, receiptsAfter: applied.after.receipts,
+      },
       skipped: applied.skipped, recordedPartial: plan.proposals.filter(item => item.recorded === 'partial').map(item => item.id),
+      recordedPartialEntries: plan.entries.filter(item => item.recorded === 'partial').map(item => item.id),
+      strict: options.strict === true,
       sampling, backendBefore, backendAfter: settingsAfter.settings?.cognition?.backend || 'file',
-      samples: { entries: plan.entries.slice(0, 3), proposals: plan.proposals.slice(0, 3) },
+      samples: {
+        entries: plan.entries.slice(0, 3), proposals: plan.proposals.slice(0, 3),
+        imported: plan.entries.filter(item => item.recorded !== 'partial' && !item.truncated).slice(0, 3),
+        imported_partial: plan.entries.filter(item => item.recorded === 'partial').slice(0, 3),
+        truncated: plan.entries.filter(item => item.truncated === true).slice(0, 3),
+        skipped: applied.skipped.slice(0, 3),
+      },
     }
   }
   return {
     ok: true, mode: 'dry-run', stateDir: options.stateDir, cognitionDir: options.cognitionDir, dbPath: options.dbPath,
-    counts: { plannedEntries: plan.entries.length, plannedProposals: plan.proposals.length, skipped: plan.skipped.length, imported: 0, existing: 0 },
+    counts: {
+      plannedEntries: plan.entries.length, plannedProposals: plan.proposals.length, skipped: plan.skipped.length,
+      imported: stats.imported, imported_partial: stats.importedPart, truncated: stats.truncated,
+      imported_total: stats.importedTotal, entry_skipped: stats.entrySkipped, coverage: stats.coverage, existing: 0,
+    },
     skipped: plan.skipped, recordedPartial: plan.proposals.filter(item => item.recorded === 'partial').map(item => item.id),
-    samples: { entries: plan.entries.slice(0, 3), proposals: plan.proposals.slice(0, 3) },
+    recordedPartialEntries: plan.entries.filter(item => item.recorded === 'partial').map(item => item.id),
+    strict: options.strict === true,
+    samples: {
+      entries: plan.entries.slice(0, 3), proposals: plan.proposals.slice(0, 3),
+      imported: plan.entries.filter(item => item.recorded !== 'partial' && !item.truncated).slice(0, 3),
+      imported_partial: plan.entries.filter(item => item.recorded === 'partial').slice(0, 3),
+      truncated: plan.entries.filter(item => item.truncated === true).slice(0, 3),
+      skipped: plan.skipped.slice(0, 3),
+    },
     backendBefore, backendAfter: backendBefore,
   }
 }

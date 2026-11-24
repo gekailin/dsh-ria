@@ -58,7 +58,7 @@ function inbound(messageId = 'msg-1', text = 'hello from Claw') {
   }
 }
 
-function serviceFor(dir, base, { events, prompts, typingOptions, forwardRelay } = {}) {
+function serviceFor(dir, base, { events, prompts, typingOptions } = {}) {
   return new WechatClawService({
     ctx: fakeContext(prompts),
     stateDir: dir,
@@ -66,7 +66,6 @@ function serviceFor(dir, base, { events, prompts, typingOptions, forwardRelay } 
     getRiaId: () => 'ria-session',
     log: () => {},
     typingOptions: typingOptions || (() => ({ enabled: true, refreshMs: 30, maxMs: 1000 })),
-    forwardRelay,
   })
 }
 
@@ -382,86 +381,6 @@ async function attachSession(service, base) {
     assert.equal(negative.lastInboundAt, 0)
   } finally {
     await claw.shutdown()
-    rmSync(dir, { recursive: true, force: true })
-  }
-}
-
-// A forward-consumed inbound must not start a typing loop for a Chat turn that
-// never happens.
-{
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-ria-claw-forward-typing-'))
-  let typingCalls = 0
-  const server = createServer(async (request, response) => {
-    const url = new URL(request.url, 'http://127.0.0.1')
-    if (url.pathname === '/ilink/bot/getconfig' || url.pathname === '/ilink/bot/sendtyping') {
-      typingCalls += 1
-      json(response, { ret: 0, typing_ticket: 'ticket-1' })
-      return
-    }
-    if (url.pathname === '/ilink/bot/sendmessage') {
-      await readJsonBody(request)
-      json(response, { ret: 0 })
-      return
-    }
-    response.writeHead(404)
-    response.end()
-  })
-  await listen(server)
-  const base = 'http://127.0.0.1:' + server.address().port
-  const claw = serviceFor(dir, base, { forwardRelay: async () => true })
-  await attachSession(claw, base)
-  try {
-    await claw.handleMessage(claw.session, inbound())
-    await new Promise(resolve => setTimeout(resolve, 40))
-    assert.equal(typingCalls, 0, 'forward-consumed messages must not start typing')
-    assert.equal(claw.statusView().wechatClawTyping.active, 0)
-    assert.equal(claw.typingUsers.size, 0)
-  } finally {
-    await claw.shutdown()
-    await new Promise(resolve => server.close(resolve))
-    rmSync(dir, { recursive: true, force: true })
-  }
-}
-
-// Media messages consumed by forward must take the same typing-free path as
-// text forwards. Stub deliverInbound so the check stays at handleMessage's
-// media branch instead of downloading an image.
-{
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-ria-claw-media-forward-typing-'))
-  let typingCalls = 0
-  const server = createServer(async (request, response) => {
-    const url = new URL(request.url, 'http://127.0.0.1')
-    if (url.pathname === '/ilink/bot/getconfig' || url.pathname === '/ilink/bot/sendtyping') {
-      typingCalls += 1
-      json(response, { ret: 0, typing_ticket: 'ticket-1' })
-      return
-    }
-    if (url.pathname === '/ilink/bot/sendmessage') {
-      await readJsonBody(request)
-      json(response, { ret: 0 })
-      return
-    }
-    response.writeHead(404)
-    response.end()
-  })
-  await listen(server)
-  const base = 'http://127.0.0.1:' + server.address().port
-  const claw = serviceFor(dir, base, { forwardRelay: async () => true })
-  await attachSession(claw, base)
-  claw.deliverInbound = async () => ({ delivered: true, flushed: false, forwarded: true })
-  try {
-    const media = {
-      ...inbound('msg-media-forward'),
-      item_list: [{ type: 2, image_item: {} }],
-    }
-    await claw.handleMessage(claw.session, media)
-    await new Promise(resolve => setTimeout(resolve, 40))
-    assert.equal(typingCalls, 0, 'forwarded media must not start typing')
-    assert.equal(claw.statusView().wechatClawTyping.active, 0)
-    assert.equal(claw.typingUsers.size, 0)
-  } finally {
-    await claw.shutdown()
-    await new Promise(resolve => server.close(resolve))
     rmSync(dir, { recursive: true, force: true })
   }
 }

@@ -109,8 +109,12 @@ try {
   assert.ok(http.body.rows.every(row => required.every(field => Object.hasOwn(row, field))))
 
   const client = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
-  assert.match(client, /"data-ria-board-executors": "1"/)
-  assert.match(client, /"data-ria-executors-overlay": "1"/)
+  // The old title-bar modal became a first-class tab: no overlay/button, but
+  // the diagnostics table and its sorting stay.
+  assert.match(client, /"data-ria-board-panel": "executors"/)
+  assert.match(client, /executorsPanel\(\)/)
+  assert.doesNotMatch(client, /data-ria-board-executors/)
+  assert.doesNotMatch(client, /data-ria-executors-overlay/)
   assert.match(client, /"data-ria-executors-table": "1"/)
   assert.match(client, /"data-ria-executor-sort": key/)
   assert.match(client, /executorRows\.sort\(/)

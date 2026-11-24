@@ -109,7 +109,7 @@ try {
   assert.equal(advisor.phase, 'advisor.plan')
   assert.ok(advisor.input.prompt.includes('输出契约'))
   assert.ok(advisor.output.raw.length > 0)
-  assert.equal(advisor.degraded, true, 'fixture stateless plan is degraded')
+  assert.equal(advisor.degraded, false, 'empty SQLite cognition is healthy, not degraded')
   assert.ok(router, 'router role-context entry missing')
   assert.equal(router.phase, 'dispatch')
   assert.ok(Array.isArray(router.input.candidates))

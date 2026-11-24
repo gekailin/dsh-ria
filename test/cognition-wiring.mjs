@@ -28,11 +28,10 @@ try {
   assert.ok((prompt.match(/X/g) || []).length <= 500, 'voice capped at 500 chars')
   assert.ok(prompt.includes('[活跃项目概况]'))
   assert.ok(prompt.includes('Project 1') && prompt.includes('Project 2') && prompt.includes('Project 3'))
-  assert.equal(prompt.includes('Project 4'), false, 'at most three project summaries')
+  assert.ok(prompt.includes('Project 4'), 'all active project summaries (max 10)')
   assert.ok(prompt.includes('[长期记忆摘要]'))
   assert.ok(prompt.indexOf('[说话风格]') < prompt.indexOf('[活跃项目概况]'))
   assert.ok(prompt.indexOf('[活跃项目概况]') < prompt.indexOf('[长期记忆摘要]'))
-  controller.cognition.db.close()
 
   // Author normalization and old-record compatibility.
   assert.equal(normalizeProposalAuthor('reflection'), 'reflection')
@@ -41,10 +40,6 @@ try {
   assert.equal(normalizeProposalAuthor('user'), 'user')
   assert.equal(normalizeProposalAuthor('executor:'), 'reflection')
   assert.equal(normalizeProposalAuthor('bogus'), 'reflection')
-  writeFileSync(join(stateDir, 'cognition', 'proposals', 'legacy-no-author.json'), JSON.stringify({ id: 'legacy-no-author', status: 'pending', text: 'legacy' }) + '\n')
-  const legacy = controller.cognition.listProposals().find(item => item.id === 'legacy-no-author')
-  assert.equal(legacy.author, 'reflection')
-
   const chat = controller.state.chatSessionId
   const userProposal = await fixture.callAs(chat, 'ria_chat_propose', { text: 'User preference' })
   assert.equal(userProposal.proposal.author, 'user')
@@ -60,7 +55,7 @@ try {
     cognitionProposal: { text: 'executor learned this' },
   }, { agent: { id: 'session-author-exec' } })
   assert.equal(reported.ok, true, JSON.stringify(reported))
-  assert.equal(controller.cognition.listProposals().find(item => item.text === 'executor learned this').author, 'executor:session-author-exec')
+  assert.equal(controller.cognition.listProposals().find(item => item.body === 'executor learned this').author, 'executor:session-author-exec')
 
   const reflectionRequest = await fixture.callAs(chat, 'ria_chat_request', { goal: 'reflection author', acceptance: 'x' })
   fixture.service.tickets.transitionTicket(reflectionRequest.ticketId, 'working', { actor: 'router', executor: 'session-author-reflection', waitingOn: 'executor' })
@@ -70,6 +65,6 @@ try {
     cognitionProposal: { text: 'reflection learned this' },
   }, { agent: { id: 'session-author-reflection' } })
   assert.equal(reflectionReport.ok, true, JSON.stringify(reflectionReport))
-  assert.equal(controller.cognition.listProposals().find(item => item.text === 'reflection learned this').author, 'reflection')
+  assert.equal(controller.cognition.listProposals().find(item => item.body === 'reflection learned this').author, 'reflection')
   console.log('cognition prompt/author wiring ok')
 } finally { fixture.cleanup() }

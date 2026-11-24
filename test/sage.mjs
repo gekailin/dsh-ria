@@ -102,14 +102,16 @@ try {
   // Chat memory is part of the dynamic system prompt, not a pre-step host
   // message. Re-assembling sees a cognition write without any event.
   const chatAgent = fixture.agentFor(chat)
-  cognition.write('chat/preferences.md', '用户偏好：先给结论，再展开。', { reason: 'change' })
+  cognition.openDb().prepare("DELETE FROM cognition_entries WHERE scope='user:preference'").run()
+  cognition.upsertEntry({ scope: 'user:preference', body: '用户偏好：先给结论，再展开。', cause: 'test', sources: [{ type: 'file', ref: 'test' }] })
   const chatPrompt = fixture.assembleSystemPrompt(chat, { scope: chatAgent })
   assert.ok(chatPrompt.includes('以下为长期记忆摘要，可能滞后；细节以 cognition 文件为准'))
   assert.ok(chatPrompt.includes('用户偏好：先给结论，再展开。'))
   const decision = () => ({ kind: 'enter', messages: [] })
   const firstStep = await controller.onPreStep({ agent: chatAgent, turn: 1 }, async () => decision())
   assert.equal(firstStep.messages.length, 0)
-  cognition.write('chat/preferences.md', '用户偏好：先给结论，再展开；必要时附证据。', { reason: 'change' })
+  cognition.openDb().prepare("DELETE FROM cognition_entries WHERE scope='user:preference'").run()
+  cognition.upsertEntry({ scope: 'user:preference', body: '用户偏好：先给结论，再展开；必要时附证据。', cause: 'test', sources: [{ type: 'file', ref: 'test' }] })
   const nextPrompt = fixture.assembleSystemPrompt(chat, { scope: chatAgent })
   assert.ok(nextPrompt.includes('必要时附证据'))
   const thirdStep = await controller.onPreStep({ agent: chatAgent, turn: 3 }, async () => decision())

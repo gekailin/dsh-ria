@@ -5,6 +5,7 @@ import { apply } from '../../lib/index.js'
 import { roleSessionTitle } from '../../lib/core/controller.mjs'
 import { ticketBrief } from '../../lib/core/prompts.mjs'
 import { isDeprecatedToolAlias } from '../../lib/tools/registry.mjs'
+import { openDatabase } from '../../lib/state/sqlite/db.mjs'
 
 const RIA_ID = 'session-ria'
 const MODEL_CATALOG = [
@@ -31,6 +32,7 @@ const DEFAULT_IMAGE_LIMITS = {
 export async function createFixture(options = {}) {
   const ownsStateDir = !options.stateDir
   const stateDir = options.stateDir || mkdtempSync(join(tmpdir(), 'dsh-ria-fixture-'))
+  try { const cognitionDb = openDatabase(join(stateDir, 'ria.sqlite'), { create: true }); cognitionDb.close() } catch { /* tests using a read-only state keep their own fixture */ }
   const installed = new Map()
   const agentTools = new Map()
   const prompts = []

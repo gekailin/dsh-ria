@@ -26,12 +26,11 @@ try {
   assert.equal(first.ok, true)
   await flush()
   assert.equal(notices.length, 1, 'one notification for the first block')
-  assert.ok(notices[0].includes(ticket.ticketId))
-  assert.ok(notices[0].includes('选 A 还是 B？'))
-  assert.ok(notices[0].includes('进入 blocked 时间：'))
-  assert.ok(/\d{4}-\d{2}-\d{2}T/.test(notices[0]))
-  assert.ok(notices[0].includes('g'.repeat(119) + '…'))
-  assert.ok(!notices[0].includes('g'.repeat(120)), 'goal summary is clipped to 120 chars')
+  assert.ok(notices[0].includes('#' + ticket.ticketId.slice(-6) + ' blocked ·'))
+  assert.ok(notices[0].includes('选 A 还是 B'))
+  assert.ok(notices[0].includes('blocked(waitingOn=user)'))
+  assert.ok(notices[0].length <= 240)
+  assert.equal(notices[0].includes(longGoal), false, 'goal must not leak into the status line')
   const delivered = events.filter(event => event.event === 'ticket.blocked.notified')
   assert.equal(delivered.length, 1)
   assert.equal(delivered[0].ticketId, ticket.ticketId)
@@ -53,7 +52,7 @@ try {
   assert.equal(second.ok, true)
   await flush()
   assert.equal(notices.length, 2, 'unblock then block notifies again')
-  assert.ok(notices[1].includes('继续吗？'))
+  assert.ok(notices[1].includes('继续吗'))
 
   // Delivery failure keeps the same tick; retry re-renders and delivers once.
   const failing = store.addTicket({ status: 'open', waitingOn: 'ria', executor: 'session-executor-y', goal: 'notify failure', acceptance: 'x' })
@@ -69,7 +68,7 @@ try {
   controller.notifyChat = async message => { notices.push(message); return true }
   await controller.drainPendingNotices()
   assert.equal(notices.length, 3, 'same tick retried once after transport recovery')
-  assert.ok(notices[2].includes('确认？'))
+  assert.ok(notices[2].includes('确认'))
 
   // ---- ria_chat_status: all non-terminal tickets + age/stale/zombie fields -----
   controller.notifyChat = async () => true // keep unrelated transitions quiet

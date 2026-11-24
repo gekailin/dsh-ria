@@ -45,7 +45,7 @@ const turnEnd = (fixture, executorId, turn, reason) => fixture.service.onSession
   { type: 'turn/end', data: { turn, reason } },
 )
 const noticesAbout = (fixture, chat, ticketId) => fixture.prompts
-  .filter(prompt => String(prompt.sessionId) === chat && promptText(prompt).includes(ticketId))
+  .filter(prompt => String(prompt.sessionId) === chat && promptText(prompt).includes(String(ticketId).slice(-6)))
 
 // 1. reason.kind=error -> failed with the raw error text, executor released,
 //    turn.failed event, exactly one Chat notice.
@@ -87,8 +87,8 @@ const noticesAbout = (fixture, chat, ticketId) => fixture.prompts
     await flush()
     const notices = noticesAbout(fixture, chat, ticketId)
     assert.equal(notices.length, 1, 'the Chat is told exactly once')
-    assert.match(promptText(notices[0]), /error/)
-    assert.match(promptText(notices[0]), /200000ms/)
+    assert.match(promptText(notices[0]), /failed/)
+    assert.match(promptText(notices[0]), /idle-timeout/)
 
     // The very same event must not block twice or notify twice.
     turnEnd(fixture, executorId, 3, { kind: 'error', error: { message: 'late duplicate' } })

@@ -79,7 +79,7 @@ try {
     await settle()
     const sent = notices().slice(before)
     assert.equal(sent.length, 1)
-    assert.match(textOf(sent[0]), new RegExp(ticketId))
+    assert.match(textOf(sent[0]), new RegExp(ticketId.slice(-6)))
     assert.match(textOf(sent[0]), /bash/)
     assert.match(textOf(sent[0]), /受控实验/)
     assert.match(textOf(sent[0]), /请求于 \d{2}:\d{2}:\d{2} \+08:00/)

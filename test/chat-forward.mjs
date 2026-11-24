@@ -68,7 +68,8 @@ try {
   // No ticket, no WorkOrder, no Advisor call.
   assert.equal(fixture.service.store.tickets().length, ticketsBefore, 'forward creates no ticket')
   assert.equal(fixture.llmCalls.length, llmBefore, 'forward does not call Advisor/LLM')
-  const newEvents = fixture.service.routerEvents.query({ limit: 500 }).events.slice(0, routerBefore)
+  const allEvents = fixture.service.routerEvents.query({ limit: 500 }).events
+  const newEvents = allEvents.slice(0, Math.max(0, allEvents.length - routerBefore))
   assert.equal(newEvents.some(event => String(event.event || '').startsWith('workorder')), false, 'no workorder event')
   assert.equal(newEvents.filter(event => event.event === 'forward.sent').length, 1)
   assert.equal(newEvents.some(event => String(event.event || '').startsWith('forward.') && event.event !== 'forward.sent'), false, 'only forward.sent is audited')

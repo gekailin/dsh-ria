@@ -3,7 +3,9 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { RiaService } from '../lib/index.js'
-import { readReflectionState } from '../lib/reflection.mjs'
+import { Controller } from '../lib/core/controller.mjs'
+import { readReflectionState, writeReflectionState } from '../lib/reflection.mjs'
+import { REFLECTION_SCHEDULE_PROMPT, REFLECTION_CATCHUP_PROMPT } from '../lib/prompts/reflection.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'ria-reflection-api-'))
 try {
@@ -69,6 +71,68 @@ try {
   assert.equal(failed.ok, false)
   assert.equal(failed.code, 'advisor_unavailable')
   assert.match(failed.message, /no reflection executor/)
+
+  // Scheduled trigger respects lastCompletedDate idempotency unless force=true.
+  nextStatus = { ok: true }
+  writeReflectionState(dir, { ...readReflectionState(dir), lastCompletedDate: '2026-11-22', activeRunId: null })
+  const skipped = await service.startReflectionRun({ forDate: '2026-11-22', trigger: 'schedule' })
+  assert.equal(skipped.ok, true)
+  assert.equal(skipped.queued, false)
+  assert.equal(skipped.skipped, 'completed')
+
+  const scheduled = await service.startReflectionRun({ forDate: '2026-11-23', trigger: 'schedule' })
+  assert.equal(scheduled.ok, true)
+  assert.equal(scheduled.queued, true)
+  assert.equal(scheduled.trigger, 'schedule')
+  assert.equal(meta[scheduled.runId].reflectionTrigger, 'schedule')
+
+  // Prompts point to ria_chat_reflect (never legacy ria_reflect).
+  assert.match(REFLECTION_SCHEDULE_PROMPT, /\[RIA_REFLECTION_SCHEDULE\]/)
+  assert.match(REFLECTION_SCHEDULE_PROMPT, /ria_chat_reflect/)
+  assert.doesNotMatch(REFLECTION_SCHEDULE_PROMPT, /\bria_reflect\b/)
+  assert.match(REFLECTION_CATCHUP_PROMPT('2026-11-24'), /ria_chat_reflect/)
+  assert.doesNotMatch(REFLECTION_CATCHUP_PROMPT('2026-11-24'), /\bria_reflect\b/)
+
+  // Host-side interception: scheduled/catchup user/message triggers startReflectionRun when enabled, ignores & disables when disabled.
+  const startedCalls = []
+  let disableCalls = 0
+  let reflectionEnabled = false
+  const fakeCtrl = Object.create(Controller.prototype)
+  fakeCtrl.log = () => {}
+  fakeCtrl.service = {
+    store: { reflectionSettings: () => ({ enabled: reflectionEnabled }) },
+    startReflectionRun: async opts => { startedCalls.push(opts); return { ok: true, queued: true } },
+    disableReflectionSchedule: async () => { disableCalls += 1; return { ok: true } },
+  }
+  const ignored = fakeCtrl.maybeTriggerScheduledReflection({
+    type: 'user/message',
+    time: Date.parse('2026-11-24T15:40:00Z'),
+    data: { content: [{ type: 'text', text: REFLECTION_SCHEDULE_PROMPT }] },
+  })
+  assert.equal(ignored, false)
+  assert.equal(startedCalls.length, 0)
+  assert.equal(disableCalls, 1)
+
+  reflectionEnabled = true
+  const triggered = fakeCtrl.maybeTriggerScheduledReflection({
+    type: 'user/message',
+    time: Date.parse('2026-11-24T15:40:00Z'),
+    data: { content: [{ type: 'text', text: REFLECTION_SCHEDULE_PROMPT }] },
+  })
+  assert.equal(triggered, true)
+  assert.equal(startedCalls.length, 1)
+  assert.equal(startedCalls[0].forDate, '2026-11-24')
+  assert.equal(startedCalls[0].trigger, 'schedule')
+
+  const triggeredCatchup = fakeCtrl.maybeTriggerScheduledReflection({
+    type: 'user/message',
+    time: Date.parse('2026-11-25T01:00:00Z'),
+    data: { content: [{ type: 'text', text: REFLECTION_CATCHUP_PROMPT('2026-11-24') }] },
+  })
+  assert.equal(triggeredCatchup, true)
+  assert.equal(startedCalls.length, 2)
+  assert.equal(startedCalls[1].forDate, '2026-11-24')
+  assert.equal(startedCalls[1].trigger, 'catchup')
 
   const source = readFileSync(new URL('../lib/index.js', import.meta.url), 'utf8')
   const start = source.indexOf("url.pathname.endsWith('/reflection/run')")

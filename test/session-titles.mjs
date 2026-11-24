@@ -130,7 +130,7 @@ try {
     assert.equal(await rawTitle('session-rename-fail'), 'Executor 51')
     assert.ok(warnings.some(text => text.includes('session-read-fail') && text.includes('signal.throwIfAborted')))
     assert.ok(warnings.some(text => text.includes('session-rename-fail') && text.includes('rename boom')))
-    const events = readFileSync(join(fixture.stateDir, 'router-events.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
+    const events = fixture.service.routerEvents.query({ limit: 200 }).events
     assert.ok(events.some(item => item.event === 'role.rename.failed' && item.sessionId === 'session-read-fail' && item.reason === 'read-title' && item.payload.phase === 'read-title'))
     assert.ok(events.some(item => item.event === 'role.rename.failed' && item.sessionId === 'session-rename-fail' && item.reason === 'rename' && item.payload.phase === 'rename'))
     assert.ok(result.skipped.some(item => item.sessionId === 'session-read-fail' && item.reason === 'unavailable'))

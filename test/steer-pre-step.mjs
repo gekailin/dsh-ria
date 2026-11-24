@@ -16,11 +16,7 @@ try {
   const chat = controller.state.chatSessionId
   const executor = (await controller.ensureExecutor('global')).sessionId
   controller.state.addExecutor(executor, { status: 'idle', currentTicketId: null })
-  const events = () => {
-    try {
-      return readFileSync(join(fixture.stateDir, 'router-events.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
-    } catch { return [] }
-  }
+  const events = () => fixture.service.routerEvents.query({ limit: 200 }).events
   const newTicket = goal => {
     const ticket = store.addTicket({ status: 'working', executor: executor, goal })
     controller.state.setTicketMeta(ticket.ticketId, { phase: 'working', executorId: executor })

@@ -15,11 +15,9 @@ const make = () => {
   dirs.push(dir)
   return dir
 }
-const events = dir => {
-  const file = join(dir, 'router-events.jsonl')
-  if (!existsSync(file)) return []
-  return readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
-}
+import { listDailyLogFiles } from '../lib/shared/daily-log.mjs'
+const events = dir => listDailyLogFiles(dir, 'router-events.jsonl')
+  .flatMap(item => readFileSync(item.path, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line)))
 
 try {
   // 1. The SQLite mirror no longer publishes the retired ticket log.

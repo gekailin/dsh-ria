@@ -16,11 +16,7 @@ const fixture = await createFixture({
 const settle = () => new Promise(resolve => setTimeout(resolve, 20))
 const chat = fixture.service.controller.state.chatSessionId
 const notices = () => fixture.prompts.filter(item => String(item.sessionId) === String(chat)).map(item => String(item.content[0].text))
-const events = () => {
-  try {
-    return readFileSync(join(fixture.stateDir, 'router-events.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
-  } catch { return [] }
-}
+const events = () => fixture.service.routerEvents.query({ limit: 200 }).events
 const approval = (sessionId, callId = 'call-1') => ({
   agent: { id: sessionId }, toolName: 'bash', callId, reason: 'read only', signal: new AbortController().signal,
 })

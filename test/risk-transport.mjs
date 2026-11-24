@@ -101,7 +101,7 @@ const settle = () => new Promise(resolve => setTimeout(resolve, 20))
 const chat = fixture.service.controller.state.chatSessionId
 const notices = () => fixture.prompts.filter(item => String(item.sessionId) === String(chat)).map(item => String(item.content[0].text))
 const auditLines = () => {
-  const file = join(fixture.stateDir, 'audit.jsonl')
+  const file = fixture.service.grants.auditFile
   if (!existsSync(file)) return []
   return readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
 }

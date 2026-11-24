@@ -15,11 +15,7 @@ try {
   const controller = fixture.service.controller
   const chat = fixture.service.controller.state.chatSessionId
   const notices = () => fixture.prompts.filter(item => String(item.sessionId) === String(chat)).map(item => String(item.content[0].text))
-  const events = () => {
-    try {
-      return readFileSync(join(fixture.stateDir, 'router-events.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
-    } catch { return [] }
-  }
+  const events = () => fixture.service.routerEvents.query({ limit: 200 }).events
   const suppressed = kind => events().filter(item => item.event === 'notice.suppressed' && item.payload && item.payload.kind === kind)
 
   // Unwatched ordinary session: question and approval are silent but traced.

@@ -3,11 +3,10 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createFixture } from './support/ria-fixture.mjs'
 
-const eventsOf = stateDir => {
-  try {
-    return readFileSync(join(stateDir, 'router-events.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
-  } catch { return [] }
-}
+import { listDailyLogFiles } from '../lib/shared/daily-log.mjs'
+
+const eventsOf = stateDir => listDailyLogFiles(stateDir, 'router-events.jsonl')
+  .flatMap(item => readFileSync(item.path, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line)))
 
 // --- Hard abort path: DSH cancel() interrupts the running turn. ---
 {

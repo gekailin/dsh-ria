@@ -16,7 +16,7 @@ try {
   try {
     assert.equal(existsSync(stale), false, 'startup removed the stale state tmp')
     assert.equal(existsSync(join(dir, 'state.json')), true)
-    const events = readFileSync(join(dir, 'router-events.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse)
+    const events = fixture.service.routerEvents.query({ limit: 200 }).events
     const cleanup = events.filter(event => event.event === 'state.tmp_cleanup')
     assert.equal(cleanup.length, 1)
     assert.equal(cleanup[0].payload.count, 1)

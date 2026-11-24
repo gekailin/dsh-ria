@@ -182,7 +182,7 @@ assert.equal(store.grant(failing.grantId).status, 'restore_failed')
 assert.match(store.grant(failing.grantId).lastError, /not found/)
 service.shutdown()
 
-const audit = readFileSync(join(stateDir, 'audit.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line))
+const audit = readFileSync(service.auditFile, 'utf8').trim().split('\n').map(line => JSON.parse(line))
 assert.ok(audit.some(item => item.event === 'grant/restored' && item.trigger === 'expired'))
 assert.ok(audit.some(item => item.event === 'grant/restored' && item.trigger === 'startup'))
 assert.ok(audit.some(item => item.event === 'grant/restored' && item.trigger === 'ticket-done' && item.grantId === orphan.grantId))
@@ -230,7 +230,7 @@ assert.ok(audit.some(item => item.event === 'grant/restored' && item.grantId ===
     assert.equal(records.length, 0)
     assert.equal(states.get('executor-b').sandbox, 'workspace-write')
     assert.equal(states.get('executor-b').approval, 'ask')
-    const migrationAudit = readFileSync(join(stateDir, 'audit.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line))
+    const migrationAudit = readFileSync(moving.auditFile, 'utf8').trim().split('\n').map(line => JSON.parse(line))
     assert.ok(migrationAudit.some(item => item.event === 'grant/moved' && item.ticketId === ticket.ticketId && item.grantId === grant.grantId))
     assert.ok(migrationAudit.some(item => item.event === 'grant/restored' && item.ticketId === ticket.ticketId && item.grantId === grant.grantId && item.trigger === 'expired'))
   } finally { moving.shutdown() }

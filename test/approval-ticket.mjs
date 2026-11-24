@@ -184,7 +184,7 @@ try {
     await settle()
     const sent = notices().slice(before)
     assert.equal(sent.length, 0)
-    const events = readFileSync(join(fixture.stateDir, 'router-events.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
+    const events = fixture.service.routerEvents.query({ limit: 200 }).events
     assert.ok(events.some(item => item.event === 'notice.suppressed' && item.sessionId === 'session-independent' && item.payload && item.payload.kind === 'approval'))
     fixture.service.onSessionEvent({ header: { id: 'session-independent' } }, { type: 'approval/asked', time: Date.now(), data: { id: 'apr_ind', toolName: 'bash' } })
     assert.equal(ticketOf(ticketId).revision, revision)

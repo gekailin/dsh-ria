@@ -176,7 +176,7 @@ function setup() {
     assert.equal(runtime.stats().failures, 1)
     assert.ok(f.logs.some(item => item.level === 'warn' && item.message.includes('remains dirty')))
     assert.equal(readFileSync(join(f.dir, 'state.json'), 'utf8'), previous)
-    assert.equal(f.dbState().pendingState.reports.at(-1).reportId, 'report-new')
+    assert.equal(f.external.db.prepare('SELECT COUNT(*) n FROM ticket_reports WHERE id=?').get('report-new').n, 1)
     assert.equal(f.dbState().pendingRia.settings.blockDirectUserMessages, false)
     clock.tick()
     assert.equal(calls, 2)
@@ -184,7 +184,7 @@ function setup() {
     assert.equal(f.dbState().exportedGeneration, runtime.generation)
     assert.equal(runtime.stats().lastError, null)
     assert.deepEqual(f.external.record('first').meta.attachments, ['latest'])
-    assert.equal(f.read('state.json').reports.at(-1).reportId, 'report-new')
+    assert.equal(state.reportsFor('first').at(-1).reportId, 'report-new')
     assert.equal(f.read('state.json').settings.blockDirectUserMessages, false, 'control settings live in state.json')
   } finally { await f.cleanup() }
 }
@@ -219,7 +219,7 @@ function setup() {
     runtime.exportMirror = (snapshot, guard) => writeMirrorSnapshot({ stateDir: f.dir, snapshot, ...guard })
     assert.equal(runtime.flush(), true)
     assert.deepEqual(f.external.record('first').meta.attachments, ['newer-write'])
-    assert.equal(f.read('state.json').reports.at(-1).reportId, 'during-export')
+    assert.equal(f.external.db.prepare('SELECT COUNT(*) n FROM ticket_reports WHERE id=?').get('during-export').n, 1)
     assert.ok(f.read('ria.json').tickets.some(ticket => ticket.ticketId === 'json-only'), 'ria.json remains the read-only compatibility copy')
     assert.ok(!f.read('ria.json').tickets.some(ticket => ticket.ticketId === 'first'), 'new DB tickets are not mirrored back to ria.json')
   } finally { await f.cleanup() }
@@ -316,7 +316,7 @@ function setup() {
     runtime2.exportMirror = (snapshot, guard) => writeMirrorSnapshot({ stateDir: f.dir, snapshot, ...guard })
     assert.equal(runtime2.flush(), true)
     assert.equal(runtime2.dirty, false)
-    assert.equal(f.read('state.json').reports.at(-1).reportId, 'report-reopen')
+    assert.equal(v2b.reportsFor('first').at(-1).reportId, 'report-reopen')
     assert.equal(f.read('state.json').settings.blockDirectUserMessages, false, 'control settings live in state.json')
     assert.ok(f.external.record('first').meta)
   } finally {

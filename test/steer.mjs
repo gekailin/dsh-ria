@@ -12,11 +12,7 @@ try {
   const ticket = fixture.service.store.addTicket({ status: 'working', executor: executor, goal: 'steer test' })
   controller.state.setTicketMeta(ticket.ticketId, { phase: 'working', executorId: executor })
   controller.state.setWorkOrder(ticket.ticketId, { ticketId: ticket.ticketId, summary: 'plan', steps: ['do it'], acceptance: 'ok' })
-  const events = () => {
-    try {
-      return readFileSync(join(fixture.stateDir, 'router-events.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
-    } catch { return [] }
-  }
+  const events = () => fixture.service.routerEvents.query({ limit: 200 }).events
 
   // Idle direct delivery marks the inbox entry delivered.
   const queued = await fixture.callAs(chat, 'ria_chat_steer', { ticketId: ticket.ticketId, message: 'check this' })

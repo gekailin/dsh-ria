@@ -8,11 +8,7 @@ const cwd = mkdtempSync(join(tmpdir(), 'ria-new-session-'))
 const fixture = await createFixture({ stateDefault: true })
 try {
   const chat = fixture.service.controller.state.chatSessionId
-  const events = () => {
-    try {
-      return readFileSync(join(fixture.stateDir, 'router-events.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
-    } catch { return [] }
-  }
+  const events = () => fixture.service.routerEvents.query({ limit: 200 }).events
 
   const created = await fixture.callAs(chat, 'ria_chat_new_session', {
     title: 'New Regular Session',

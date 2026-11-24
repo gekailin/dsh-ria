@@ -66,7 +66,7 @@ for (const [name, text] of Object.entries(templates)) {
     })
     assert.equal(plan.ok, true, JSON.stringify(plan))
     const events = fixture.service.routerEvents.query({ ticketId: request.ticketId, limit: 100 }).events
-    const warning = events.find(event => event.event === 'workorder.unknown_tool')
+    const warning = events.find(event => event.event === 'workorder.unknown_tool' && event.payload && event.payload.tool === 'ria_nonexistent_probe')
     assert.ok(warning, JSON.stringify(events))
     assert.equal(warning.payload.tool, 'ria_nonexistent_probe')
     assert.equal(warning.payload.source, 'ticket_plan.workorder')

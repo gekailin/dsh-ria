@@ -100,9 +100,10 @@ try {
   const request = await fixture.callAs(chat, 'ria_chat_request', { goal: 'role context integration' })
   assert.equal(request.ok, true, JSON.stringify(request))
   await new Promise(resolve => setTimeout(resolve, 20))
-  const entries = readdirSync(fixture.stateDir)
-    .filter(name => name.startsWith('role-context-') && name.endsWith('.jsonl'))
-    .flatMap(name => readFileSync(join(fixture.stateDir, name), 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line)))
+  const entries = [
+    ...readRoleContext(fixture.stateDir, { role: 'advisor', since: 1, limit: 50 }).entries,
+    ...readRoleContext(fixture.stateDir, { role: 'router', since: 1, limit: 50 }).entries,
+  ]
   const advisor = entries.find(item => item.role === 'advisor' && item.ticketId === request.ticketId)
   const router = entries.find(item => item.role === 'router' && item.ticketId === request.ticketId)
   assert.ok(advisor, 'advisor role-context entry missing')

@@ -196,7 +196,7 @@ try {
         async () => 'rejected',
       )
       assert.equal(high, 'rejected')
-      assert.ok(notices().some(text => text.includes('需要你决定的提权') && text.includes('level=high')))
+      assert.ok(notices().some(text => text.includes('#session-watch 等待审批：bash') && text.includes('write outside')))
 
       // Canonical co_manage surface: legacy selectors are rejected, all is
       // remove-only, and remove is an inactivity flag rather than deletion.

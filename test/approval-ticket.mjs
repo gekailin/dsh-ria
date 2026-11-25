@@ -164,8 +164,8 @@ try {
     assert.equal(notices().some(item => /approval_timeout/.test(textOf(item))), false)
   }
 
-  // Ordinary independent sessions keep their read-only notice, and their
-  // approval events never move a ticket.
+  // Ordinary independent sessions also get the session-level approval notice
+  // (the ticket state must remain untouched).
   {
     // The whitelist block above already notified for this session; drop the
     // flood guard so this assertion observes the notice itself.
@@ -183,9 +183,10 @@ try {
     assert.equal(outcome, 'rejected')
     await settle()
     const sent = notices().slice(before)
-    assert.equal(sent.length, 0)
+    assert.equal(sent.length, 1)
+    assert.ok(textOf(sent[0]).includes('#session-independent 等待审批：bash'))
     const events = fixture.service.routerEvents.query({ limit: 200 }).events
-    assert.ok(events.some(item => item.event === 'notice.suppressed' && item.sessionId === 'session-independent' && item.payload && item.payload.kind === 'approval'))
+    assert.equal(events.some(item => item.event === 'notice.suppressed' && item.sessionId === 'session-independent' && item.payload && item.payload.kind === 'approval'), false)
     fixture.service.onSessionEvent({ header: { id: 'session-independent' } }, { type: 'approval/asked', time: Date.now(), data: { id: 'apr_ind', toolName: 'bash' } })
     assert.equal(ticketOf(ticketId).revision, revision)
     assert.equal(ticketOf(ticketId).status, 'done')

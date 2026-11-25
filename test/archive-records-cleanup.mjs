@@ -51,6 +51,33 @@ try {
   assert.equal(restored.archiveRecords[0].ticketId, 't1')
   assert.equal(existsSync(applied.journal), false)
   assert.equal(rollbackArchiveRecords(db, { stateDir: root }).code, 'archive_cleanup_missing')
+
+  // A missing/deleted journal is a warning + no-op, never a throw. The marker is
+  // kept for history so the run remains auditable.
+  const applied2 = cleanupArchiveRecords(db, { stateDir: root, apply: true, now: 125 })
+  assert.equal(applied2.applied, true)
+  assert.ok(existsSync(applied2.journal))
+  rmSync(applied2.journal)
+  const warnings = []
+  const missingJournal = rollbackArchiveRecords(db, { stateDir: root, runId: applied2.runId, warn: message => warnings.push(message) })
+  assert.equal(missingJournal.ok, true)
+  assert.equal(missingJournal.noop, true)
+  assert.equal(missingJournal.skipped, 'journal_missing')
+  assert.equal(missingJournal.restored, 0)
+  assert.equal(warnings.length, 1)
+  assert.match(warnings[0], /journal is missing/)
+  assert.ok(db.prepare("SELECT 1 FROM schema_meta WHERE key='archive_records_cleanup'").get(), 'marker kept on no-op')
+
+  // Explicit retirement (journal field cleared + deleted flag) follows the same
+  // no-op path without touching the marker or throwing.
+  db.prepare("UPDATE schema_meta SET value=json_set(value,'$.journal',NULL,'$.deleted',1) WHERE key='archive_records_cleanup'").run()
+  const retiredWarnings = []
+  const retired = rollbackArchiveRecords(db, { stateDir: root, warn: message => retiredWarnings.push(message) })
+  assert.equal(retired.ok, true)
+  assert.equal(retired.noop, true)
+  assert.equal(retired.restored, 0)
+  assert.equal(retiredWarnings.length, 1)
+  assert.ok(db.prepare("SELECT 1 FROM schema_meta WHERE key='archive_records_cleanup'").get())
   db.close()
   console.log('archive records cleanup and rollback ok')
 } finally { rmSync(root, { recursive: true, force: true }) }

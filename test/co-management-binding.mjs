@@ -71,10 +71,13 @@ const events = fixture => fixture.service.routerEvents.query({ limit: 500 }).eve
 
     // Unrelated meta must survive release: it clears exactly two keys.
     state.setTicketMeta(ticketId, { projectCwd: '/work/proj/sub', marker: 'keep-me' })
-    const diagnostics = fixture.service.executorDiagnostics({})
+    const diagnostics = await fixture.service.executorDiagnostics({})
     const group = diagnostics.rows.find(item => item.sessionId === 'session-cm')
     assert.ok(group, 'executor diagnostics exposes the co-management registration')
-    assert.equal(group.title, 'CM Regression')
+    // Display title is the live host Session title, resolved in one batch; the
+    // co-management registration title is not a persisted display snapshot.
+    assert.equal(group.title, 'CM Session')
+    assert.equal(group.titleSource, 'session')
     assert.equal(group.cwd, '/work/proj')
     assert.equal(group.kind, 'co-managed')
     assert.equal(group.allowAutoDispatch, true)

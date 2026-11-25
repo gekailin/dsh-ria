@@ -91,8 +91,12 @@ try {
   assert.equal(row.title, '众源BEV新')
   assert.equal(row.seq, 0)
 
-  // 6) Legacy records without executorLabel still get a usable display name.
+  // 6) Legacy records may still carry a cached title from before the live-title
+  // change; executorDisplayLabel keeps that compatibility fallback, but new
+  // writes no longer persist a title snapshot.
   delete state.data.executors['session-co-title'].executorLabel
+  assert.equal(Object.hasOwn(state.data.executors['session-co-title'], 'title'), false, 'sync writes no title snapshot')
+  state.data.executors['session-co-title'].title = '众源BEV新'
   assert.equal(executorDisplayLabel(state.executor('session-co-title')), '众源BEV新')
   assert.equal(executorDisplayLabel({ sessionId: 'legacy', executorType: 'work', seq: 9 }), 'Ria Executor 9')
 

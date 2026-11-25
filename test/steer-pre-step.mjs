@@ -43,7 +43,7 @@ try {
   assert.equal(decision.messages.length, 1, 'exactly one merged host message')
   const injected = decision.messages[0]
   assert.equal(injected.source.kind, 'user')
-  assert.match(injected.source.rpcId, /^ria_/)
+  assert.match(injected.source.rpcId, /^ria_steer_/)
   assert.equal(injected.source.form, 'steer')
   assert.equal(injected.source.source, 'steer')
   assert.equal(injected.source.ticketId, first.ticketId)

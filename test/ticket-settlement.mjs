@@ -79,17 +79,17 @@ try {
     assert.equal(store.ticket(ticket.ticketId).status, 'done')
   }
 
-  // 2. turn/end without report -> blocked(waitingOn=executor) + no_report.
+  // 2. turn/end without report and without assistant text -> blocked empty_turn.
   {
-    const ticket = workingTicket('no report')
+    const ticket = workingTicket('empty turn')
     const result = await settle(ticket.ticketId, { kind: 'completed' })
     assert.equal(result.status, 'blocked')
     assert.equal(result.waitingOn, 'executor')
-    assert.equal(result.no_report, true)
+    assert.equal(result.empty_turn, true)
     assert.equal(store.ticket(ticket.ticketId).status, 'blocked')
     assert.equal(store.ticket(ticket.ticketId).waitingOn, 'executor')
-    assert.equal(store.ticket(ticket.ticketId).blockedReason, 'executor turn/end completed; no report was recorded')
-    assert.equal(controller.state.ticketMeta(ticket.ticketId).no_report, true)
+    assert.match(store.ticket(ticket.ticketId).blockedReason, /without a report or assistant text/)
+    assert.equal(controller.state.ticketMeta(ticket.ticketId).empty_turn, true)
   }
 
   // 2b. an explicitly cancelled ticket is not resurrected by a late turn/end.
@@ -159,13 +159,19 @@ try {
     assert.equal(store.ticket(ticket.ticketId).waitingOn, 'user')
   }
 
-  // 7. multi-turn: progress report defers, final done settles once.
+  // 7. A progress-only turn/end has no terminal report and no text here, so it
+  // settles empty_turn; a done report in the same turn wins when present.
   {
-    const ticket = workingTicket('multi turn')
+    const ticket = workingTicket('progress only')
     recordReport(ticket.ticketId, 'progress')
-    await settle(ticket.ticketId, { kind: 'completed' })
-    assert.equal(store.ticket(ticket.ticketId).status, 'working')
+    const first = await settle(ticket.ticketId, { kind: 'completed' })
+    assert.equal(first.status, 'blocked')
+    assert.equal(first.empty_turn, true)
+  }
+  {
+    const ticket = workingTicket('done plus progress')
     recordReport(ticket.ticketId, 'done')
+    recordReport(ticket.ticketId, 'progress')
     await settle(ticket.ticketId, { kind: 'completed' })
     assert.equal(store.ticket(ticket.ticketId).status, 'done')
   }
@@ -216,15 +222,15 @@ try {
     assert.ok(completed.autoTaggedTicketIds.includes(ticket.ticketId), 'ledger records the ticket')
   }
 
-  // 11. only progress -> progress_report, ticket stays working, no completion write.
+  // 11. only progress and no assistant text -> empty_turn, no completion write.
   {
     const ex = 'settle-progress-only'
     const ticket = workingTicket('progress only', { executorId: ex, lastUsedAt: 2000 })
     recordReport(ticket.ticketId, 'progress', { executorId: ex, summary: 'still going' })
     const result = await settleAs(ex, ticket.ticketId, { kind: 'completed' })
-    assert.equal(result.settled, false)
-    assert.equal(result.reason, 'progress_report')
-    assert.equal(store.ticket(ticket.ticketId).status, 'working')
+    assert.equal(result.status, 'blocked')
+    assert.equal(result.empty_turn, true)
+    assert.equal(store.ticket(ticket.ticketId).status, 'blocked')
     const executorNow = controller.state.executor(ex)
     assert.deepEqual(executorNow.autoTags, {})
     assert.deepEqual(executorNow.autoTaggedTicketIds, [])
@@ -254,32 +260,31 @@ try {
     assert.equal(store.ticket(ticket.ticketId).status, 'failed')
   }
 
-  // 14. multi-round progress never settles; one done settles exactly once even
-  //     with more progress afterwards.
+  // 14. progress alone no longer holds the ticket open; one done settles exactly
+  //     once even with more progress afterwards.
   {
     const ex = 'settle-multi-tail'
     const ticket = workingTicket('multi round trailing progress', { executorId: ex, routingTags: ['multi-tag'], lastUsedAt: 3000 })
-    for (let round = 0; round < 3; round += 1) {
-      recordReport(ticket.ticketId, 'progress', { executorId: ex, summary: 'round ' + round })
-      const result = await settleAs(ex, ticket.ticketId, { kind: 'completed' })
-      assert.equal(result.reason, 'progress_report')
-      assert.equal(store.ticket(ticket.ticketId).status, 'working')
-      assert.deepEqual(controller.state.executor(ex).autoTags, {})
-    }
-    recordReport(ticket.ticketId, 'done', { executorId: ex, summary: 'done', evidence: ['exit 0'] })
-    recordReport(ticket.ticketId, 'progress', { executorId: ex, summary: 'tail after done' })
-    const first = await settleAs(ex, ticket.ticketId, { kind: 'completed' })
+    recordReport(ticket.ticketId, 'progress', { executorId: ex, summary: 'round 0' })
+    const firstRound = await settleAs(ex, ticket.ticketId, { kind: 'completed' })
+    assert.equal(firstRound.status, 'blocked')
+    assert.equal(firstRound.empty_turn, true)
+    assert.deepEqual(controller.state.executor(ex).autoTags, {})
+    const secondTicket = workingTicket('done plus trailing progress', { executorId: ex, routingTags: ['multi-tag'], lastUsedAt: 3000 })
+    recordReport(secondTicket.ticketId, 'done', { executorId: ex, summary: 'done', evidence: ['exit 0'] })
+    recordReport(secondTicket.ticketId, 'progress', { executorId: ex, summary: 'tail after done' })
+    const first = await settleAs(ex, secondTicket.ticketId, { kind: 'completed' })
     assert.equal(first.status, 'done', JSON.stringify(first))
     const completed = controller.state.executor(ex)
     const autoTags = { ...completed.autoTags }
     const ledger = completed.autoTaggedTicketIds.slice()
     const lastUsedAt = completed.lastUsedAt
     assert.deepEqual(autoTags, { 'multi-tag': 1 })
-    assert.equal(ledger.filter(id => id === ticket.ticketId).length, 1, 'done applies once')
-    recordReport(ticket.ticketId, 'progress', { executorId: ex, summary: 'late progress' })
-    const second = await settleAs(ex, ticket.ticketId, { kind: 'completed' })
+    assert.equal(ledger.filter(id => id === secondTicket.ticketId).length, 1, 'done applies once')
+    recordReport(secondTicket.ticketId, 'progress', { executorId: ex, summary: 'late progress' })
+    const second = await settleAs(ex, secondTicket.ticketId, { kind: 'completed' })
     assert.equal(second.settled, false)
-    assert.equal(store.ticket(ticket.ticketId).status, 'done')
+    assert.equal(store.ticket(secondTicket.ticketId).status, 'done')
     const unchanged = controller.state.executor(ex)
     assert.deepEqual(unchanged.autoTags, autoTags)
     assert.deepEqual(unchanged.autoTaggedTicketIds, ledger)

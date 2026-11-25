@@ -59,6 +59,7 @@ const noticesAbout = (fixture, chat, ticketId) => fixture.prompts
       kind: 'error',
       error: { code: 'idle-timeout', message: 'Did not observe any item or terminal signal within 200000ms' },
     })
+    await flush()
 
     const ticket = fixture.service.store.ticket(ticketId)
     assert.equal(ticket.status, 'failed')
@@ -107,6 +108,7 @@ const noticesAbout = (fixture, chat, ticketId) => fixture.prompts
     const { ticketId, executorId } = await dispatch(fixture, chat, 'turn aborted case')
     turnStart(fixture, executorId, 7)
     turnEnd(fixture, executorId, 7, { kind: 'aborted', reason: { kind: 'user' } })
+    await flush()
 
     const ticket = fixture.service.store.ticket(ticketId)
     assert.equal(ticket.status, 'blocked')
@@ -135,6 +137,7 @@ const noticesAbout = (fixture, chat, ticketId) => fixture.prompts
     const { ticketId, executorId } = await dispatch(fixture, chat, 'turn unknown case')
     turnStart(fixture, executorId, 2)
     turnEnd(fixture, executorId, 2, { kind: 'max-tokens' })
+    await flush()
 
     const ticket = fixture.service.store.ticket(ticketId)
     assert.equal(ticket.status, 'blocked')
@@ -148,7 +151,7 @@ const noticesAbout = (fixture, chat, ticketId) => fixture.prompts
   }
 }
 
-// 4. A completed turn without a report settles blocked(executor) and records no_report.
+// 4. A completed turn without report/assistant text settles blocked(empty_turn).
 {
   const { fixture, chat } = await setup()
   try {
@@ -161,7 +164,8 @@ const noticesAbout = (fixture, chat, ticketId) => fixture.prompts
     assert.equal(ticket.status, 'blocked')
     assert.equal(ticket.waitingOn, 'executor')
     assert.equal(ticket.failure, null)
-    assert.equal(fixture.service.controller.state.ticketMeta(ticketId).no_report, true)
+    assert.equal(fixture.service.controller.state.ticketMeta(ticketId).empty_turn, true)
+    assert.equal(fixture.service.controller.state.ticketMeta(ticketId).no_report, false)
     const executor = fixture.service.controller.state.executor(executorId)
     assert.equal(executor.status, 'idle')
     assert.equal(executor.currentTicketId, null)
@@ -308,6 +312,7 @@ const noticesAbout = (fixture, chat, ticketId) => fixture.prompts
 
     // A failed terminal ticket is not a stuck suspect even with an old event.
     turnEnd(fixture, executorId, 4, { kind: 'error', error: { message: 'boom' } })
+    await flush()
     const viewBlocked = await viewOf()
     const executorBlocked = await executorOf()
     assert.equal(viewBlocked.status, 'failed')

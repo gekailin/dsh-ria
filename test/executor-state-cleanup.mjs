@@ -53,7 +53,7 @@ async function setupExecutor(fixture, { ticketStatus = 'working', reason = { kin
     assert.equal(controller.turnStartedAt.has(executor.sessionId), false, 'turn/end clears the active-turn marker')
     assert.equal(controller.state.executorStop(executor.sessionId), null, 'turn/end clears stopRequest')
     assert.deepEqual(controller.state.pendingInbox(ticket.ticketId, executor.sessionId), [], 'turn/end leaves no inbox queue')
-    assert.equal(fixture.service.store.ticket(ticket.ticketId).status, 'working', 'progress keeps the ticket working')
+    assert.equal(fixture.service.store.ticket(ticket.ticketId).status, 'blocked', 'no report/text settles empty_turn')
     console.log('executor turn/end cleanup ok')
   } finally { fixture.cleanup() }
 }

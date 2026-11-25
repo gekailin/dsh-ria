@@ -186,27 +186,17 @@ await run('idle resume exhaustion uses the same blocked/undelivered mechanism', 
   assert.ok(h.fixture.prompts.some(prompt => prompt.sessionId === h.chat && prompt.content[0].text.includes('指令没送到')))
 })
 
-await run('in-flight immediate admission is not injected again at pre-step', async h => {
-  const original = h.fixture.ctx.sessionController.prompt.bind(h.fixture.ctx.sessionController)
-  let release
-  let entered
-  const gate = new Promise(resolve => { release = resolve })
-  const admitting = new Promise(resolve => { entered = resolve })
-  h.fixture.ctx.sessionController.prompt = async (request, signal) => {
-    if (request.sessionId === h.executor) {
-      entered()
-      await gate
-    }
-    return original(request, signal)
-  }
-  const sending = h.steer('in-flight-token')
-  await admitting
-  assert.equal(h.inbox().length, 1)
-  assert.deepEqual((await h.step()).messages, [])
-  release()
-  assert.equal((await sending).ok, true)
+await run('idle steer goes through native agent.steer and is not replayed at pre-step', async h => {
+  const result = await h.steer('native-steer-token')
+  assert.equal(result.ok, true, JSON.stringify(result))
+  assert.equal(result.deliveryMode, 'immediate')
   assert.deepEqual(h.inbox(), [])
-  assert.equal(h.host.attempts.length, 1)
+  assert.equal(h.host.attempts.length, 0, 'native steer must not start a host prompt turn')
+  const native = h.fixture.steered.filter(message => message && message.source && String(message.source.rpcId || '').startsWith('ria_steer_'))
+  assert.equal(native.length, 1, 'one native steer message')
+  assert.match(native[0].content[0].text, /native-steer-token/)
+  assert.equal(native[0].source.ticketId, h.ticketId)
+  assert.deepEqual((await h.step()).messages, [], 'pre-step does not replay a consumed steer')
   assert.equal(h.events().filter(event => event.event === 'steer.delivered').length, 1)
 })
 
@@ -229,27 +219,31 @@ await run('pre-step consuming during asynchronous idle probe is not replayed', a
   assert.equal(h.events().find(event => event.event === 'steer.delivered').payload.deliveryMode, 'pre-step')
 })
 
-await run('cancellation while a delivery fails stops retry and keeps it discarded', async h => {
-  const original = h.fixture.ctx.sessionController.prompt.bind(h.fixture.ctx.sessionController)
+await run('cancellation during the idle probe drops the steer and never injects it', async h => {
+  const original = h.fixture.ctx.sessionController.state.bind(h.fixture.ctx.sessionController)
+  let fired = false
   let attempts = 0
-  h.fixture.ctx.sessionController.prompt = async (request, signal) => {
-    if (request.sessionId === h.executor) {
+  h.fixture.ctx.sessionController.state = async (request, signal) => {
+    if (request.sessionId === h.executor && !fired) {
+      fired = true
       attempts++
       const stopped = await h.fixture.callAs(h.chat, 'ria_chat_stop_ticket', { ticketId: h.ticketId, reason: 'cancel pending delivery' })
       assert.equal(stopped.ok, true)
-      throw new Error('cancel won admission')
     }
     return original(request, signal)
   }
-  await h.steer('cancel-token')
+  const result = await h.steer('cancel-token')
+  assert.equal(result.ok, false, JSON.stringify(result))
+  assert.equal(result.dropped, true)
   assert.equal(attempts, 1)
   assert.equal(h.fixture.service.store.ticket(h.ticketId).status, 'cancelled')
   assert.deepEqual(h.inbox(), [])
   assert.ok(h.controller.state.data.inbox.find(entry => entry.ticketId === h.ticketId).discardedAt)
   assert.equal(h.events().filter(event => event.event === 'steer.delivered').length, 0)
+  assert.ok(h.events().some(event => event.event === 'steer.dropped_stale' && event.ticketId === h.ticketId))
 })
 
-for (const mode of deliveryModes) {
+for (const mode of ['immediate', 'pre-step']) {
   await run('steer regression: ' + mode, async h => {
     h.running(mode !== 'immediate')
     const steered = await h.steer('steer-' + mode + '-token')
@@ -257,14 +251,29 @@ for (const mode of deliveryModes) {
     if (mode === 'pre-step') {
       const decision = await h.step()
       assert.match(decision.messages[0].content[0].text, /steer-pre-step-token/)
-    } else if (mode === 'done-retry') {
-      const done = await h.fixture.callAs(h.executor, 'ria_executor_report', { ticketId: h.ticketId, status: 'done', summary: 'done', evidence: ['test'] })
-      assert.equal(done.ok, true)
     }
     assert.deepEqual(h.inbox(), [])
     assert.ok(h.events().some(event => event.event === 'steer.delivered' && event.payload.source === 'steer' && event.payload.deliveryMode === mode))
   })
 }
+
+await run('steer pending at turn/end defers done settlement', async h => {
+  h.running(true)
+  const steered = await h.steer('steer-pending-token')
+  assert.equal(steered.ok, true)
+  const done = await h.fixture.callAs(h.executor, 'ria_executor_report', { ticketId: h.ticketId, status: 'done', summary: 'done', evidence: ['test'] })
+  assert.equal(done.ok, true)
+  assert.equal(h.fixture.service.store.ticket(h.ticketId).status, 'working', 'settlement deferred for the owned steer')
+  assert.equal(h.inbox().length, 1)
+  assert.ok(h.events().some(event => event.event === 'steer.settlement.deferred' && event.ticketId === h.ticketId))
+  const decision = await h.step()
+  assert.match(decision.messages[0].content[0].text, /steer-pending-token/)
+  assert.deepEqual(h.inbox(), [])
+  h.running(false)
+  h.controller.onSessionEvent({ header: { id: h.executor } }, { type: 'turn/end', data: { turn: 2, reason: { kind: 'completed' } } })
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.equal(h.fixture.service.store.ticket(h.ticketId).status, 'done')
+})
 
 assert.deepEqual([...observedModes].sort(), deliveryModes.slice().sort(), 'all three automatic paths are exercised')
 console.log(JSON.stringify({ resumeSteerScenarios: scenarios, deliveryModes, realExecutors: 0, realRequests: 0, mockOnly: true }))

@@ -110,17 +110,23 @@ try {
   assert.equal(consumed.length, 1)
   assert.equal(consumed[0].payload.deliveryMode, 'pre-step')
 
-  // 5. A whole turn that never reaches a boundary still retries before done.
-  const fifth = newTicket('done retry')
+  // 5. A steer pending at turn/end defers settlement; it is consumed by this
+  // ticket at the next boundary, then the original done report settles it.
+  const fifth = newTicket('deferred done')
   fixture.setRunning(executor, true)
-  await fixture.callAs(chat, 'ria_chat_steer', { ticketId: fifth.ticketId, message: 'never consumed' })
+  await fixture.callAs(chat, 'ria_chat_steer', { ticketId: fifth.ticketId, message: 'never consumed before turn end' })
   const done = await fixture.callAs(executor, 'ria_executor_report', { ticketId: fifth.ticketId, status: 'done', summary: 'finished', evidence: ['test'] })
   assert.equal(done.ok, true, JSON.stringify(done))
-  assert.equal(store.ticket(fifth.ticketId).status, 'done')
+  assert.equal(store.ticket(fifth.ticketId).status, 'working', 'pending steer defers done')
+  assert.equal(controller.state.pendingInbox(fifth.ticketId, executor).length, 1)
+  assert.ok(events().some(item => item.event === 'steer.settlement.deferred' && item.ticketId === fifth.ticketId))
+  const drained = await preStep()
+  assert.match(drained.messages[0].content[0].text, /never consumed before turn end/)
   assert.equal(controller.state.pendingInbox(fifth.ticketId, executor).length, 0)
-  assert.ok(events().some(item => item.event === 'steer.delivered'
-    && item.ticketId === fifth.ticketId
-    && item.payload.deliveryMode === 'done-retry'))
+  fixture.setRunning(executor, false)
+  fixture.service.controller.onSessionEvent({ header: { id: executor } }, { type: 'turn/end', data: { ticketId: fifth.ticketId, turn: 2, reason: { kind: 'completed' } } })
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.equal(store.ticket(fifth.ticketId).status, 'done')
 
   // 6. Co-managed targets use the same pre-step steer injection path.
   {

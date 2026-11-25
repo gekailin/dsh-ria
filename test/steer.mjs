@@ -28,22 +28,26 @@ try {
   assert.equal(fixture.service.store.ticket(ticket.ticketId).status, 'done')
   assert.equal(controller.state.pendingInbox(ticket.ticketId, executor).length, 0)
 
-  // A failed delivery at done parks the ticket and emits undelivered.
-  const second = fixture.service.store.addTicket({ status: 'working', executor: executor, goal: 'steer failure' })
+  // A steer pending at turn/end defers settlement and completes inside the
+  // same ticket; the second turn/end then settles the original done report.
+  const second = fixture.service.store.addTicket({ status: 'working', executor: executor, goal: 'steer deferred' })
   controller.state.setTicketMeta(second.ticketId, { phase: 'working', executorId: executor })
   controller.state.setWorkOrder(second.ticketId, { ticketId: second.ticketId, summary: 'plan', steps: ['do it'] })
   fixture.setRunning(executor, true)
-  await fixture.callAs(chat, 'ria_chat_steer', { ticketId: second.ticketId, message: 'never delivered' })
-  fixture.setPromptFailure(new Error('executor unavailable'))
-  const failedDone = await fixture.callAs(executor, 'ria_executor_report', { ticketId: second.ticketId, status: 'done', summary: 'finished', evidence: ['test'] })
-  // Report only records; turn/end settlement blocks when the done-retry cannot
-  // deliver the pending manager inbox.
-  assert.equal(failedDone.ok, true, JSON.stringify(failedDone))
-  assert.equal(failedDone.recorded, true)
-  assert.equal(fixture.service.store.ticket(second.ticketId).status, 'blocked')
-  assert.ok(events().some(item => item.event === 'steer.undelivered' && item.ticketId === second.ticketId && item.payload.trigger === 'done'))
-  fixture.setPromptFailure(undefined)
+  await fixture.callAs(chat, 'ria_chat_steer', { ticketId: second.ticketId, message: 'still in this ticket' })
+  const firstDone = await fixture.callAs(executor, 'ria_executor_report', { ticketId: second.ticketId, status: 'done', summary: 'finished', evidence: ['test'] })
+  assert.equal(firstDone.ok, true, JSON.stringify(firstDone))
+  assert.equal(fixture.service.store.ticket(second.ticketId).status, 'working', 'pending steer defers done settlement')
+  assert.equal(controller.state.pendingInbox(second.ticketId, executor).length, 1)
+  assert.ok(events().some(item => item.event === 'steer.settlement.deferred' && item.ticketId === second.ticketId))
+  const decision = await fixture.emit('agent/pre-step', { agent: fixture.agentFor(executor), turn: 1, step: 2 },
+    async () => ({ kind: 'enter', messages: [] }))
+  assert.match(decision.messages[0].content[0].text, /still in this ticket/)
+  assert.equal(controller.state.pendingInbox(second.ticketId, executor).length, 0, 'steer consumed inside the ticket')
   fixture.setRunning(executor, false)
+  controller.onSessionEvent({ header: { id: executor } }, { type: 'turn/end', data: { turn: 2, reason: { kind: 'completed' } } })
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.equal(fixture.service.store.ticket(second.ticketId).status, 'done', 'second turn/end settles done after steer')
 
   // Resume rearm prompt failure records undelivered without silent loss.
   const third = fixture.service.store.addTicket({ status: 'working', executor: executor, goal: 'rearm failure' })

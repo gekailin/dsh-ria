@@ -155,6 +155,7 @@ const noticesAbout = (fixture, chat, ticketId) => fixture.prompts
     const { ticketId, executorId } = await dispatch(fixture, chat, 'turn completed case')
     turnStart(fixture, executorId, 1)
     turnEnd(fixture, executorId, 1, { kind: 'completed' })
+    await flush()
 
     const ticket = fixture.service.store.ticket(ticketId)
     assert.equal(ticket.status, 'blocked')

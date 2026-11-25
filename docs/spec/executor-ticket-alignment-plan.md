@@ -60,11 +60,15 @@
      - 用户直连消息（`user/message` 且非 `ria_` 前缀）在协管会话下无论有无工单均正常记录并知悉，绝不拦截。
 3. **移除因双轨撞车产生的 `noticeSignatures` 去重兜底**（`lib/core/controller.mjs`）：
    - 核对 `sendWatchRelay`（`3523–3574` 行）与 `notifyTicketStatus`：切干净入口后，有工单的协管不再进 `sendWatchRelay`，移除重复状态通知的抑制补丁。
+4. **取消 `ria_chat_read` 的硬上限截断**（`lib/core/controller.mjs:4565,4590`、`lib/tools/registry.mjs:310`）：
+   - 移除单条消息 `3000` 字符截断（`message.text.slice(0, 3000)`），完整返回消息正文，落实 [executor.md §5](executor.md)「无工单任务读取完整回复，不得截断」。
+   - 取消 `limit` 的硬上限 `30`（保留默认 `20`，允许调用方按需传更大值或读取全部，底层 `maxMessages` 同步放开）。
 
 ### 验收测试
 - 协管会话接工单执行完毕触发 `turn/end` → 自动以该 turn 最终回复写入工单报告并结算 `done`，只发一条工单状态通知（不发重复 watch relay）。
 - 直管 Executor 漏调 `ria_executor_report(done)`（或仅调过 `progress`）后 `turn/end` → 自动以该 turn 最终回复兜底结算 `done`。
 - 协管会话无工单（直转或用户直聊）→ 正常触发观察转发，不影响工单表。
+- `ria_chat_read` 读取超过 3000 字的长回复与超过 30 条消息时不再被硬截断。
 
 ---
 

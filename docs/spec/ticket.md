@@ -8,6 +8,9 @@
 - **1 Ticket = 1 WorkOrder（不做工单内 `queue`）**：
   - 保持 Ticket 轻量，不在单张工单内部维护多阶段 `queue` 队列。
   - 运行中需要调整方向或补充约束，走原生 `steer`；属于下一阶段的新任务，新建 Ticket（必要时用依赖串联）。
+- **Chat 交互边界（任务面只碰 Ticket）**：
+  - 有工单的任务，`ticketId` 是 Chat 唯一的交互句柄：查进度/读结果只走 `ria_chat_status(ticketId)`，改方向/恢复/强停只走 `ria_chat_steer` / `ria_chat_resume` / `ria_chat_stop_ticket`，不越级读写目标 Executor 会话。
+  - Chat 仅在资源配置面（协管管理、模型/权限/会话配置）和无工单直转面才直接引用会话/Executor。
 - **靠机制不靠看门狗**：工单的「有始有终」完全依靠事件驱动、状态机约束与启动检查保证，禁止新增定时轮询或扫表兜底。
 
 ## 2. 状态机与流转

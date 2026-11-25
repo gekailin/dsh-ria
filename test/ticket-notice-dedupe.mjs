@@ -92,6 +92,36 @@ import { createFixture } from './support/ria-fixture.mjs'
   } finally { fixture.cleanup() }
 }
 
+// Root cause: a ticket-free turn must never re-render the session's newest
+// historical (already done) ticket; only a running ticket owns the status lane.
+{
+  const fixture = await createFixture({ stateDefault: true })
+  try {
+    const controller = fixture.service.controller
+    const store = fixture.service.store
+    store.addTicket({
+      status: 'done', executor: 'session-free', goal: 'old done ticket',
+      resolution: { kind: 'done', summary: 'done', evidence: [] },
+    })
+    const statusCalls = []
+    controller.notifyTicketStatus = async (...args) => { statusCalls.push(args); return { text: '#stub' } }
+    controller.notifyChat = async () => true
+    const before = controller.watchRelayLog.length
+    await controller.sendWatchRelay({ watchId: 'w-free', sessionId: 'session-free', titleSnapshot: 'Free' }, 'ordinary ticket-free reply', {})
+    assert.equal(statusCalls.length, 0, 'ticket-free turn sends no historical ticket status')
+    assert.ok(controller.watchRelayLog.length > before)
+    assert.match(controller.watchRelayLog.at(-1).text, /ordinary ticket-free reply/)
+
+    const running = store.addTicket({ status: 'working', executor: 'session-running', goal: 'running ticket' })
+    controller.state.addExecutor('session-running', { status: 'working', currentTicketId: running.ticketId })
+    const runningCalls = []
+    controller.notifyTicketStatus = async (...args) => { runningCalls.push(args); return { text: '#running' } }
+    await controller.sendWatchRelay({ watchId: 'w-running', sessionId: 'session-running', titleSnapshot: 'Running' }, 'running reply', {})
+    assert.equal(runningCalls.length, 1, 'running ticket turn sends its own status line')
+    assert.equal(runningCalls[0][0], running.ticketId)
+  } finally { fixture.cleanup() }
+}
+
 // The tool/code path is exactly the one under test: no per-turn reset code.
 {
   const source = readFileSync(new URL('../lib/core/controller.mjs', import.meta.url), 'utf8')

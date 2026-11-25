@@ -215,8 +215,8 @@ import { Outbound } from '../lib/wechat/outbound.mjs'
   } finally { fixture.cleanup() }
 }
 
-// A terminal ticket owned by the co-managed session also relays only its
-// status line, not the full assistant body.
+// A terminal ticket owned by a ticket-free session is history, not a status
+// event for this turn: relay the assistant body, never the old done/blocked line.
 {
   const fixture = await createFixture({
     stateDefault: true,
@@ -233,16 +233,14 @@ import { Outbound } from '../lib/wechat/outbound.mjs'
       status: 'done', summary: '已完成首句。证据: secret', evidence: ['secret'], at: Date.now(),
     })
     const claw = fixture.service.wechatClaw
-    const sent = []
-    claw.peer = { userId: 'user-1', contextToken: 'context-1' }
-    claw.outbound = new Outbound({ send: async text => { sent.push(text); return 'id' }, log: () => {} })
+    const chat = []
+    controller.notifyChat = async text => { chat.push(text); return true }
+    claw.forwardAssistant = undefined
+    claw.outbound = new Outbound({ send: async text => { chat.push(text); return 'id' }, log: () => {} })
     await controller.sendWatchRelay({ sessionId: id, titleSnapshot: 'CM Done', watchId: 'watch-done' }, '完整正文\n证据: secret\n代码块', {})
     await new Promise(resolve => setTimeout(resolve, 20))
-    const text = sent.at(-1)
-    assert.ok(text.startsWith('🔔 #' + ticket.ticketId.slice(-6) + ' done · '))
-    assert.equal(text.includes('完整正文'), false)
-    assert.equal(text.includes('secret'), false)
-    assert.ok(text.length <= STATUS_NOTICE_MAX_CHARS)
+    assert.ok(chat.some(text => text.includes('完整正文')), 'ticket-free reply body is relayed')
+    assert.equal(chat.some(text => text.startsWith('🔔 #' + ticket.ticketId.slice(-6) + ' done · ')), false, 'historical done ticket is not re-notified')
     const blocked = fixture.service.store.addTicket({
       status: 'blocked', executor: id, waitingOn: 'user',
       blockedReason: '需要用户决定下一步怎么办', goal: 'blocked work',
@@ -250,12 +248,11 @@ import { Outbound } from '../lib/wechat/outbound.mjs'
     blocked.updatedAt = Date.now() + 1000
     controller.state.setTicketMeta(blocked.ticketId, { phase: 'blocked', executorId: id })
     controller.state.addExecutor(id, { status: 'idle', currentTicketId: blocked.ticketId })
+    chat.length = 0
     await controller.sendWatchRelay({ sessionId: id, titleSnapshot: 'CM Done', watchId: 'watch-blocked' }, '完整正文', {})
     await new Promise(resolve => setTimeout(resolve, 20))
-    const blockedText = sent.at(-1)
-    assert.ok(blockedText.startsWith('🔔 #' + blocked.ticketId.slice(-6) + ' blocked · '))
-    assert.ok(blockedText.includes('waitingOn=user'))
-    assert.ok(blockedText.length <= STATUS_NOTICE_MAX_CHARS)
+    assert.ok(chat.some(text => text.includes('完整正文')), 'ticket-free blocked reply body is relayed')
+    assert.equal(chat.some(text => text.startsWith('🔔 #' + blocked.ticketId.slice(-6) + ' blocked · ')), false, 'historical blocked ticket is not re-notified')
   } finally { fixture.cleanup() }
 }
 

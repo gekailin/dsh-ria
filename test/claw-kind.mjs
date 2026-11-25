@@ -2,27 +2,53 @@ import assert from 'node:assert/strict'
 import { Controller } from '../lib/core/controller.mjs'
 import { Outbound } from '../lib/wechat/outbound.mjs'
 
-// 1) A co-managed terminal ticket is a system status line: explicit 'notice'.
+// 1) A running ticket is the system status lane: explicit 'notice'.
 {
   const calls = []
   const ctx = {
     service: {
       store: { settings: () => ({ relay: { maxChars: 400 } }) },
-      tickets: { tickets: () => [{ ticketId: 'ticket_relay_done', status: 'done', waitingOn: 'none', executor: 'session-co', updatedAt: 1 }] },
+      tickets: { tickets: () => [] },
     },
     noticeSignatures: new Map(),
     watchRelayLog: [],
     noticeSignature: (ticketId, status) => ticketId + ':' + status,
-    executorWorkingTicket: () => null,
+    executorWorkingTicket: () => ({ ticketId: 'ticket_relay_working', status: 'working' }),
     latestExecutorReport: () => ({ summary: 'finished' }),
-    notifyTicketStatus: async (ticketId, status, summary, options) => { calls.push({ ticketId, status, summary, options }); return { text: '#relay done' } },
+    notifyTicketStatus: async (ticketId, status, summary, options) => { calls.push({ ticketId, status, summary, options }); return { text: '#relay working' } },
     notifyChat: async () => true,
     ensureRelayBodyStored: () => {},
     suppressNotice: () => {},
   }
   await Controller.prototype.sendWatchRelay.call(ctx, { watchId: 'w1', sessionId: 'session-co', titleSnapshot: 'co' }, 'body', {})
   assert.equal(calls.length, 1)
-  assert.equal(calls[0].options.kind, 'notice', 'terminal relay must explicitly use notice kind')
+  assert.equal(calls[0].ticketId, 'ticket_relay_working')
+  assert.equal(calls[0].options.kind, 'notice', 'running-ticket relay must explicitly use notice kind')
+}
+
+// 1b) A historical terminal ticket is not a status event for a ticket-free turn.
+{
+  const calls = []
+  const ctx = {
+    service: {
+      store: { settings: () => ({ relay: { maxChars: 400 } }) },
+      tickets: { tickets: () => [{ ticketId: 'ticket_relay_done', status: 'done', waitingOn: 'none', executor: 'session-co', updatedAt: 1 }] },
+      wechatClaw: { forwardAssistant: (text, event, options) => { calls.push({ text, options }); return { reason: 'delivered' } } },
+    },
+    noticeSignatures: new Map(),
+    watchRelayLog: [],
+    noticeSignature: (ticketId, status) => ticketId + ':' + status,
+    executorWorkingTicket: () => null,
+    latestExecutorReport: () => ({ summary: 'finished' }),
+    notifyTicketStatus: async () => { throw new Error('historical terminal ticket must not use status path') },
+    notifyChat: async () => true,
+    ensureRelayBodyStored: () => {},
+    suppressNotice: () => {},
+  }
+  await Controller.prototype.sendWatchRelay.call(ctx, { watchId: 'w1b', sessionId: 'session-co', titleSnapshot: 'co' }, 'ordinary reply', {})
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].options.kind, 'assistant', 'ticket-free reply uses assistant kind')
+  assert.match(calls[0].text, /ordinary reply/)
 }
 
 // 2) A co-managed ordinary reply is a conversation: explicit 'assistant'.

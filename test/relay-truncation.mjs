@@ -51,18 +51,18 @@ try {
   assert.ok([...managed.text].length <= 120)
   assert.equal(managed.text.includes('长'.repeat(300)), false)
 
-  // A terminal ticket gives the truncation hint a real ticket suffix, and the
-  // full body is stored in the ticket report before delivery.
+  // A ticket-free co-managed session whose previous ticket is already terminal
+  // relays ordinary conversational replies normally (with truncation hint)
+  // rather than re-emitting a terminal ticket-status notice.
   const doneTicket = fixture.service.store.addTicket({
     status: 'done', executor: 'session-trunc-ticket', goal: 'relay ticket',
     resolution: { kind: 'done', summary: 'done', evidence: [] },
   })
   await controller.sendWatchRelay({ watchId: 'watch-ticket', sessionId: 'session-trunc-ticket', titleSnapshot: 'Ticket Relay' }, long, {})
   const ticketRelay = controller.watchRelayLog.at(-1)
-  assert.ok(ticketRelay.text.startsWith('#' + doneTicket.ticketId.slice(-6) + ' done · '))
-  assert.ok([...ticketRelay.text].length <= 120)
-  assert.equal(ticketRelay.text.includes('长'.repeat(300)), false, 'terminal relay must not carry the full body')
-  assert.equal(ticketRelay.fullBody, undefined, 'terminal relay no longer stores a full relay body')
+  assert.ok(ticketRelay.text.startsWith('【协管·Ticket Relay】\n'))
+  assert.ok(ticketRelay.text.includes('完整内容已记入会话记录'))
+  assert.equal(ticketRelay.fullBody, long)
   console.log('state relay truncation ok')
 } finally {
   fixture.cleanup()

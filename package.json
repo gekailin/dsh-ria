@@ -17,7 +17,7 @@
   "scripts": {
     "router": "node lib/router/cli.mjs",
     "router:test": "node test/router.mjs",
-    "test": "node scripts/run-tests.mjs"
+    "test": "node scripts/run-tests.mjs && node test/ria-chat-send-file.mjs"
   },
   "exports": {
     ".": "./lib/index.js",

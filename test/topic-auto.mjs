@@ -13,22 +13,22 @@ const textOf = request => String(((request.messages && request.messages[0] && re
 {
   const contract = advisorPlanSystemPrompt()
   assert.ok(contract.includes('"topic"?:{"action":"reuse"|"create"'))
-  assert.ok(contract.includes('"routing"?:{"tags"?:string[],"requireTagMatch"?:boolean}'))
+  assert.ok(contract.includes('"routing"?:{"tags"?:string[]}'))
   const basePlan = { action: 'plan', workOrder: { summary: 'do it', steps: ['step'] } }
   const malformed = parseAdvisorOutput(JSON.stringify({
     ...basePlan,
-    workOrder: { ...basePlan.workOrder, topic: { action: 'nonsense', title: 42 }, routing: { tags: 'bad', requireTagMatch: 'yes' } },
+    workOrder: { ...basePlan.workOrder, topic: { action: 'nonsense', title: 42 }, routing: { tags: 'bad' } },
   }))
   assert.equal(malformed.ok, true)
   assert.equal(malformed.workOrder.topic, undefined)
   assert.equal(malformed.workOrder.routing, undefined)
   const good = parseAdvisorOutput(JSON.stringify({
     ...basePlan,
-    workOrder: { ...basePlan.workOrder, topic: { action: 'create', title: ' 标题 ', brief: '说明' }, routing: { tags: ['Frontend', '', 'board'], requireTagMatch: true } },
+    workOrder: { ...basePlan.workOrder, topic: { action: 'create', title: ' 标题 ', brief: '说明' }, routing: { tags: ['Frontend', '', 'board'] } },
   }))
   assert.equal(good.ok, true)
   assert.deepEqual(good.workOrder.topic, { action: 'create', title: '标题', brief: '说明' })
-  assert.deepEqual(good.workOrder.routing, { tags: ['Frontend', 'board'], requireTagMatch: true })
+  assert.deepEqual(good.workOrder.routing, { tags: ['Frontend', 'board'] })
   console.log('advisor topic/routing contract ok')
 }
 
@@ -57,7 +57,7 @@ const fixture = await createFixture({
         summary: 'plan the work',
         steps: ['do it'],
         ...(topic ? { topic } : {}),
-        routing: { tags: ['frontend'], requireTagMatch: false },
+        routing: { tags: ['frontend'] },
       },
     })
   },

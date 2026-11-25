@@ -165,8 +165,9 @@ try {
     const executor = { status: 'idle', sessionId: 'threshold', tags: [], autoTags: tags, lastTurn: 100 }
     const scored = scoreExecutor(executor, { ticketTags: ['fresh', 'stale', 'edge'], currentTurn: 100, autoTagTurnThreshold: 30 })
     assert.deepEqual(scored.matchedAutoTags, ['fresh', 'edge'], 'stale tag ignored by scoring')
-    assert.equal(isExecutorEligible(executor, { requireTagMatch: true, ticketTags: ['stale'], currentTurn: 100, autoTagTurnThreshold: 30 }), false)
-    assert.equal(isExecutorEligible(executor, { requireTagMatch: true, ticketTags: ['stale'], currentTurn: 100, autoTagTurnThreshold: 31 }), true)
+    // Tags never hard-filter eligibility; staleness only affects scoring.
+    assert.equal(isExecutorEligible(executor, { ticketTags: ['stale'], currentTurn: 100, autoTagTurnThreshold: 30 }), true)
+    assert.equal(isExecutorEligible(executor, { ticketTags: ['stale'], currentTurn: 100, autoTagTurnThreshold: 31 }), true)
   }
 
   // 7. Service option overrides the default threshold.

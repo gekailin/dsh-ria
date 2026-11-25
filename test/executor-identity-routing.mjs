@@ -145,10 +145,10 @@ const planReply = routing => () => JSON.stringify({
   }
 }
 
-// 4) requireTagMatch with no matching tags must not seed a new Executor.
-//    First dispatch is explicit or requireTagMatch=false; completion teaches tags.
+// 4) Tags are soft affinity: an idle Executor with no tag intersection is
+//    still reused instead of blocking the dispatch.
 {
-  const fixture = await createFixture({ stateDefault: true, advisorPlan: 'stateless', llmReply: planReply({ tags: ['rust'], requireTagMatch: true }) })
+  const fixture = await createFixture({ stateDefault: true, advisorPlan: 'stateless', llmReply: planReply({ tags: ['rust'] }) })
   try {
     const controller = fixture.service.controller
     const chat = controller.state.chatSessionId
@@ -157,15 +157,15 @@ const planReply = routing => () => JSON.stringify({
     const request = await fixture.callAs(chat, 'ria_chat_request', { goal: 'rust crate' })
     assert.equal(request.ok, true, JSON.stringify(request))
     const meta = controller.state.ticketMeta(request.ticketId)
-    assert.equal(meta.requireTagMatch, true)
     assert.deepEqual(meta.routingTags, ['rust'])
+    assert.equal(Object.hasOwn(meta, 'requireTagMatch'), false)
     const ticket = fixture.service.store.ticket(request.ticketId)
-    assert.equal(ticket.status, 'blocked')
-    assert.equal(ticket.waitingOn, 'environment')
+    assert.equal(ticket.status, 'working')
+    assert.equal(ticket.executor, tagged.sessionId, 'soft affinity reuses the only idle Executor')
     const events = fixture.service.routerEvents.query({ ticketId: request.ticketId }).events
-    assert.ok(events.some(event => event.event === 'dispatch.blocked'))
-    assert.equal(events.some(event => event.event === 'dispatch.attempt'), false, 'no fresh unseeded Executor is dispatched')
-    console.log('requireTagMatch first-dispatch guard ok')
+    assert.equal(events.some(event => event.event === 'dispatch.blocked'), false)
+    assert.ok(events.some(event => event.event === 'dispatch.attempt'))
+    console.log('soft tag affinity first-dispatch reuse ok')
   } finally {
     fixture.cleanup()
   }

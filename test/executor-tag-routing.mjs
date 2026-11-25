@@ -67,7 +67,7 @@ const base = { status: 'idle', currentTicketId: null, executorType: 'work', allo
   assert.equal(ranked[1].genericPenalty, 10)
 }
 
-// requireTagMatch + hard safety filters.
+// Tags are soft affinity only; hard safety filters still apply.
 {
   const executors = [
     { ...base, sessionId: 'busy', tags: ['frontend'], currentTicketId: 'ticket_x' },
@@ -78,9 +78,11 @@ const base = { status: 'idle', currentTicketId: null, executorType: 'work', allo
   assert.equal(isExecutorEligible(executors[0], {}), false)
   assert.equal(isExecutorEligible(executors[1], {}), false)
   assert.equal(isExecutorEligible(executors[2], {}), false)
-  const ranked = rankCandidateExecutors(executors, { ticketTags: ['frontend'], requireTagMatch: true })
+  const ranked = rankCandidateExecutors(executors, { ticketTags: ['frontend'] })
   assert.deepEqual(ranked.map(item => item.executor.sessionId), ['match'])
-  assert.deepEqual(rankCandidateExecutors(executors, { ticketTags: ['docs'], requireTagMatch: true }), [])
+  // No tag intersection is no longer a hard rejection: the only eligible
+  // Executor is still returned, just without a tag bump.
+  assert.deepEqual(rankCandidateExecutors(executors, { ticketTags: ['docs'] }).map(item => item.executor.sessionId), ['match'])
 }
 
 // Deterministic tie-break: same score => seq ascending.

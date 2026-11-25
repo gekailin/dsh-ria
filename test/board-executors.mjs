@@ -35,7 +35,7 @@ try {
   const ticket = service.store.addTicket({ goal: 'executor diagnostics', status: 'open', waitingOn: 'ria', executor: 'self' })
   state.setTicketMeta(ticket.ticketId, {
     scope: 'global', projectId: null, projectCwd: '/work/proj',
-    routingTags: ['probe-tag'], requireTagMatch: true,
+    routingTags: ['probe-tag'],
   })
   await service.store.save?.()
 
@@ -64,7 +64,6 @@ try {
   assert.equal(data.context.ticketId, ticket.ticketId)
   assert.equal(data.context.projectCwd, '/work/proj')
   assert.deepEqual(data.context.ticketTags, ['probe-tag'])
-  assert.equal(data.context.requireTagMatch, true)
   assert.equal(data.context.limit, 3)
   assert.equal(Array.isArray(data.rows), true)
   assert.ok(data.rows.length >= 5)
@@ -111,8 +110,7 @@ try {
     service.invalidateSessionList()
   }
 
-  assert.equal(co.selectable, false)
-  assert.match(co.excludedReason, /requireTagMatch: wanted=probe-tag but tags=\[\] autoTags=\[\]/)
+  assert.equal(co.selectable, true, 'tags are soft affinity only; co-managed session remains selectable')
   const selectableManaged = data.rows.find(row => row.sessionId === 'session-managed-0')
   assert.equal(selectableManaged.selectable, true)
   assert.equal(selectableManaged.excludedReason, null)
@@ -131,7 +129,7 @@ try {
 
   // Untagged project context: co-managed passes filters, but rank > limit is
   // reported by the same rankCandidateExecutors result.
-  const untagged = await service.executorDiagnostics({ projectCwd: '/work/proj', tags: '', requireTagMatch: false })
+  const untagged = await service.executorDiagnostics({ projectCwd: '/work/proj', tags: '' })
   const untaggedCo = untagged.rows.find(row => row.sessionId === 'session-probe-cm')
   assert.equal(untaggedCo.selectable, true)
   assert.ok(untaggedCo.rank > 3, JSON.stringify(untagged.rows.map(row => ({ id: row.sessionId, selectable: row.selectable, rank: row.rank, reason: row.excludedReason, tags: row.tags, autoTags: row.autoTags }))))
@@ -139,7 +137,7 @@ try {
 
   // executing=true must be reported as the selection reason.
   state.setTicketMeta(ticket.ticketId, { executing: true, executorSessionId: 'session-probe-cm' })
-  const busy = await service.executorDiagnostics({ projectCwd: '/work/proj', tags: '', requireTagMatch: false })
+  const busy = await service.executorDiagnostics({ projectCwd: '/work/proj', tags: '' })
   const busyCo = busy.rows.find(row => row.sessionId === 'session-probe-cm')
   assert.equal(busyCo.selectable, false)
   assert.match(busyCo.excludedReason, /executing=true/)
@@ -162,7 +160,7 @@ try {
     await route.handler(req, res)
     return { status: res.statusCode, body: JSON.parse(res.chunks.join('') || '{}') }
   }
-  const http = await getJson('/plugins/dsh-ria/api/executors?projectCwd=%2Fwork%2Fproj&tags=probe-tag&requireTagMatch=true')
+  const http = await getJson('/plugins/dsh-ria/api/executors?projectCwd=%2Fwork%2Fproj&tags=probe-tag')
   assert.equal(http.status, 200, JSON.stringify(http.body))
   assert.equal(http.body.ok, true)
   assert.equal(http.body.rows.length, data.rows.length)

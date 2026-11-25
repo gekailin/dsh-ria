@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import { Controller } from '../lib/core/controller.mjs'
 import { Outbound } from '../lib/wechat/outbound.mjs'
 
-// 1) A running ticket is the system status lane: explicit 'notice'.
+// 1) A session owning a working ticket stays on the ticket settlement lane:
+// sendWatchRelay never emits a conversational relay or duplicate status notice.
 {
   const calls = []
   const ctx = {
@@ -10,20 +11,15 @@ import { Outbound } from '../lib/wechat/outbound.mjs'
       store: { settings: () => ({ relay: { maxChars: 400 } }) },
       tickets: { tickets: () => [] },
     },
-    noticeSignatures: new Map(),
     watchRelayLog: [],
-    noticeSignature: (ticketId, status) => ticketId + ':' + status,
     executorWorkingTicket: () => ({ ticketId: 'ticket_relay_working', status: 'working' }),
     latestExecutorReport: () => ({ summary: 'finished' }),
-    notifyTicketStatus: async (ticketId, status, summary, options) => { calls.push({ ticketId, status, summary, options }); return { text: '#relay working' } },
-    notifyChat: async () => true,
-    ensureRelayBodyStored: () => {},
-    suppressNotice: () => {},
+    notifyTicketStatus: async () => { calls.push('status'); return { text: '#relay working' } },
+    notifyChat: async () => { calls.push('chat'); return true },
   }
   await Controller.prototype.sendWatchRelay.call(ctx, { watchId: 'w1', sessionId: 'session-co', titleSnapshot: 'co' }, 'body', {})
-  assert.equal(calls.length, 1)
-  assert.equal(calls[0].ticketId, 'ticket_relay_working')
-  assert.equal(calls[0].options.kind, 'notice', 'running-ticket relay must explicitly use notice kind')
+  assert.equal(calls.length, 0, 'working-ticket session must not emit a watch relay')
+  assert.equal(ctx.watchRelayLog.length, 0)
 }
 
 // 1b) A historical terminal ticket is not a status event for a ticket-free turn.
@@ -35,15 +31,11 @@ import { Outbound } from '../lib/wechat/outbound.mjs'
       tickets: { tickets: () => [{ ticketId: 'ticket_relay_done', status: 'done', waitingOn: 'none', executor: 'session-co', updatedAt: 1 }] },
       wechatClaw: { forwardAssistant: (text, event, options) => { calls.push({ text, options }); return { reason: 'delivered' } } },
     },
-    noticeSignatures: new Map(),
     watchRelayLog: [],
-    noticeSignature: (ticketId, status) => ticketId + ':' + status,
     executorWorkingTicket: () => null,
     latestExecutorReport: () => ({ summary: 'finished' }),
     notifyTicketStatus: async () => { throw new Error('historical terminal ticket must not use status path') },
     notifyChat: async () => true,
-    ensureRelayBodyStored: () => {},
-    suppressNotice: () => {},
   }
   await Controller.prototype.sendWatchRelay.call(ctx, { watchId: 'w1b', sessionId: 'session-co', titleSnapshot: 'co' }, 'ordinary reply', {})
   assert.equal(calls.length, 1)
@@ -60,15 +52,11 @@ import { Outbound } from '../lib/wechat/outbound.mjs'
       tickets: { tickets: () => [] },
       wechatClaw: { forwardAssistant: (text, event, options) => { calls.push({ text, options }); return { reason: 'delivered' } } },
     },
-    noticeSignatures: new Map(),
     watchRelayLog: [],
-    noticeSignature: (ticketId, status) => ticketId + ':' + status,
     executorWorkingTicket: () => null,
     latestExecutorReport: () => null,
     notifyTicketStatus: async () => { throw new Error('ordinary relay must not use status path') },
     notifyChat: async () => true,
-    ensureRelayBodyStored: () => {},
-    suppressNotice: () => {},
   }
   await Controller.prototype.sendWatchRelay.call(ctx, { watchId: 'w2', sessionId: 'session-co', titleSnapshot: 'co' }, 'hello', {})
   assert.equal(calls.length, 1)

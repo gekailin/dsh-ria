@@ -31,7 +31,7 @@ const sensitive = [
 ]
 writeFileSync(good, 'hello claw file\n')
 writeFileSync(second, '# second\n')
-writeFileSync(large, Buffer.alloc(10 * 1024 * 1024 + 1))
+writeFileSync(large, Buffer.alloc(11 * 1024 * 1024))
 writeFileSync(empty, '')
 writeFileSync(noPerm, 'secret\n')
 chmodSync(noPerm, 0o000)
@@ -63,11 +63,11 @@ try {
     assert.equal(checked.results[0].code, 'forbidden_path', path)
   }
 
-  // Local validation: oversize, missing, empty, directory, and no-permission.
+  // The old 10MB local rejection is gone: an 11MB file passes local validation
+  // and reaches the channel gate (no claw connection here, so that is the first
+  // reported error).
   let checked = await controller.chatSendFile({ paths: [large] }, { agent: { id: chat } })
-  assert.equal(checked.results[0].code, 'file_too_large')
-  assert.match(checked.results[0].message, /10485761/)
-  assert.match(checked.results[0].message, /10 MB/)
+  assert.equal(checked.results[0].code, 'claw_not_connected')
   checked = await controller.chatSendFile({ paths: [missing] }, { agent: { id: chat } })
   assert.equal(checked.results[0].code, 'not_found')
   checked = await controller.chatSendFile({ paths: [empty] }, { agent: { id: chat } })
@@ -94,7 +94,7 @@ try {
         json({ ret: 0, upload_full_url: base + '/upload' })
       } else if (request.url === '/upload') {
         uploads.push(raw)
-        if (rejectUpload) { response.writeHead(400); response.end('mock reject'); return }
+        if (rejectUpload) { response.writeHead(400); response.end('mock channel reject: too large (20MB)'); return }
         response.writeHead(200, { 'x-encrypted-param': 'mock-encrypted-param' }); response.end()
       } else if (request.url === '/ilink/bot/sendmessage') {
         sends.push(JSON.parse(raw.toString()))
@@ -160,7 +160,36 @@ try {
   const uploadFailed = await controller.chatSendFile({ paths: [good] }, { agent: { id: chat } })
   assert.equal(uploadFailed.ok, false)
   assert.equal(uploadFailed.results[0].code, 'upload_failed')
+  assert.equal(uploadFailed.results[0].message, 'mock channel reject: too large (20MB)')
   rejectUpload = false
+
+  // 11MB reaches the mocked channel upload handoff instead of being rejected by Ria.
+  {
+    const calls = []
+    const originalEnqueueFile = claw.outbound.enqueueFile
+    claw.outbound.enqueueFile = async ({ name, buffer }) => { calls.push({ name, bytes: buffer.length }); return 'large-mock-id' }
+    try {
+      const largeResult = await controller.chatSendFile({ paths: [large] }, { agent: { id: chat } })
+      assert.equal(largeResult.ok, true, JSON.stringify(largeResult))
+      assert.equal(calls.length, 1)
+      assert.equal(calls[0].bytes, 11 * 1024 * 1024)
+    } finally {
+      claw.outbound.enqueueFile = originalEnqueueFile
+    }
+  }
+
+  // A channel-side oversized error keeps its original code and raw message.
+  {
+    const originalEnqueueFile = claw.outbound.enqueueFile
+    claw.outbound.enqueueFile = async () => { throw Object.assign(new Error('channel says file too large'), { code: 'file_too_large' }) }
+    try {
+      const channelLarge = await controller.chatSendFile({ paths: [good] }, { agent: { id: chat } })
+      assert.equal(channelLarge.results[0].code, 'file_too_large')
+      assert.equal(channelLarge.results[0].message, 'channel says file too large')
+    } finally {
+      claw.outbound.enqueueFile = originalEnqueueFile
+    }
+  }
 
   // Claw unavailable states remain readable and never send.
   const beforePaused = sends.length

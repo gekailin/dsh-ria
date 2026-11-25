@@ -46,16 +46,15 @@ try {
   await settle()
   assert.equal(notices().length, beforeQuestion + 1)
 
-  // Unwatched ordinary session: approval gets one session-level notice;
-  // the question remains suppressed (out of this change's scope).
+  // Unwatched ordinary session: both approval and question are silent and
+  // recorded as notice.suppressed(unwatched).
   const quiet = notices().length
   await fixture.emit('approval/request', approval('session-unwatched'), async () => 'rejected')
   await fixture.emit('user-questions/request', question('session-unwatched'), async () => ({ answers: [] }))
   await settle()
-  assert.equal(notices().length, quiet + 1)
-  assert.ok(String(notices().at(-1)).includes('#session-unwatched 等待审批：bash'))
+  assert.equal(notices().length, quiet, 'unwatched approval adds no notice')
   const suppressed = events().filter(item => item.event === 'notice.suppressed' && item.sessionId === 'session-unwatched')
-  assert.equal(suppressed.some(item => item.payload && item.payload.kind === 'approval'), false)
+  assert.ok(suppressed.some(item => item.payload && item.payload.kind === 'approval'))
   assert.ok(suppressed.some(item => item.payload && item.payload.kind === 'question'))
 
   // Role sessions are silent and do not create suppressed events.

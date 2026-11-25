@@ -183,10 +183,9 @@ try {
     assert.equal(outcome, 'rejected')
     await settle()
     const sent = notices().slice(before)
-    assert.equal(sent.length, 1)
-    assert.ok(textOf(sent[0]).includes('#session-independent 等待审批：bash'))
+    assert.equal(sent.length, 0, 'unwatched ordinary session is silent')
     const events = fixture.service.routerEvents.query({ limit: 200 }).events
-    assert.equal(events.some(item => item.event === 'notice.suppressed' && item.sessionId === 'session-independent' && item.payload && item.payload.kind === 'approval'), false)
+    assert.equal(events.some(item => item.event === 'notice.suppressed' && item.sessionId === 'session-independent' && item.payload && item.payload.kind === 'approval'), true)
     fixture.service.onSessionEvent({ header: { id: 'session-independent' } }, { type: 'approval/asked', time: Date.now(), data: { id: 'apr_ind', toolName: 'bash' } })
     assert.equal(ticketOf(ticketId).revision, revision)
     assert.equal(ticketOf(ticketId).status, 'done')

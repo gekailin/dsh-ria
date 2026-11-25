@@ -39,10 +39,10 @@ try {
     async () => 'rejected',
   )
   await settle()
-  assert.equal(notices().length, before + 1)
-  assert.ok(String(notices().at(-1)).includes('#session-unwatched 等待审批：bash'))
+  assert.equal(notices().length, before, 'unwatched approval adds no notice')
   const aEvents = suppressed('approval').filter(item => item.sessionId === 'session-unwatched')
-  assert.equal(aEvents.length, 0, JSON.stringify(events()))
+  assert.equal(aEvents.length, 1, JSON.stringify(events()))
+  assert.equal(aEvents[0].reason, 'unwatched')
 
   // Watched session: only the co-management notice, never the generic one.
   controller.coManagement.add({ sessionId: 'session-watched', title: 'Watched' })

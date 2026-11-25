@@ -48,4 +48,31 @@ const topics = [
   assert.ok(result.topics.every(item => item.topicId !== 'p1_archived'))
 }
 
+// Large long-lived topics with dozens of historical tickets must not lose to
+// single-ticket topics due to Dice denominator dilution, and tags are returned.
+{
+  const bigTopics = [
+    { topicId: 't_big', projectKey: 'p1', title: '存储与数据', tags: ['sqlite', 'storage'], updatedAt: 1, createdAt: 1 },
+    { topicId: 't_small', projectKey: 'p1', title: '无关临时票', tags: [], updatedAt: 100, createdAt: 100 },
+  ]
+  const bigTickets = Array.from({ length: 40 }, (_, i) => ({
+    ticketId: 'tk_' + i,
+    goal: '历史存储迁移与清理工单编号 ' + i + ' 包含大量不同词汇 alpha' + i + ' beta' + i,
+    status: 'done',
+    updatedAt: i + 1,
+  }))
+  const bigLinks = bigTickets.map(t => ({ topicId: 't_big', ticketId: t.ticketId, role: 'primary' }))
+  const result = topicSuggestions({
+    goal: '存储与数据 sqlite 迁移',
+    projectKey: 'p1',
+    topics: bigTopics,
+    links: bigLinks,
+    tickets: bigTickets,
+    limit: 5,
+  })
+  assert.equal(result.topics[0].topicId, 't_big')
+  assert.ok(result.topics[0].score >= 0.4, 'big topic identity score must stay high, got ' + result.topics[0].score)
+  assert.deepEqual(result.topics[0].tags, ['sqlite', 'storage'])
+}
+
 console.log('topic-project-key: ok')

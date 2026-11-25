@@ -126,6 +126,23 @@ try {
     downgrade = false
   }
 
+  // Soft cap: once a project has >= 12 active topics, a create with moderate
+  // overlap folds into the closest existing topic instead of creating another.
+  {
+    const capTarget = fixture.service.store.addTopic({ title: '存储与数据', tags: ['sqlite', 'storage'], projectKey: expectedProjectKey })
+    for (let i = 0; i < 12; i += 1) {
+      fixture.service.store.addTopic({ title: '占位模块 ' + i, projectKey: expectedProjectKey })
+    }
+    const beforeCap = fixture.service.store.topics().length
+    const t = fixture.service.store.addTicket({ status: 'open', waitingOn: 'ria', executor: 'advisor', goal: '清理存储与数据里的 sqlite 遗留表', acceptance: 'ok' })
+    const res = await controller.assignTicketTopic(t, { projectCwd: workspace }, { topic: { action: 'create', title: '存储数据 sqlite 清理' } })
+    assert.equal(res.ok, true)
+    assert.equal(res.mode, 'reused')
+    assert.equal(res.folded, true)
+    assert.equal(res.topicId, capTarget.topicId)
+    assert.equal(fixture.service.store.topics().length, beforeCap, 'soft-cap fold must not create a new topic')
+  }
+
   console.log('state topic auto ok')
 } finally {
   fixture.cleanup()

@@ -154,6 +154,15 @@ try {
   assert.match(client, /TICKET_DETAIL_CACHE_TTL_MS = 30000/)
   assert.match(client, /function readTicketDetailCache/)
   assert.match(client, /"\/board\/ticket\?ticketId="/, 'previous-build hosts still get the legacy alias as a fallback')
+
+  // Run the real title helper against title-only (lean) and legacy tickets.
+  const helperStart = client.indexOf('function boardShortTitle(goal)')
+  const helperEnd = client.indexOf('function boardExecutor(ticket)')
+  assert.ok(helperStart >= 0 && helperEnd > helperStart, 'title helper block')
+  const titleHelpers = new Function(client.slice(helperStart, helperEnd) + '\nreturn { boardShortTitle: boardShortTitle, boardTicketTitle: boardTicketTitle };')()
+  assert.equal(titleHelpers.boardTicketTitle({ ticketId: 't1', title: '实现列表精简投影' }), '实现列表精简投影')
+  assert.equal(titleHelpers.boardTicketTitle({ ticketId: 't2', title: '' }), '未命名任务', 'lean ticket without a title renders a placeholder, not an error')
+  assert.match(titleHelpers.boardTicketTitle({ ticketId: 't3', goal: '# 目标\n\n- 旧数据回退' }), /旧数据回退/, 'legacy board payload still falls back to goal')
   assert.ok(!client.includes('dangerouslySetInnerHTML'))
   console.log('board ticket list projection ok')
 } finally {

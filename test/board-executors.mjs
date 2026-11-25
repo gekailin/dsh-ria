@@ -69,7 +69,7 @@ try {
   assert.equal(Array.isArray(data.rows), true)
   assert.ok(data.rows.length >= 5)
 
-  const required = ['title', 'titleSource', 'titleLive', 'sessionId', 'kind', 'status', 'archived', 'currentTicketId', 'allowAutoDispatch', 'tags', 'autoTags', 'cwd', 'lastUsedAt', 'lastTurnAt', 'lastActiveAt', 'executorLabel', 'selectable', 'excludedReason']
+  const required = ['title', 'titleSource', 'titleLive', 'sessionId', 'kind', 'status', 'archived', 'currentTicketId', 'allowAutoDispatch', 'coManagement', 'tags', 'autoTags', 'cwd', 'lastUsedAt', 'lastTurnAt', 'lastActiveAt', 'executorLabel', 'selectable', 'excludedReason']
   for (const row of data.rows) for (const field of required) assert.ok(Object.hasOwn(row, field), row.sessionId + ' missing ' + field)
   const co = data.rows.find(row => row.sessionId === 'session-probe-cm')
   assert.ok(co, 'co-managed row present')
@@ -77,6 +77,10 @@ try {
   assert.equal(co.title, 'Probe CM')
   assert.equal(co.titleSource, 'session')
   assert.equal(co.archived, false)
+  assert.equal(co.coManagement.status, 'active')
+  assert.equal(co.coManagement.allowDispatch, true)
+  assert.equal(typeof co.coManagement.addedAt, 'number')
+  assert.equal(co.coManagement.retiredReason, '')
   const archivedManaged = data.rows.find(row => row.sessionId === 'session-managed-1')
   assert.equal(archivedManaged.archived, true)
   assert.equal(archivedManaged.titleSource, 'sessionId')

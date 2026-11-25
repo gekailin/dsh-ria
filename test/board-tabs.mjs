@@ -150,7 +150,7 @@ console.log('board tabs ok')
 
 // Third-round UI tweaks: truncated title + copy/jump actions, equal-height
 // 6-column cognition grid and the removed "recent activity" column.
-assert.match(source, /title: ticket\.goal \|\| ""/)
+assert.match(source, /title: boardTicketTitle\(ticket\)/)
 assert.match(source, /"data-ria-ticket-copy": "1"/)
 assert.doesNotMatch(source, /data-ria-ticket-jump-executor/)
 assert.match(source, /"data-ria-ticket-executor-title": "1"/)

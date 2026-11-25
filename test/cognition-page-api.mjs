@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { createFixture } from './support/ria-fixture.mjs'
 
@@ -131,6 +132,20 @@ try {
   } finally {
     db.prepare = realPrepare
   }
+
+  // List projections bound free-form proposal text; the board page must not
+  // ship a whole multi-KB report body just to render a card preview.
+  const longProposal = cognition.propose({ author: 'reflection', source: 'reflection', body: 'detail '.repeat(300), cause: 'because '.repeat(200) })
+  db.prepare('UPDATE cognition_proposals SET rationale=? WHERE id=?').run('r'.repeat(800), longProposal.id)
+  const bounded = await get('/cognition/proposals?q=detail&limit=100')
+  const boundedRow = bounded.body.items.find(item => item.id === longProposal.id)
+  assert.ok(boundedRow, 'long proposal is listed')
+  assert.ok(boundedRow.body.length <= 600, 'proposal body is bounded in the list')
+  assert.ok(boundedRow.cause.length <= 240, 'proposal cause is bounded in the list')
+  assert.ok(boundedRow.rationale.length <= 400, 'proposal rationale is bounded in the list')
+
+  const cognitionSource = readFileSync(new URL('../lib/roles/cognition.mjs', import.meta.url), 'utf8')
+  assert.ok(!/SELECT \* FROM cognition_entries|SELECT \* FROM cognition_proposals/.test(cognitionSource), 'cognition reads name their columns')
 
   console.log('cognition page api ok')
 } finally {

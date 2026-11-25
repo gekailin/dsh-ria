@@ -123,6 +123,27 @@ try {
   assert.equal(single.ticket.ticketId, zombie.ticketId)
   assert.equal(Array.isArray(single.tickets), false)
 
+  // attentionOverview derives waitedMs/stale on read (no timers) and sorts oldest-first.
+  const baseNow = Date.UTC(2026, 10, 26, 12, 0, 0)
+  const freshAttn = store.addTicket({
+    status: 'blocked', waitingOn: 'user', executor: 'session-a', goal: 'fresh decision', acceptance: 'x',
+    blockedReason: 'fresh q', attention: { kind: 'decision', question: 'fresh q', askedAt: baseNow - 30 * 60000 },
+  })
+  const staleAttn = store.addTicket({
+    status: 'blocked', waitingOn: 'user', executor: 'session-b', goal: 'stale decision', acceptance: 'x',
+    blockedReason: 'stale q', attention: { kind: 'decision', question: 'stale q', askedAt: baseNow - 5 * 60 * 60000 },
+  })
+  const overview = fixture.service.attentionOverview(baseNow)
+  const staleItem = overview.items.find(item => item.ticketId === staleAttn.ticketId)
+  const freshItem = overview.items.find(item => item.ticketId === freshAttn.ticketId)
+  assert.ok(staleItem && freshItem)
+  assert.equal(staleItem.waitedMs, 5 * 60 * 60000)
+  assert.equal(staleItem.stale, true)
+  assert.equal(freshItem.waitedMs, 30 * 60000)
+  assert.equal(freshItem.stale, false)
+  assert.ok(overview.staleCount >= 1)
+  assert.ok(overview.items.indexOf(staleItem) < overview.items.indexOf(freshItem), 'oldest attention item first')
+
   console.log('state blocked alerts and status ok')
 } finally {
   fixture.cleanup()

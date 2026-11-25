@@ -79,5 +79,17 @@ try {
   assert.equal(viaTool.sageActivity.sessionId, 'session-sage-from-state')
   assert.equal(viaTool.sageActivity.counts.turns, 1)
 
+  // since='last_reflection' resolves against run.windowStart when available.
+  const winStart = Date.parse('2026-11-22T12:00:00Z')
+  let lastFromTime = null
+  fakeService.reflectionRunFor = () => ({ runId: 'r1', status: 'running', sageContextRead: true, windowStart: winStart })
+  fakeService.controller.sessionEvents = async opts => {
+    lastFromTime = opts.fromTime
+    return { ok: true, events: [] }
+  }
+  const viaWindow = await RiaService.prototype.toolReflectReadSageContext.call(fakeService, 'exec-1', 'r1', { since: 'last_reflection' }, {})
+  assert.equal(lastFromTime, winStart)
+  assert.equal(viaWindow.since, new Date(winStart).toISOString())
+
   console.log('reflection sage context ok')
 } finally { rmSync(root, { recursive: true, force: true }) }

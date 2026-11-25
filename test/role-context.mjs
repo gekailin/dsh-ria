@@ -76,6 +76,25 @@ try {
   assert.doesNotMatch(instruction, /复制到 reflections|把报告复制到/)
   assert.match(instruction, /canonical 由宿主/)
 
+  // Newest-first ordering + appliedSince + last_reflection resolution.
+  const tOld = at - 2 * 24 * 60 * 60 * 1000
+  const tNew1 = at + 2000
+  const tNew2 = at + 4000
+  appendRoleContext(root, { at: tOld, role: 'router', ticketId: 'ticket_old_window', phase: 'dispatch', input: {}, output: {} })
+  appendRoleContext(root, { at: tNew1, role: 'router', ticketId: 'ticket_new_1', phase: 'dispatch', input: {}, output: {} })
+  appendRoleContext(root, { at: tNew2, role: 'router', ticketId: 'ticket_new_2', phase: 'dispatch', input: {}, output: {} })
+  const newestFirst = readRoleContext(root, { role: 'router', since: new Date(at).toISOString(), limit: 2, now: at + 5000 })
+  assert.equal(newestFirst.appliedSince, new Date(at).toISOString())
+  assert.deepEqual(newestFirst.entries.map(item => item.ticketId), ['ticket_new_2', 'ticket_new_1'])
+
+  const fakeWindow = Object.create(RiaService.prototype)
+  fakeWindow.stateDir = root
+  fakeWindow.reflectionRunFor = () => ({ status: 'running', windowStart: at + 1500 })
+  fakeWindow.reflectionClosed = () => ({ ok: false, code: 'run_closed' })
+  const byLastReflection = RiaService.prototype.toolReflectReadRoleContext.call(fakeWindow, 's', 'r', { role: 'router', since: 'last_reflection', limit: 10 })
+  assert.equal(byLastReflection.appliedSince, new Date(at + 1500).toISOString())
+  assert.deepEqual(byLastReflection.entries.map(item => item.ticketId), ['ticket_new_2', 'ticket_new_1'])
+
   // Tool handler returns the filtered payload.
   const fake = Object.create(RiaService.prototype)
   fake.stateDir = root

@@ -44,8 +44,12 @@ const turnEnd = (fixture, executorId, turn, reason) => fixture.service.onSession
   { header: { id: executorId } },
   { type: 'turn/end', data: { turn, reason } },
 )
-const noticesAbout = (fixture, chat, ticketId) => fixture.prompts
-  .filter(prompt => String(prompt.sessionId) === chat && promptText(prompt).includes(String(ticketId).slice(-6)))
+const noticesAbout = (fixture, chat) => fixture.prompts
+  .filter(prompt => {
+    if (String(prompt.sessionId) !== chat) return false
+    const body = promptText(prompt)
+    return body.includes('需要你决定') || /#[0-9a-f]{6} failed ·/.test(body)
+  })
 
 // 1. reason.kind=error -> failed with the raw error text, executor released,
 //    turn.failed event, exactly one Chat notice.

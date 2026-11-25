@@ -131,7 +131,8 @@ await run('completed turn without done drains remaining resume as done-retry', a
   assert.equal((await h.resume('resume-turn-end-token')).ok, true)
   h.running(false)
   h.controller.onSessionEvent({ header: { id: h.executor } }, { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } })
-  // Await the actual shared delivery rather than a real timeout/polling loop.
+  // Await the actual executor lock / shared delivery rather than a real timeout/polling loop.
+  await h.controller.withExecutorLock(h.executor, () => {})
   const pendingDelivery = h.controller.steerDeliveryLocks.get(h.executor)
   if (pendingDelivery) await pendingDelivery
   assert.equal(h.host.inputs.length, 1)

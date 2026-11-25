@@ -42,6 +42,13 @@ try {
   co = controller.state.executor('session-cm-tags')
   assert.equal(co.autoTags.backend, 8, 'newer turn advances the decay timestamp')
 
+  // Non-matching observed messages must not mutate lastTurn or write autoTags.
+  const beforeUnmatchedTurn = controller.state.executor('session-cm-tags').lastTurn
+  const unmatched = controller.observeCoManagedAutoTags('session-cm-tags', 'totally unrelated chatter', { data: {} })
+  assert.equal(unmatched.applied, false)
+  assert.equal(unmatched.reason, 'no_matching_tags')
+  assert.equal(controller.state.executor('session-cm-tags').lastTurn, beforeUnmatchedTurn)
+
   // Done settlement still goes through recordExecutorAutoTags.
   const calls = []
   const originalRecord = controller.recordExecutorAutoTags.bind(controller)

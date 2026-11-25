@@ -12,7 +12,7 @@ try {
   const firstMeta = controller.state.executor(first.sessionId)
   assert.equal(first.created, true)
   assert.ok(firstMeta.tags.length > 0, 'new work Executor must have non-empty initial tags')
-  assert.ok(firstMeta.tags.includes('frontend'), JSON.stringify(firstMeta.tags))
+  assert.deepEqual(firstMeta.tags, ['frontend'], 'explicit ticket tags should not be polluted by fallback tag')
 
   const second = await controller.ensureExecutor('global', 'proj-x', workspace, null, null, null, {
     avoidExecutorIds: new Set([first.sessionId]),

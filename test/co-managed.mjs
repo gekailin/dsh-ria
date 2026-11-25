@@ -204,6 +204,7 @@ async function setup() {
     const endedTicket = await ticket('session goes away', '/work/proj/c')
     await dispatch(endedTicket)
     fixture.service.onSessionEvent({ header: { id: 'session-cm' } }, { type: 'session/end-seed', time: Date.now(), data: {} })
+    await fixture.service.controller.withExecutorLock('session-cm', () => {})
     const ended = fixture.service.store.ticket(endedTicket)
     assert.equal(ended.status, 'blocked')
     assert.equal(ended.waitingOn, 'environment')

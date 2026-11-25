@@ -113,3 +113,33 @@ const tick = () => new Promise(resolve => setTimeout(resolve, 0))
   }
 }
 
+// 4) Automatic dispatch locks the actual chosen executorId (not a synthetic
+// ticket key), so dispatch serializes against steer/settle on that executor.
+{
+  const fixture = await createFixture({ state: true })
+  try {
+    const controller = fixture.service.controller
+    const executor = (await controller.ensureExecutor('global')).sessionId
+    controller.state.addExecutor(executor, { status: 'idle', currentTicketId: null })
+    const ticket = fixture.service.store.addTicket({ status: 'open', executor: 'advisor', goal: 'auto dispatch lock', acceptance: 'ok' })
+    controller.state.setTicketMeta(ticket.ticketId, { phase: 'planned', scope: 'global', mode: 'work' })
+    controller.state.setWorkOrder(ticket.ticketId, { ticketId: ticket.ticketId, summary: 'plan', steps: ['run'], acceptance: 'ok' })
+    const calls = []
+    const originalRun = controller.executorLock.run.bind(controller.executorLock)
+    controller.executorLock.run = async (key, task) => { calls.push(String(key)); return await originalRun(key, task) }
+    try {
+      const dispatched = await controller.dispatchTicket(ticket.ticketId, '')
+      assert.equal(dispatched.ok, true, JSON.stringify(dispatched))
+      assert.equal(dispatched.executorSessionId, executor)
+      assert.ok(calls.includes(executor), 'automatic dispatch must lock the actual executorId: ' + JSON.stringify(calls))
+      assert.equal(calls.some(key => key.startsWith('ticket:')), false, 'must not lock a synthetic ticket: key on executorLock: ' + JSON.stringify(calls))
+    } finally {
+      controller.executorLock.run = originalRun
+    }
+    console.log('executor auto-dispatch lock ok')
+  } finally {
+    fixture.cleanup()
+  }
+}
+
+

@@ -83,3 +83,33 @@ const tick = () => new Promise(resolve => setTimeout(resolve, 0))
     fixture.cleanup()
   }
 }
+
+// 3) error/aborted turn/end settlement also enters the executor lock.
+{
+  const fixture = await createFixture({ state: true })
+  try {
+    const controller = fixture.service.controller
+    const executor = (await controller.ensureExecutor('global')).sessionId
+    const ticket = fixture.service.store.addTicket({ status: 'working', executor, goal: 'error lock', acceptance: 'x' })
+    controller.state.setTicketMeta(ticket.ticketId, { phase: 'working', executorId: executor })
+    controller.state.addExecutor(executor, { status: 'working', currentTicketId: ticket.ticketId })
+    const calls = []
+    const originalRun = controller.executorLock.run.bind(controller.executorLock)
+    controller.executorLock.run = async (key, task) => { calls.push(String(key)); return await originalRun(key, task) }
+    try {
+      fixture.service.onSessionEvent({ header: { id: executor } }, {
+        type: 'turn/end', data: { turn: 1, reason: { kind: 'error', error: { message: 'boom' } } },
+      })
+      await tick()
+      await tick()
+      assert.ok(calls.includes(executor), 'error turn/end acquires the executor lock: ' + JSON.stringify(calls))
+      assert.equal(fixture.service.store.ticket(ticket.ticketId).status, 'failed')
+    } finally {
+      controller.executorLock.run = originalRun
+    }
+    console.log('executor error-turn lock ok')
+  } finally {
+    fixture.cleanup()
+  }
+}
+

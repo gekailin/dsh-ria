@@ -44,6 +44,14 @@ try {
   assert.equal(first.body.hasMore, true)
   assert.ok(Array.isArray(first.body.scopes) && first.body.scopes.includes('global'))
 
+  // Omitted limit uses the board page size of 30 on both sides.
+  const defaults = await get('/cognition/entries')
+  assert.equal(defaults.status, 200)
+  assert.equal(defaults.body.limit, 30)
+  const proposalDefaults = await get('/cognition/proposals')
+  assert.equal(proposalDefaults.status, 200)
+  assert.equal(proposalDefaults.body.limit, 30)
+
   const second = await get('/cognition/entries?limit=2&offset=2')
   assert.equal(second.status, 200)
   assert.equal(second.body.items.length, 2)

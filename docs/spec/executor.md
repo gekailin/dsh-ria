@@ -17,7 +17,7 @@
   - 新任务：Chat 建工单 → Advisor 结合认知记忆生成 WorkOrder → 派发给 Executor（默认附带用户截图等附件）。
   - 追改方向（`steer`）：针对运行中的工单，直接通过 DSH 原生 `steer` 注入给目标 Executor（`rpcId` 使用 `ria_steer_` 前缀），不经 Advisor、不建新工单。
   - **并发与临界隔离（双层串行锁，单向嵌套 `ticketLock → executorLock`）**：
-    - `executorLock(executorId)`（主锁）串行保护同一 Executor 的 `dispatch / steer / settle / stop`，`turn/end` 同步入锁；`ticketLock(ticketId)`（辅锁）串行保护 `plan / resume / stop` 的跨异步状态变更。
+    - `executorLock(executorId)`（主锁）串行保护同一 Executor 的 `dispatch / steer / settle / stop`，正常与 error/aborted 的 `turn/end` 同步入锁；`ticketLock(ticketId)`（辅锁）串行保护 `plan / resume / stop` 的跨异步状态变更。
     - 若 `steer` 拿锁时工单已结案或已切换，直接拒绝并告知 Chat，不向 Executor 发脏消息、不重开旧工单。
     - 若 `steer` 在 `turn/end` 前已写入 DSH inbox 但尚未被当前 turn 消费，`settle` 检测到 `agent.inbox` 中存在 `ria_steer_` 待消费消息时暂缓结算（`steer.settlement.deferred`），等下一轮 `turn/end` 完成后再结案。
     - **迟到 steer 的归属门禁**：工单已结案（done/cancelled/failed）或 Executor 已转跑其它工单时，新的 steer 不入 inbox、不重开旧单、不转交给当前工单；直接丢弃并向 Chat 通知，记录 `steer.dropped_stale`。`agent/pre-step` 同时剥离仍停留在 `ria_steer_` inbox（nextStep/nextTurn）里的过期消息，避免污染下一张工单的上下文。
@@ -38,13 +38,15 @@
 - **outboxTimer 的定位**：outbox 的定时 tick 只负责副作用投递（渠道发送、重试）队列，不参与工单状态判定、卡死恢复或重新派发；工单状态仍只由事件与启动检查推进。
 - **Report 只记录、不结算**：`ria_executor_report` 仅用于写入结构化进展/结论/阻塞信息，不直接触发工单结算（防止提前/多次调用 `done` 或漏调工具）。
 - **统一按生命周期事件结算**：
-  - 正常结束以 `turn/end` 为结算时机：已有 report 则采用 report，未调用 report（或协管无 report 工具）则以该 turn 的最终回复兜底。
+  - 正常结束以 `turn/end` 为结算时机：已有终态 report 则采用 report（`terminalOnly`，progress 永不覆盖 done），未调用 report（或协管无 report 工具）则以该 turn 的最后一条 assistant 文本兜底写入 done；该 turn 完全无文本才 `blocked(waitingOn='executor', reason='empty_turn')`。
+  - **协管双轨**：协管会话当前有 working 工单时，assistant 输出只作为工单进展证据并走 `turn/end` 统一结算，不做 watch relay；无工单（用户直聊/直转）时才走协管观察转发与自动打标，因此同一回复不会同时产生工单通知和转发通知。
   - 遇到提问（`ask`）、权限审批、错误中断（含 413 等超长错误）须立即感知并流转/汇报，不得静默卡死。
 - **重启恢复**：重启时通过启动检查收尾；`blocked(environment, interrupted)` 的工单自动 `resume` 一次（严格限一次防死循环），Chat 不重复处理。
 
 ## 4. 提权审批
 
 - 正常提权走**逐条风险评估**：低风险自动放行，高风险或无法判断上报用户决策，中风险按工单配置决定；`grant` 仅作调试/应急工具。
+- 审批通知是事件驱动的单次通知：未协管普通会话不推送（只记 `notice.suppressed(unwatched)`），已协管/内部角色即时通知；不设置定时重复提醒。
 - 直管与协管的审批与提问事件必须同等监听并及时反馈。
 
 ## 5. 上行通知与结果读取
@@ -52,7 +54,7 @@
 - **通知轻量化**：工单状态通知发给 Chat 时只发状态摘要，不把长正文直接塞入 Chat；发给 Chat 的 Router notice 使用专用 `kind`，Claw 渠道以 `🔔` 前缀区分。
 - **分路径读取完整结果**：
   - **有工单任务**（直管/协管统一）：完整结论写入工单，Chat 收到通知后从工单读取，不去翻会话记录。
-  - **无工单任务**（如直转）：执行完成后，Chat 读取目标会话对应 turn 的完整回复并回报（不得截断）。
+  - **无工单任务**（如直转）：执行完成后，Chat 读取目标会话对应 turn 的完整回复并回报（不得截断）。`ria_chat_read` 不设单条 3000 字截断，也不把 `limit` 硬夹到 30；调用方可按需读取更长的会话尾部。
 
 ## 6. 元数据、打标与一次性会话
 
@@ -64,7 +66,7 @@
 
 ## 7. 协管与派活开关
 
-- **单一“协管”概念**：`co_manage` 同时覆盖观察（转发回复/提问/审批）与派活。
+- **单一“协管”概念**：`co_manage` 同时覆盖观察（转发回复/提问/审批）与派活；旧的 `ria_chat_watch` 与 worker 时代别名（`ria_chat_worker_config` / `ria_worker_report` / `worker_report`）不再注册。
 - **仅用 `allowAutoDispatch` 区分派活范围**：
   - 「协管 / 接管」：`allowAutoDispatch = true`，参与自动路由派单。
   - 「跟踪 / 盯着」：`allowAutoDispatch = false`，仅观察并允许显式指定派单。

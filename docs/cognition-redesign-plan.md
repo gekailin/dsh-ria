@@ -18,7 +18,7 @@
 
 ### 1.2 现状核心病灶
 * **`cognition/` 目录混乱且检索失配**：`projectKey('/home/gkl/Desktop/vibe_proj/dsh-ria')` 生成 `dsh-ria-1dcd2ebe`，但目录下是空壳 `projects/dsh-ria.md`（404B）和 Sage 自行拆出的 `projects/dsh-ria-lessons.md`（108KB，501 行，混入其他小工具与 SVG 项目经验）；`cognition.retrieve()` 查不到目标文件，108KB 经验完全失效。
-* **`chat/` 预算被工程长文挤爆**：`chat/agreements.md` 与 `chat/decisions.md` 混入旧 `lessons`（含重复空 JSON 数组），`chat/preferences.md` 达 5.2KB，而 `CHAT_MEMORY_LIMIT = 1500` 硬截断，导致后续偏好与项目情况完全不可见；`lib/memory.mjs` 的预算校验未接入写入路径。
+* **`chat/` 预算被工程长文挤爆**：`chat/agreements.md` 与 `chat/decisions.md` 混入旧 `lessons`（含重复空 JSON 数组），`chat/preferences.md` 达 5.2KB，而 `CHAT_MEMORY_LIMIT = 1500` 硬截断，导致后续偏好与项目情况完全不可见；旧的 `lib/memory.mjs` 预算校验未接入写入路径（该模块已随记忆配置删除）。
 * **`proposals/` 散落 315 个 JSON 且缺少裁决工具**：Sage 没有拒绝/暂缓/合并工具，只有 `ria_sage_write(..., resolveProposal)` 一种路径（强制标为 `accepted`），且缺少 `decidedBy` 与 `rationale`。
 * **非用户提案不唤醒 Sage & 回调断路**：Advisor/Executor 提交的提案只写文件不唤醒 Sage；`controller.mjs:6403` 把所有 executor 提案的 `author` 硬编码为 `'reflection'`；`ria_sage_request` 派发核查工单后，结单结果不会回传给 Sage。
 * **Chat 说话风格未接入运行态 Prompt**：`voicePrompt(settings.style)` 目前只用于设置页预览，未拼接进 `controller.chatSystemPrompt()`。

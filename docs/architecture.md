@@ -154,7 +154,7 @@ outbox 与 `ria.json` 不是同一个事务：派发已被接受、但 outbox �
 
 ## 6. 通道与界面
 
-- **Web GUI**：侧栏 Ria 入口；派发确认渲染在 Ria 当前轮次末尾的卡片；设置页控制自动暂停、审批代批、反思、说话风格与记忆等选项；通道面板负责扫码登录与暂停。
+- **Web GUI**：侧栏 Ria 入口；派发确认渲染在 Ria 当前轮次末尾的卡片；设置页控制自动暂停、审批代批、反思与说话风格等选项；通道面板负责扫码登录与暂停。
 - **微信 Claw**：直连 iLink 机器人接口，入站文本与图片，出站文本与本机图片。
 - **QQ 机器人**：扫码绑定后用官方 SDK 的 WebSocket 网关收发文本。
 - **微信「文件传输助手」**：网页版协议，入站文本与图片，出站文本、`.md` 文件与本机图片。
@@ -164,7 +164,7 @@ outbox 与 `ria.json` 不是同一个事务：派发已被接受、但 outbox �
 
 ## 7. 记忆与反省
 
-长期记忆由 SQLite cognition entries（user:preference / user:agreement）驱动；旧 memory.md 已退场。默认上限 2400 字符 / 12 条 / 单条 300（warn 阈值 2160 / 11 / 270），超限拒绝写入，长内容归档到 `memory-archive/<slug>.md`（不注入）；不抄工单状态、时间戳或逐轮流水。定期反思已实现：设置页可开启每天/每周的 schedule，到点后 Ria 启动一个独立的只读 executor（只有 6 个 `ria_reflect_*` 工具），读当天/当周的工单、turn 与 outbox（会话默认 `summary`，异常再按 `ref`/窗口 `full` 定点读），把报告写到 `reflections/YYYY-MM-DD.md`；executor 只提议隐性规则，不自动改写记忆。报告在写入草稿前就跑与 finish 相同的校验，失败不落盘；Ria 也可用 `ria_reflect action=validate` 先验后写。每次 dispatch 自动在固定主题「记忆与反思」下建一张监控工单（executor=本次反思 executor，status=working，run.json 记 watchTicketId）；finish 把它置 done 并写 reportPath/bytes，abort 置 cancelled，报告失败/超时置 blocked 并写原因；重启恢复会跳过这类监控单。报告渲染/归档 UI、多天回填与 P2 wiki 尚未实现。
+长期记忆由 SQLite cognition entries（user:preference / user:agreement）驱动；旧 memory.md 与设置页的记忆预算配置均已退场，预算固定由 SQLite 写入校验保证（单条正文 ≤250 字，注入摘要 ≤1600 字）；不抄工单状态、时间戳或逐轮流水。定期反思已实现：设置页可开启每天/每周的 schedule，到点后 Ria 启动一个独立的只读 executor（只有 6 个 `ria_reflect_*` 工具），读当天/当周的工单、turn 与 outbox（会话默认 `summary`，异常再按 `ref`/窗口 `full` 定点读），把报告写到 `reflections/YYYY-MM-DD.md`；executor 只提议隐性规则，不自动改写记忆。报告在写入草稿前就跑与 finish 相同的校验，失败不落盘；Ria 也可用 `ria_reflect action=validate` 先验后写。每次 dispatch 自动在固定主题「记忆与反思」下建一张监控工单（executor=本次反思 executor，status=working，run.json 记 watchTicketId）；finish 把它置 done 并写 reportPath/bytes，abort 置 cancelled，报告失败/超时置 blocked 并写原因；重启恢复会跳过这类监控单。报告渲染/归档 UI、多天回填与 P2 wiki 尚未实现。
 
 ## 8. 扩展点
 

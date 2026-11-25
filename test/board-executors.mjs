@@ -90,6 +90,27 @@ try {
   assert.equal(legacy.titleSource, 'cache')
   assert.equal(legacy.titleLive, false)
   assert.equal(data.rows.find(row => row.sessionId === 'session-managed-0').archived, false)
+
+  // Title updates must be visible on the next request after the host emits
+  // session/title; the session-list cache may only cover the interval before it.
+  {
+    const liveTitle = { value: 'Live One' }
+    sc.list = async () => ({
+      items: [{ sessionId: 'session-managed-0', updatedAt: 10, cwd: '/work/proj', projections: { values: { title: liveTitle.value } } }],
+    })
+    service.invalidateSessionList()
+    const first = await service.executorDiagnostics({})
+    assert.equal(first.rows.find(row => row.sessionId === 'session-managed-0').title, 'Live One')
+    liveTitle.value = 'Renamed'
+    const cached = await service.executorDiagnostics({})
+    assert.equal(cached.rows.find(row => row.sessionId === 'session-managed-0').title, 'Live One')
+    service.onSessionEvent({ header: { id: 'session-managed-0' } }, { type: 'session/title' })
+    const refreshed = await service.executorDiagnostics({})
+    assert.equal(refreshed.rows.find(row => row.sessionId === 'session-managed-0').title, 'Renamed')
+    sc.list = originalList
+    service.invalidateSessionList()
+  }
+
   assert.equal(co.selectable, false)
   assert.match(co.excludedReason, /requireTagMatch: wanted=probe-tag but tags=\[\] autoTags=\[\]/)
   const selectableManaged = data.rows.find(row => row.sessionId === 'session-managed-0')

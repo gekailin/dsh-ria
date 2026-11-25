@@ -103,7 +103,18 @@ try {
     const response = await fetch(api + path)
     return { status: response.status, body: await response.json() }
   }
+  // Search is lazy: the first board payload carries no index, and the
+  // dedicated route still returns the complete index on demand.
+  {
+    const lazy = await fixture.service.boardData({ limit: 1, search: false })
+    assert.deepEqual(lazy.searchIndex, [], 'board list does not build the search index')
+    const full = await fixture.service.boardData({ limit: 1, search: true })
+    assert.ok(full.searchIndex.some(item => item.ticketId === ticket.ticketId), 'lazy search still indexes tickets')
+  }
   try {
+    const search = await get('/board/search?q=' + encodeURIComponent('精简'))
+    assert.equal(search.status, 200, JSON.stringify(search.body))
+    assert.ok(search.body.searchIndex.some(item => item.ticketId === ticket.ticketId), 'search route returns the ticket')
     const ok = await get('/tickets/' + encodeURIComponent(ticket.ticketId))
     assert.equal(ok.status, 200, JSON.stringify(ok.body))
     assert.equal(ok.body.ok, true)

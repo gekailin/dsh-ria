@@ -118,7 +118,7 @@ async function setup() {
     const bound = state.ticketMeta(ticketId)
     assert.equal(bound.executorSessionId, 'session-cm')
     assert.equal(bound.executing, true)
-    const list = await fixture.callAs(chat, 'ria_chat_watch', { action: 'list' })
+    const list = await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'list' })
     const listed = list.watches.find(item => item.sessionId === 'session-cm')
     assert.equal(listed.sessionId, 'session-cm')
     assert.equal(Object.hasOwn(listed, 'watchId'), false, 'public view uses sessionId only')
@@ -168,6 +168,7 @@ async function setup() {
     fixture.service.onSessionEvent({ header: { id: 'session-cm' } }, {
       type: 'turn/end', time: Date.now(), data: { turn: 3, reason: { kind: 'error', message: 'provider blew up' } },
     })
+    await new Promise(resolve => setTimeout(resolve, 0))
     const failed = fixture.service.store.ticket(failedTicket)
     assert.equal(failed.status, 'failed')
     assert.equal(failed.failure.code, 'turn_failed')
@@ -254,7 +255,7 @@ async function setup() {
   const { fixture, chat, state, controller, register, ticket, dispatch } = await setup()
   try {
     // The user watches the session first; registering it later must not replace the watch.
-    const manual = await fixture.callAs(chat, 'ria_chat_watch', { action: 'add', sessionId: 'session-cm-other' })
+    const manual = await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'add', sessionId: 'session-cm-other' })
     assert.equal(manual.ok, true, JSON.stringify(manual))
     const manualWatchId = controller.coManagement.watch('session-cm-other').watchId
     assert.notEqual(manual.watch.addedBy.startsWith('ticket:'), true)

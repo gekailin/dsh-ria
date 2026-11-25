@@ -146,7 +146,7 @@ try {
   const client = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
   // The old title-bar modal became a first-class tab: no overlay/button, but
   // the diagnostics table and its sorting stay.
-  assert.match(client, /"data-ria-board-panel": "executors"/)
+  assert.match(client, /id: "executors", active: true/)
   assert.match(client, /executorsPanel\(\)/)
   assert.doesNotMatch(client, /data-ria-board-executors/)
   assert.doesNotMatch(client, /data-ria-executors-overlay/)

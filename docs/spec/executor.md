@@ -19,7 +19,8 @@
   - **并发与临界隔离（双层串行锁，单向嵌套 `ticketLock → executorLock`）**：
     - `executorLock(executorId)`（主锁）串行保护同一 Executor 的 `dispatch / steer / settle / stop`，`turn/end` 同步入锁；`ticketLock(ticketId)`（辅锁）串行保护 `plan / resume / stop` 的跨异步状态变更。
     - 若 `steer` 拿锁时工单已结案或已切换，直接拒绝并告知 Chat，不向 Executor 发脏消息、不重开旧工单。
-    - 若 `steer` 在 `turn/end` 前已写入 DSH inbox 但尚未被当前 turn 消费，`settle` 检测到 `agent.inbox` 中存在 `ria_steer_` 待消费消息时暂缓结算，等下一轮 `turn/end` 完成后再结案。
+    - 若 `steer` 在 `turn/end` 前已写入 DSH inbox 但尚未被当前 turn 消费，`settle` 检测到 `agent.inbox` 中存在 `ria_steer_` 待消费消息时暂缓结算（`steer.settlement.deferred`），等下一轮 `turn/end` 完成后再结案。
+    - **迟到 steer 的归属门禁**：工单已结案（done/cancelled/failed）或 Executor 已转跑其它工单时，新的 steer 不入 inbox、不重开旧单、不转交给当前工单；直接丢弃并向 Chat 通知，记录 `steer.dropped_stale`。`agent/pre-step` 同时剥离仍停留在 `ria_steer_` inbox（nextStep/nextTurn）里的过期消息，避免污染下一张工单的上下文。
     - 协管会话在结算临界点遇到用户直连 `steer` 时，绝不拦截且不阻塞原工单结算，新 turn 按无工单协管对话独立处理。
 - **直接转发（直转）**：
   - 自然语言单次触发，仅限协管/常规会话（禁止直转给直管 Executor、Sage 等内部角色）。

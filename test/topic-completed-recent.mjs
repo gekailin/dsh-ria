@@ -95,8 +95,7 @@ assert.equal(edge.recentCount, 1)
 
 const client = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
 assert.match(client, /近 24h 无完成/)
-assert.match(client, /近 24h " \+ completedRecent/)
-assert.match(client, /group\.countText/)
+assert.match(client, /cards\(completedShown\)/)
 assert.match(client, /data-ria-topic-completed-empty/)
 
 // Execute the actual client-side layout function with the old server payload
@@ -169,11 +168,10 @@ console.log('topic recent completed selection ok')
 }
 
 const clientSource = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
-assert.match(clientSource, /data-ria-topic-completed/)
 assert.match(clientSource, /topicCompletedShown/)
-assert.match(clientSource, /topicTicketTimeText/)
-assert.match(clientSource, /completedShown\.map/)
-assert.match(clientSource, /已完成 /)
-assert.match(clientSource, /近 24h " \+ completedRecent/)
+assert.match(clientSource, /cards\(completedShown\)/)
+assert.doesNotMatch(clientSource, /completedShown\.map/)
+assert.doesNotMatch(clientSource, /completedTotal/)
+assert.doesNotMatch(clientSource, /近 24h " \+ completedRecent/)
+assert.match(clientSource, /String\(counts\.done\)/)
 console.log('topic card completed client hooks ok')
-

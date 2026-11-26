@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { RiaService } from '../lib/index.js'
 import { Controller } from '../lib/core/controller.mjs'
-import { readReflectionState, writeReflectionState } from '../lib/reflection.mjs'
+import { readReflectionState, writeReflectionState, reflectionDate } from '../lib/reflection.mjs'
 import { REFLECTION_SCHEDULE_PROMPT, REFLECTION_CATCHUP_PROMPT } from '../lib/prompts/reflection.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'ria-reflection-api-'))
@@ -151,11 +151,60 @@ try {
   assert.equal(due.ok, true)
   assert.equal(due.queued, true, JSON.stringify(due))
   assert.equal(due.forDate, '2026-11-27')
+  const persistedDue = readReflectionState(dir)
+  assert.equal(persistedDue.phase, 'running')
+  assert.equal(persistedDue.forDate, '2026-11-27')
+  assert.equal(persistedDue.attempts, 1)
+  assert.ok(Number.isFinite(persistedDue.dueAt))
   const dueAgain = await service.reflectionDueCheck('test', dueAt)
   assert.equal(dueAgain.ok, true)
   assert.equal(Boolean(dueAgain.queued), false, 'same due run must not create another ticket')
   assert.ok(['active', 'attempted_today', 'already_running'].includes(dueAgain.skipped) || dueAgain.already_running, JSON.stringify(dueAgain))
   assert.match(REFLECTION_SCHEDULE_PROMPT, /发起失败或未尝试/)
   assert.doesNotMatch(REFLECTION_SCHEDULE_PROMPT, /已自动尝试发起/)
+
+  // Explicit phase/date/dueAt/attempts stay machine-readable and are the
+  // fields the status text is built from. Old fields remain present.
+  const today = reflectionDate(Date.now())
+  const dueState = { ...readReflectionState(dir), phase: 'due', forDate: today, dueAt: Date.now() + 60_000, attempts: 0, activeRunId: null, lastCompletedDate: null, lastStatus: null, lastError: null, skipReason: null }
+  writeReflectionState(dir, dueState)
+  const dueStatus = service.reflectionStatusSummary()
+  assert.equal(dueStatus.phase, 'due')
+  assert.equal(dueStatus.forDate, today)
+  assert.equal(dueStatus.attempts, 0)
+  assert.match(dueStatus.statusText, /今天 .* 23:40 应跑；当前 due/)
+  assert.equal(dueStatus.lastCompletedDate, null, 'old field remains present')
+
+  const runningState = { ...dueState, phase: 'running', attempts: 1, activeRunId: due.runId, lastStatus: 'running' }
+  writeReflectionState(dir, runningState)
+  const runningStatus = service.reflectionStatusSummary()
+  assert.equal(runningStatus.phase, 'running')
+  assert.equal(runningStatus.attempts, 1)
+  assert.match(runningStatus.statusText, /当前 running；runId=ticket_reflect_/)
+  assert.match(runningStatus.statusText, /第 1 次尝试/)
+
+  writeReflectionState(dir, { ...runningState, phase: 'completed', attempts: 1, activeRunId: null, lastCompletedDate: today, lastStatus: 'done', lastError: null })
+  const completedStatus = service.reflectionStatusSummary()
+  assert.equal(completedStatus.phase, 'completed')
+  assert.equal(completedStatus.lastCompletedDate, today)
+  assert.match(completedStatus.statusText, /当前 completed/)
+  // A completed state from yesterday must not leak into today's status.
+  const yesterday = reflectionDate(Date.now() - 24 * 60 * 60 * 1000)
+  writeReflectionState(dir, { ...completedStatus, phase: 'completed', forDate: yesterday, lastCompletedDate: yesterday, activeRunId: null })
+  const rolled = service.reflectionStatusSummary()
+  assert.notEqual(rolled.phase, 'completed', 'yesterday completed must not be today completed')
+  assert.equal(rolled.forDate, today)
+  const legacy = { ...readReflectionState(dir), lastCompletedDate: today, lastStatus: 'done', activeRunId: null }
+  delete legacy.phase
+  delete legacy.forDate
+  writeFileSync(join(dir, 'reflections', 'state.json'), JSON.stringify(legacy))
+  assert.equal(service.reflectionStatusSummary().phase, 'completed', 'old state without phase stays readable')
+
+  writeReflectionState(dir, { ...runningState, phase: 'failed', activeRunId: null, lastStatus: 'failed', lastError: 'boom' })
+  assert.equal(service.reflectionStatusSummary().phase, 'failed')
+  assert.match(service.reflectionStatusSummary().statusText, /最近错误：boom/)
+  writeReflectionState(dir, { ...runningState, phase: 'skipped', activeRunId: null, lastStatus: 'skipped', skipReason: 'settings disabled', lastError: null })
+  assert.equal(service.reflectionStatusSummary().phase, 'skipped')
+  assert.match(service.reflectionStatusSummary().statusText, /跳过原因：settings disabled/)
   console.log('reflection run api ok')
 } finally { rmSync(dir, { recursive: true, force: true }) }

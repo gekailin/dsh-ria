@@ -159,7 +159,33 @@ try {
   const dueAgain = await service.reflectionDueCheck('test', dueAt)
   assert.equal(dueAgain.ok, true)
   assert.equal(Boolean(dueAgain.queued), false, 'same due run must not create another ticket')
-  assert.ok(['active', 'attempted_today', 'already_running'].includes(dueAgain.skipped) || dueAgain.already_running, JSON.stringify(dueAgain))
+  assert.ok(['active', 'attempted_for_date', 'already_running'].includes(dueAgain.skipped) || dueAgain.already_running, JSON.stringify(dueAgain))
+
+  // Cross-midnight fallback: a missed 23:40 occurrence from yesterday is still
+  // picked up the next morning (e.g. 06:00 Shanghai = 22:00Z previous UTC day).
+  writeReflectionState(dir, {
+    ...readReflectionState(dir),
+    lastCompletedDate: '2026-11-25',
+    forDate: '2026-11-25',
+    attempts: 3,
+    activeRunId: null,
+    lastAttemptAt: null,
+    phase: 'completed',
+  })
+  const nextMorning = Date.parse('2026-11-27T06:00:00+08:00')
+  const catchupDue = await service.reflectionDueCheck('morning', nextMorning)
+  assert.equal(catchupDue.ok, true)
+  assert.equal(catchupDue.queued, true, JSON.stringify(catchupDue))
+  assert.equal(catchupDue.forDate, '2026-11-26', 'must catch up missed yesterday 23:40 occurrence')
+  assert.equal(readReflectionState(dir).attempts, 1, 'new day resets attempts to 1')
+
+  // Persisted phase='idle' for today must still transition to 'due' once now >= dueAt.
+  const { deriveReflectionPhase } = await import('../lib/reflection.mjs')
+  const idleAfterDue = deriveReflectionPhase(
+    { phase: 'idle', forDate: '2026-11-27', activeRunId: null },
+    { forDate: '2026-11-27', today: '2026-11-27', dueAt: 1000, nowMs: 2000, enabled: true, activeRunId: null },
+  )
+  assert.equal(idleAfterDue.phase, 'due', 'persisted idle must flip to due once dueAt passes')
   assert.match(REFLECTION_SCHEDULE_PROMPT, /发起失败或未尝试/)
   assert.doesNotMatch(REFLECTION_SCHEDULE_PROMPT, /已自动尝试发起/)
 

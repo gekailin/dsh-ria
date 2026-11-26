@@ -6,8 +6,8 @@ const start = source.indexOf('/* board-executor-sort:start */')
 const end = source.indexOf('/* board-executor-sort:end */')
 assert.ok(start >= 0 && end > start, 'executor sort markers')
 const block = source.slice(start, end)
-const api = new Function(block + '\nreturn { executorLastActive, executorSortValue, nextExecutorSort, sortExecutorRows, splitExecutorRows, executorTagText, EXECUTOR_TAG_DISPLAY_LIMIT };')()
-const { executorLastActive, executorSortValue, nextExecutorSort, sortExecutorRows, splitExecutorRows, executorTagText, EXECUTOR_TAG_DISPLAY_LIMIT } = api
+const api = new Function(block + '\nreturn { executorLastActive, executorSortValue, nextExecutorSort, sortExecutorRows, splitExecutorRows, executorTagText, EXECUTOR_TAG_DISPLAY_LIMIT, executorAutoTagEntries, executorCurrentTurn, executorAutoTagRows };')()
+const { executorLastActive, executorSortValue, nextExecutorSort, sortExecutorRows, splitExecutorRows, executorTagText, EXECUTOR_TAG_DISPLAY_LIMIT, executorAutoTagEntries, executorCurrentTurn, executorAutoTagRows } = api
 
 const rows = [
   { sessionId: 's-3', title: 'Zeta', cwd: '/z', status: 'idle', allowAutoDispatch: true, archived: false, lastUsedAt: 100 },
@@ -93,4 +93,34 @@ const autoText = executorTagText(autoTags, 3, true)
 assert.equal(autoText.text, 'dsh, code, ops')
 assert.equal(autoText.full, 'dsh(9), code(5), ops(1)')
 assert.deepEqual(Object.keys(autoTags), ['code', 'dsh', 'ops'], 'autoTags storage order is not mutated')
+
+// Auto-tag entries: one sorted source for the cell and the tooltip table.
+const ordered = executorAutoTagEntries({ cleanup: 17, docs: 17, 'dsh-ria': 11, noTurn: 'bad' })
+assert.deepEqual(ordered.map(item => item.tag), ['cleanup', 'docs', 'dsh-ria', 'noTurn'])
+assert.deepEqual(ordered.map(item => item.lastTurn), [17, 17, 11, null])
+assert.deepEqual(Object.keys({ cleanup: 17, docs: 17, 'dsh-ria': 11 }), ['cleanup', 'docs', 'dsh-ria'], 'entries do not mutate storage')
+
+// Current turn chain: row currentTurn first, then context map, including zero.
+assert.equal(executorCurrentTurn({ currentTurn: 0 }, { currentTurnBySession: { s: 9 } }), 0)
+assert.equal(executorCurrentTurn({ sessionId: 's' }, { currentTurnBySession: { s: 9 } }), 9)
+assert.equal(executorCurrentTurn({ sessionId: 's', currentTurn: null }, { currentTurnBySession: { s: 0 } }), 0)
+assert.equal(executorCurrentTurn({ sessionId: 's' }, {}), null)
+assert.equal(executorCurrentTurn({}, { currentTurnBySession: { s: 9 } }), null)
+
+// Tooltip rows: full ordered set, integer deltas, missing turn degrades to —.
+const tooltipRows = executorAutoTagRows({ cleanup: 17, docs: 17, 'dsh-ria': 11, noTurn: 'bad' }, { sessionId: 's' }, { currentTurnBySession: { s: 17 } })
+assert.deepEqual(tooltipRows.map(row => [row.tag, row.lastTurn, row.delta]), [
+  ['cleanup', 17, 0],
+  ['docs', 17, 0],
+  ['dsh-ria', 11, 6],
+  ['noTurn', null, null],
+])
+assert.deepEqual(executorAutoTagRows({}, { sessionId: 's' }, {}), [])
+const textAuto = executorTagText({ cleanup: 17, docs: 17, 'dsh-ria': 11, noTurn: 'bad' }, 3, true)
+assert.equal(textAuto.text, 'cleanup, docs, dsh-ria +1')
+assert.equal(textAuto.hidden, 1)
+assert.equal(source.includes('暂无自动标签'), true)
+assert.equal(source.includes('记录轮次'), true)
+assert.equal(source.includes('距今轮次'), true)
+assert.equal(source.includes('data-ria-executor-autotags-tooltip'), true)
 console.log('board executor sort ok')

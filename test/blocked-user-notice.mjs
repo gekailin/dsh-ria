@@ -26,34 +26,31 @@ try {
   assert.ok(chatNotices[0].length <= '🔔 #工单 需要你决定：'.length + 40)
   assert.equal(chatNotices[0].includes('需要你拍板'), true)
 
-  // Re-reporting the same blocked event is suppressed.
-  controller.onTicketTransition(ticket, { from: 'working', to: 'blocked', reason: 'duplicate report' })
+  // Same blocked state re-reported ten times is not a transition edge: it must
+  // not emit, and the diagnostic suppressed event is not a dedupe signature.
+  for (let index = 0; index < 10; index += 1) {
+    controller.onTicketTransition(ticket, { from: 'blocked', to: 'blocked', reason: 'duplicate report' })
+  }
   await tick()
-  assert.equal(chatNotices.length, 1, 'same blocked event must not notify twice')
+  assert.equal(chatNotices.length, 1, 'same blocked state must not notify twice')
   assert.equal(clawNotices.length, 1)
-  const suppressed = fixture.service.routerEvents.query({ ticketId: ticket.ticketId, type: 'notice.suppressed', limit: 10 }).events
-  assert.equal(suppressed.length, 1)
-  assert.equal(suppressed[0].reason, 'duplicate_blocked_user')
+  const suppressed = fixture.service.routerEvents.query({ ticketId: ticket.ticketId, type: 'notice.suppressed', limit: 20 }).events
+  assert.equal(suppressed.length, 10)
+  assert.equal(suppressed.every(item => item.reason === 'duplicate_blocked_user'), true)
 
-  // After 30 minutes the existing outbox tick sends exactly one reminder.
-  const state = controller.blockedUserNotices.get(ticket.ticketId)
-  assert.ok(state && state.count === 1)
-  const now = Date.now()
-  state.firstAt = now - 31 * 60 * 1000
-  const sent = controller.remindBlockedUserTickets(now)
+  // There is no timed reminder anymore: a later outbox tick must not add a
+  // second blocked(user) notification for the same event.
+  await fixture.service.doPumpOutbox('tick')
   await tick()
-  assert.equal(sent, 1)
+  assert.equal(chatNotices.length, 1)
+  assert.equal(clawNotices.length, 1)
+
+  // A changed blocked event (revision changes) is a new event and sends once.
+  const changed = { ...ticket, revision: (Number(ticket.revision) || 0) + 1 }
+  controller.onTicketTransition(changed, { from: 'working', to: 'blocked', reason: 'revision changed' })
+  await tick()
   assert.equal(chatNotices.length, 2)
   assert.equal(clawNotices.length, 2)
-  assert.match(chatNotices[1], /^🔔 #工单 需要你决定：/)
-
-  // A third reminder is capped.
-  const again = controller.remindBlockedUserTickets(now + 60 * 60 * 1000)
-  await tick()
-  assert.equal(again, 0)
-  assert.equal(chatNotices.length, 2)
-  const reminded = fixture.service.routerEvents.query({ ticketId: ticket.ticketId, type: 'ticket.blocked.reminded', limit: 10 }).events
-  assert.equal(reminded.length, 1)
 
   // A normal working ticket never enters this path.
   const working = store.addTicket({ status: 'working', executor: 'session-blocked', goal: 'working test' })

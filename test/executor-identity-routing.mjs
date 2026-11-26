@@ -116,10 +116,11 @@ const planReply = routing => () => JSON.stringify({
     assert.equal(request.ok, true, JSON.stringify(request))
     assert.equal(fixture.service.store.ticket(request.ticketId).executor, w1.sessionId)
     assert.deepEqual(store.ticketMeta(request.ticketId).routingTags, ['frontend', 'docs'])
-    // Dispatch no longer learns tags; completion is the only learning point.
+    // Dispatch actively maintains managed work Executor tags (LRU, newest first);
+    // autoTags remains completion-only.
     const learned = store.executor(w1.sessionId)
-    assert.deepEqual(learned.tags, ['frontend'])
-    assert.deepEqual(learned.autoTags, {}, 'dispatch must not learn tags')
+    assert.deepEqual(learned.tags, ['frontend', 'docs'])
+    assert.deepEqual(learned.autoTags, {}, 'dispatch must not learn autoTags')
     const events = fixture.service.routerEvents.query({ ticketId: request.ticketId }).events
     const attempt = events.find(event => event.event === 'dispatch.attempt')
     assert.ok(attempt)

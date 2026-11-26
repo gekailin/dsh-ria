@@ -101,4 +101,47 @@ assert.match(client, /近 24h " \+ completedRecent/)
 assert.match(client, /group\.countText/)
 assert.match(client, /data-ria-ticket-empty/)
 
+// Execute the actual client-side layout function with the old server payload
+// (no completed field) and an all-empty topic. This pins the null guard and the
+// 24h/3 fallback that keep the modal usable during a server hot-swap window.
+const layoutStart = client.indexOf('    function topicRecentCompletedFallback')
+const layoutEnd = client.indexOf('\n    // The grid keeps', layoutStart)
+assert.ok(layoutStart > 0 && layoutEnd > layoutStart, 'layout functions are present')
+const layoutSource = client.slice(layoutStart, layoutEnd)
+const makeLayout = new Function(
+  'topicTicketTerminal',
+  'Date',
+  layoutSource + '\nreturn { topicTicketLayout, topicRecentCompletedFallback }',
+)
+const isTerminal = ticket => ['done', 'cancelled', 'failed'].includes(ticket && ticket.status)
+const layout = makeLayout(isTerminal, { now: () => now })
+const legacyTickets = [
+  { ticketId: 'ticket-a', status: 'done', closedAt: now - hour, createdAt: now - 2 * hour },
+  { ticketId: 'ticket-b', status: 'done', closedAt: now - 2 * hour, createdAt: now - 3 * hour },
+  { ticketId: 'ticket-c', status: 'done', closedAt: now - 3 * hour, createdAt: now - 4 * hour },
+  { ticketId: 'ticket-d', status: 'done', closedAt: now - 4 * hour, createdAt: now - 5 * hour },
+  { ticketId: 'ticket-old', status: 'done', closedAt: now - 30 * hour, createdAt: now - 31 * hour },
+]
+const legacy = layout.topicTicketLayout(legacyTickets, null)
+assert.equal(legacy.completed.totalCount, 5)
+assert.equal(legacy.completed.recentCount, 4)
+assert.deepEqual(legacy.completed.shown.map(item => item.ticketId), ['ticket-a', 'ticket-b', 'ticket-c'])
+const legacyFinished = legacy.groups.find(group => group.key === 'finished')
+assert.equal(legacyFinished.tickets.length, 3)
+assert.equal(legacyFinished.countText, '5（近 24h 4）')
+
+const empty = layout.topicTicketLayout([], null)
+assert.equal(empty.groups.length, 1, 'empty topic renders only the finished section')
+const emptyFinished = empty.groups.find(group => group.key === 'finished')
+assert.ok(emptyFinished, 'empty topic still renders the finished section')
+assert.equal(emptyFinished.tickets.length, 0)
+assert.equal(emptyFinished.countText, '0（近 24h 0）')
+assert.equal(emptyFinished.emptyText, '近 24h 无完成')
+
+const fromServer = layout.topicTicketLayout(legacyTickets, {
+  shown: [legacyTickets[0], legacyTickets[1]], totalCount: 5, recentCount: 3,
+})
+assert.equal(fromServer.completed.shown.length, 2)
+assert.equal(fromServer.groups.find(group => group.key === 'finished').countText, '5（近 24h 3）')
+
 console.log('topic recent completed selection ok')

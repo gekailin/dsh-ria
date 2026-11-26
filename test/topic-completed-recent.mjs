@@ -145,3 +145,40 @@ assert.equal(fromServer.completed.shown.length, 2)
 assert.equal(fromServer.groups.find(group => group.key === 'finished').countText, '5（近 24h 3）')
 
 console.log('topic recent completed selection ok')
+// The board card and the topic dialog must carry the same completed segment.
+{
+  const fixture = await createFixture({ stateDefault: true })
+  try {
+    const store = fixture.service.store
+    const topic = store.addTopic({ title: 'card completed topic' })
+    const ids = []
+    for (const [index, age] of [1, 2, 3, 4, 30].entries()) {
+      const created = store.addTicket({ goal: 'card completed ' + index })
+      const moved = store.transitionTicket(created.ticketId, 'done', { closedAt: now - age * hour, at: now - age * hour, resolution: { summary: 'done' } })
+      assert.equal(moved.ok, true, JSON.stringify(moved))
+      store.linkTicket(topic.topicId, created.ticketId, 'primary')
+      ids.push(created.ticketId)
+    }
+    const board = await fixture.service.boardData({ now })
+    const project = board.projects.find(item => item.topics.some(card => card.topicId === topic.topicId))
+    assert.ok(project, 'topic card exists on the board')
+    const card = project.topics.find(item => item.topicId === topic.topicId)
+    const dialog = await fixture.service.boardTopic(topic.topicId, { now })
+    assert.deepEqual(card.completed.shown.map(item => item.ticketId), [ids[0], ids[1], ids[2]])
+    assert.equal(card.completed.totalCount, 5)
+    assert.equal(card.completed.recentCount, 4)
+    assert.deepEqual(card.completed.shown.map(item => item.ticketId), dialog.completed.shown.map(item => item.ticketId), 'card and dialog are the same source')
+    assert.equal(card.done, dialog.counts.done)
+    console.log('topic card completed source ok')
+  } finally { fixture.cleanup() }
+}
+
+const clientSource = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+assert.match(clientSource, /data-ria-topic-completed/)
+assert.match(clientSource, /topicCompletedShown/)
+assert.match(clientSource, /topicTicketTimeText/)
+assert.match(clientSource, /completedShown\.map/)
+assert.match(clientSource, /已完成 /)
+assert.match(clientSource, /近 24h " \+ completedRecent/)
+console.log('topic card completed client hooks ok')
+

@@ -68,8 +68,8 @@ assert.deepEqual(edge.shown.map(item => item.ticketId), ['ticket-future'])
 assert.equal(edge.totalCount, 1)
 assert.equal(edge.recentCount, 1)
 
-// Server integration: the board topic endpoint applies the same window and
-// retains total/recent counts while dropping older terminal tickets.
+// Server integration: the topic dialog keeps every completed ticket; the board
+// card carries the separate 24h/3 segment.
 {
   const fixture = await createFixture({ stateDefault: true })
   try {
@@ -85,10 +85,8 @@ assert.equal(edge.recentCount, 1)
     }
     const data = await fixture.service.boardTopic(topic.topicId, { now })
     assert.equal(data.ok, true)
-    assert.equal(data.completed.totalCount, 5)
-    assert.equal(data.completed.recentCount, 4)
-    assert.deepEqual(data.completed.shown.map(item => item.ticketId), [ids[0], ids[1], ids[2]])
-    assert.equal(data.tickets.filter(item => item.status === 'done').length, 3, 'old completed tickets omitted from first paint')
+    assert.equal(data.completed, undefined, 'detail keeps the original all-completed behavior')
+    assert.equal(data.tickets.filter(item => item.status === 'done').length, 5, 'detail keeps every completed ticket')
     assert.equal(data.counts.done, 5, 'header total keeps all completed tickets')
   } finally {
     fixture.cleanup()
@@ -99,7 +97,7 @@ const client = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8'
 assert.match(client, /近 24h 无完成/)
 assert.match(client, /近 24h " \+ completedRecent/)
 assert.match(client, /group\.countText/)
-assert.match(client, /data-ria-ticket-empty/)
+assert.match(client, /data-ria-topic-completed-empty/)
 
 // Execute the actual client-side layout function with the old server payload
 // (no completed field) and an all-empty topic. This pins the null guard and the
@@ -111,7 +109,7 @@ const layoutSource = client.slice(layoutStart, layoutEnd)
 const makeLayout = new Function(
   'topicTicketTerminal',
   'Date',
-  layoutSource + '\nreturn { topicTicketLayout, topicRecentCompletedFallback }',
+  layoutSource + '\nreturn { topicTicketLayout, topicRecentCompletedFallback, topicCardCompletedInfo }',
 )
 const isTerminal = ticket => ['done', 'cancelled', 'failed'].includes(ticket && ticket.status)
 const layout = makeLayout(isTerminal, { now: () => now })
@@ -122,27 +120,23 @@ const legacyTickets = [
   { ticketId: 'ticket-d', status: 'done', closedAt: now - 4 * hour, createdAt: now - 5 * hour },
   { ticketId: 'ticket-old', status: 'done', closedAt: now - 30 * hour, createdAt: now - 31 * hour },
 ]
-const legacy = layout.topicTicketLayout(legacyTickets, null)
-assert.equal(legacy.completed.totalCount, 5)
-assert.equal(legacy.completed.recentCount, 4)
-assert.deepEqual(legacy.completed.shown.map(item => item.ticketId), ['ticket-a', 'ticket-b', 'ticket-c'])
+const legacy = layout.topicTicketLayout(legacyTickets)
 const legacyFinished = legacy.groups.find(group => group.key === 'finished')
-assert.equal(legacyFinished.tickets.length, 3)
-assert.equal(legacyFinished.countText, '5（近 24h 4）')
+assert.equal(legacyFinished.tickets.length, 5, 'detail shows every completed ticket, including the 30h one')
+assert.equal(legacyFinished.label, '已完成与已结束')
+assert.equal(legacyFinished.countText, undefined)
 
-const empty = layout.topicTicketLayout([], null)
-assert.equal(empty.groups.length, 1, 'empty topic renders only the finished section')
-const emptyFinished = empty.groups.find(group => group.key === 'finished')
-assert.ok(emptyFinished, 'empty topic still renders the finished section')
-assert.equal(emptyFinished.tickets.length, 0)
-assert.equal(emptyFinished.countText, '0（近 24h 0）')
-assert.equal(emptyFinished.emptyText, '近 24h 无完成')
+const empty = layout.topicTicketLayout([])
+assert.equal(empty.groups.length, 0, 'empty topic has no completed section in the original detail behavior')
 
-const fromServer = layout.topicTicketLayout(legacyTickets, {
-  shown: [legacyTickets[0], legacyTickets[1]], totalCount: 5, recentCount: 3,
+const cardInfo = layout.topicCardCompletedInfo({
+  completed: { shown: [legacyTickets[0], legacyTickets[1], legacyTickets[2]], totalCount: 5, recentCount: 4 },
 })
-assert.equal(fromServer.completed.shown.length, 2)
-assert.equal(fromServer.groups.find(group => group.key === 'finished').countText, '5（近 24h 3）')
+assert.deepEqual(cardInfo.shown.map(item => item.ticketId), ['ticket-a', 'ticket-b', 'ticket-c'])
+assert.equal(cardInfo.totalCount, 5)
+assert.equal(cardInfo.recentCount, 4)
+const cardFallback = layout.topicCardCompletedInfo({})
+assert.deepEqual(cardFallback.shown, [], 'missing completed data falls back safely instead of throwing')
 
 console.log('topic recent completed selection ok')
 // The board card and the topic dialog must carry the same completed segment.
@@ -164,10 +158,11 @@ console.log('topic recent completed selection ok')
     assert.ok(project, 'topic card exists on the board')
     const card = project.topics.find(item => item.topicId === topic.topicId)
     const dialog = await fixture.service.boardTopic(topic.topicId, { now })
+    const expectedRecent = selectRecentCompleted(dialog.tickets.filter(item => item.status === 'done'), now)
     assert.deepEqual(card.completed.shown.map(item => item.ticketId), [ids[0], ids[1], ids[2]])
     assert.equal(card.completed.totalCount, 5)
     assert.equal(card.completed.recentCount, 4)
-    assert.deepEqual(card.completed.shown.map(item => item.ticketId), dialog.completed.shown.map(item => item.ticketId), 'card and dialog are the same source')
+    assert.deepEqual(card.completed.shown.map(item => item.ticketId), expectedRecent.shown.map(item => item.ticketId), 'card uses the same selector as the completed source')
     assert.equal(card.done, dialog.counts.done)
     console.log('topic card completed source ok')
   } finally { fixture.cleanup() }

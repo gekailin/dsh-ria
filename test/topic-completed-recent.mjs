@@ -94,9 +94,11 @@ assert.equal(edge.recentCount, 1)
 }
 
 const client = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
-assert.match(client, /近 24h 无完成/)
 assert.match(client, /cards\(completedShown\)/)
-assert.match(client, /data-ria-topic-completed-empty/)
+assert.match(client, /topicCompletedHidden/)
+assert.match(client, /ellipsisRow\(topicCompletedHidden\(topic\), counts\.done\)/)
+assert.doesNotMatch(client, /近 24h 无完成/)
+assert.doesNotMatch(client, /data-ria-topic-completed-empty/)
 
 // Execute the actual client-side layout function with the old server payload
 // (no completed field) and an all-empty topic. This pins the null guard and the

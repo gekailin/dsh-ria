@@ -13,13 +13,14 @@ try {
   const meta = {}
   let creates = 0
   let nextStatus = { ok: true }
+  let reflectionEnabled = false
   const service = Object.create(RiaService.prototype)
   service.stateDir = dir
   service.reflections = new Map()
   const events = []
   service.routerEvents = { append: event => events.push(event) }
   service.log = () => {}
-  service.store = { reflectionSettings: () => ({ enabled: false }) }
+  service.store = { reflectionSettings: () => ({ enabled: reflectionEnabled, cadence: 'daily', time: '23:40', weekday: 1 }) }
   service.schedule = null
   service.tickets = {
     tickets: () => tickets,
@@ -96,7 +97,6 @@ try {
   // Host-side interception: scheduled/catchup user/message triggers startReflectionRun when enabled, ignores & disables when disabled.
   const startedCalls = []
   let disableCalls = 0
-  let reflectionEnabled = false
   const fakeCtrl = Object.create(Controller.prototype)
   fakeCtrl.log = () => {}
   fakeCtrl.service = {
@@ -143,5 +143,19 @@ try {
   assert.doesNotMatch(handler, /sessionController[.]prompt/, 'handler must not prompt Chat')
   assert.match(handler, /202/)
   assert.match(handler, /503/)
+  // Due-time fallback: no reminder event, still starts exactly once.
+  reflectionEnabled = true
+  writeReflectionState(dir, { ...readReflectionState(dir), lastCompletedDate: '2026-11-26', activeRunId: null, lastAttemptAt: null })
+  const dueAt = Date.parse('2026-11-27T15:50:00Z')
+  const due = await service.reflectionDueCheck('test', dueAt)
+  assert.equal(due.ok, true)
+  assert.equal(due.queued, true, JSON.stringify(due))
+  assert.equal(due.forDate, '2026-11-27')
+  const dueAgain = await service.reflectionDueCheck('test', dueAt)
+  assert.equal(dueAgain.ok, true)
+  assert.equal(Boolean(dueAgain.queued), false, 'same due run must not create another ticket')
+  assert.ok(['active', 'attempted_today', 'already_running'].includes(dueAgain.skipped) || dueAgain.already_running, JSON.stringify(dueAgain))
+  assert.match(REFLECTION_SCHEDULE_PROMPT, /发起失败或未尝试/)
+  assert.doesNotMatch(REFLECTION_SCHEDULE_PROMPT, /已自动尝试发起/)
   console.log('reflection run api ok')
 } finally { rmSync(dir, { recursive: true, force: true }) }

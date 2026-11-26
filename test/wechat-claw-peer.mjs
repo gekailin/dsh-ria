@@ -41,7 +41,7 @@ function fakeContext(prompts = []) {
   }
 }
 
-function serviceFor(dir, { logs = [], prompts = [] } = {}) {
+function serviceFor(dir, { logs = [], prompts = [], onDegraded } = {}) {
   return new WechatClawService({
     ctx: fakeContext(prompts),
     stateDir: dir,
@@ -49,6 +49,7 @@ function serviceFor(dir, { logs = [], prompts = [] } = {}) {
     getRiaId: () => 'ria-session',
     log: (level, message) => logs.push({ level, message }),
     typingOptions: () => ({ enabled: false }),
+    onDegraded,
   })
 }
 
@@ -172,6 +173,7 @@ function inbound(messageId = 'msg-1', contextToken = TOKEN) {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-ria-claw-peer-reject-'))
   const logs = []
   const sent = []
+  const degraded = []
   let reject = true
   let httpFailure = false
   let echoToken = TOKEN
@@ -193,7 +195,7 @@ function inbound(messageId = 'msg-1', contextToken = TOKEN) {
   await listen(server)
   const base = 'http://127.0.0.1:' + server.address().port
   seedPeer(dir, { userId: 'user-1', contextToken: TOKEN, at: Date.now() - 1000 })
-  const service = serviceFor(dir, { logs })
+  const service = serviceFor(dir, { logs, onDegraded: status => degraded.push(status) })
   try {
     await attachSession(service, base)
     assert.equal(service.peerRestored, true)
@@ -204,9 +206,12 @@ function inbound(messageId = 'msg-1', contextToken = TOKEN) {
       assert.equal(error.message.includes(TOKEN), false)
       return true
     })
-    assert.equal(service.peer, undefined)
-    assert.equal(service.peerRestored, false)
-    assert.equal(stateOf(dir).peer, undefined)
+    assert.deepEqual(service.peer, { userId: 'user-1', contextToken: TOKEN })
+    assert.equal(service.peerRestored, true)
+    assert.equal(stateOf(dir).peer.contextToken, TOKEN)
+    assert.equal(degraded.length, 1)
+    assert.equal(degraded[0].degraded.code, 'WECHAT_CLAW_PEER_REJECTED')
+    assert.equal(service.degraded.code, 'WECHAT_CLAW_PEER_REJECTED')
 
     reject = false
     await service.handleMessage(service.session, inbound('refresh-1', 'fresh-token'))
@@ -219,6 +224,7 @@ function inbound(messageId = 'msg-1', contextToken = TOKEN) {
     })
     httpFailure = false
     await service.sendText('after refresh')
+    assert.equal(service.degraded, undefined)
     assert.equal(sent.length, 3)
     assert.equal(sent[2].msg.context_token, 'fresh-token')
     assert.equal(logs.some(entry => entry.message.includes(TOKEN)), false)

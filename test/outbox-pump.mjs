@@ -64,8 +64,7 @@ try {
   const deferredEvents = events().filter(item => item.event === 'outbox.deferred.backlog')
   assert.equal(deferredEvents.length, 1, 'deferred alert fires once for the same backlog')
   assert.equal(deferredEvents[0].payload.pending, 5)
-  assert.equal(chat.length, 1)
-  assert.match(chat[0], /补发积压/)
+  assert.equal(chat.length, 0, 'deferred backlog is event-only, no user push')
   service.checkOutboxDeferredBacklog([{ id: 'old-deferred', kind: WECHAT_ASSISTANT_NOTE_KIND, status: 'pending', eventAt: Date.now() - 3 * 60 * 1000 }])
   assert.ok(events().some(item => item.event === 'outbox.deferred.backlog' && item.payload.pending === 1))
 

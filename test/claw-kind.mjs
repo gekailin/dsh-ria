@@ -4,22 +4,35 @@ import { Outbound } from '../lib/wechat/outbound.mjs'
 
 // 1) A session owning a working ticket stays on the ticket settlement lane:
 // sendWatchRelay never emits a conversational relay or duplicate status notice.
+// The skip itself must be observable, otherwise it is indistinguishable from a
+// delivery (CoManagement.deliver treats a resolved send as success).
 {
   const calls = []
+  const events = []
   const ctx = {
     service: {
       store: { settings: () => ({ relay: { maxChars: 400 } }) },
       tickets: { tickets: () => [] },
     },
     watchRelayLog: [],
+    relaySkipNotices: new Map(),
+    routerEvent: event => events.push(event),
     executorWorkingTicket: () => ({ ticketId: 'ticket_relay_working', status: 'working' }),
     latestExecutorReport: () => ({ summary: 'finished' }),
     notifyTicketStatus: async () => { calls.push('status'); return { text: '#relay working' } },
     notifyChat: async () => { calls.push('chat'); return true },
   }
-  await Controller.prototype.sendWatchRelay.call(ctx, { watchId: 'w1', sessionId: 'session-co', titleSnapshot: 'co' }, 'body', {})
+  // The prototype is called with a bare context in this suite: bind the helper
+  // the skip path uses so the test exercises the real implementation.
+  ctx.recordWatchRelaySkipped = (...args) => Controller.prototype.recordWatchRelaySkipped.apply(ctx, args)
+  await Controller.prototype.sendWatchRelay.call(ctx, { watchId: 'w1', sessionId: 'session-co', titleSnapshot: 'co' }, 'body', { seq: 7 })
   assert.equal(calls.length, 0, 'working-ticket session must not emit a watch relay')
   assert.equal(ctx.watchRelayLog.length, 0)
+  assert.equal(events.length, 1)
+  assert.equal(events[0].event, 'relay.skipped')
+  assert.equal(events[0].reason, 'working_ticket')
+  assert.equal(events[0].payload.ticketId, 'ticket_relay_working')
+  assert.equal(events[0].payload.seq, 7)
 }
 
 // 1b) A historical terminal ticket is not a status event for a ticket-free turn.

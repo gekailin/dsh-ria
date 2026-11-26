@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { createFixture } from './support/ria-fixture.mjs'
 import {
   COMPLETED_RECENT_EMPTY_TEXT,
-  COMPLETED_RECENT_LIMIT,
+  BOARD_TOPIC_GROUP_LIMIT,
   COMPLETED_RECENT_WINDOW_MS,
   selectRecentCompleted,
 } from '../lib/board-completed.mjs'
@@ -13,7 +13,7 @@ const hour = 60 * 60 * 1000
 const ticket = (id, closedAt) => ({ ticketId: id, closedAt })
 
 assert.equal(COMPLETED_RECENT_WINDOW_MS, 24 * hour)
-assert.equal(COMPLETED_RECENT_LIMIT, 3)
+assert.equal(BOARD_TOPIC_GROUP_LIMIT, 3)
 
 // Five completed tickets: four inside 24h, only newest three shown.
 const five = [
@@ -94,9 +94,11 @@ assert.equal(edge.recentCount, 1)
 }
 
 const client = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
-assert.match(client, /cards\(completedShown\)/)
-assert.match(client, /topicCompletedHidden/)
-assert.match(client, /ellipsisRow\(topicCompletedHidden\(topic\), counts\.done\)/)
+assert.match(client, /function renderTopicGroup/)
+assert.match(client, /renderTopicGroup\(\{ key: "done"/)
+assert.match(client, /items: completedShown/)
+assert.doesNotMatch(client, /cards\(completedShown\)/)
+assert.match(client, /ellipsisRow\(omitted, opts\.count\)/)
 assert.doesNotMatch(client, /近 24h 无完成/)
 assert.doesNotMatch(client, /data-ria-topic-completed-empty/)
 
@@ -110,10 +112,12 @@ const layoutSource = client.slice(layoutStart, layoutEnd)
 const makeLayout = new Function(
   'topicTicketTerminal',
   'Date',
+  'topicGroupLimit',
   layoutSource + '\nreturn { topicTicketLayout, topicRecentCompletedFallback, topicCardCompletedInfo }',
 )
 const isTerminal = ticket => ['done', 'cancelled', 'failed'].includes(ticket && ticket.status)
-const layout = makeLayout(isTerminal, { now: () => now })
+const testTopicGroupLimit = topic => Number.isSafeInteger(topic && topic.groupLimit) && topic.groupLimit > 0 ? topic.groupLimit : 0
+const layout = makeLayout(isTerminal, { now: () => now }, testTopicGroupLimit)
 const legacyTickets = [
   { ticketId: 'ticket-a', status: 'done', closedAt: now - hour, createdAt: now - 2 * hour },
   { ticketId: 'ticket-b', status: 'done', closedAt: now - 2 * hour, createdAt: now - 3 * hour },
@@ -165,15 +169,16 @@ console.log('topic recent completed selection ok')
     assert.equal(card.completed.recentCount, 4)
     assert.deepEqual(card.completed.shown.map(item => item.ticketId), expectedRecent.shown.map(item => item.ticketId), 'card uses the same selector as the completed source')
     assert.equal(card.done, dialog.counts.done)
+    assert.equal(card.groupLimit, BOARD_TOPIC_GROUP_LIMIT, 'topic card receives the shared limit')
     console.log('topic card completed source ok')
   } finally { fixture.cleanup() }
 }
 
 const clientSource = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
 assert.match(clientSource, /topicCompletedShown/)
-assert.match(clientSource, /cards\(completedShown\)/)
+assert.match(clientSource, /renderTopicGroup/)
 assert.doesNotMatch(clientSource, /completedShown\.map/)
 assert.doesNotMatch(clientSource, /completedTotal/)
 assert.doesNotMatch(clientSource, /近 24h " \+ completedRecent/)
-assert.match(clientSource, /String\(counts\.done\)/)
+assert.match(clientSource, /section\(opts\.label, opts\.count, opts\.color\)/)
 console.log('topic card completed client hooks ok')

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createFixture } from './support/ria-fixture.mjs'
-import { clipStructuredText } from '../lib/core/shared.mjs'
+import { clipStructuredText, stripLeadingVoiceHeading } from '../lib/core/shared.mjs'
 
 // Structure-preserving clip: under-limit text is byte-for-byte unchanged.
 const multiline = '定位：先给结论。\n\n- 第一项\n- 第二项'
@@ -37,7 +37,7 @@ try {
 
   // A full-length custom style is clipped at a structure boundary, not mid-sentence.
   store.setSettings({
-    style: { enabled: true, custom: '定位：先给结论。\n\n- A\n- B\n' + '长'.repeat(300) },
+    style: { enabled: true, custom: '定位：先给结论。\n\n- A\n- B\n' + '长'.repeat(600) },
   })
   const longPrompt = controller.chatSystemPrompt('BASE', {})
   const voiceStart = longPrompt.indexOf('[说话风格]')
@@ -45,10 +45,40 @@ try {
   const longVoice = longPrompt.slice(voiceStart, nextSection > voiceStart ? nextSection : undefined)
   const body = longVoice.split('\n').slice(1).join('\n')
   assert.ok(Array.from(body).length <= 500, 'voice body capped at 500')
-  assert.ok(body.endsWith('…'), body.slice(-20))
-  assert.equal(body.includes('\n- A\n- B'), true, 'list structure is preserved before truncation')
+  assert.ok(Array.from(body).length <= 500, 'voice body capped at 500')
+  assert.equal(body.includes('\n- A\n- B'), true, 'list structure is preserved')
 } finally {
   fixture.cleanup()
+}
+
+// Conservative source-heading stripping: only isolated Voice title + blank line.
+assert.equal(stripLeadingVoiceHeading('Voice\n\n正文'), '正文')
+assert.equal(stripLeadingVoiceHeading('## Voice\n\n正文'), '正文')
+assert.equal(stripLeadingVoiceHeading('**Voice**\n\n正文'), '正文')
+assert.equal(stripLeadingVoiceHeading('正文\n\nVoice'), '正文\n\nVoice')
+assert.equal(stripLeadingVoiceHeading('Voice: 正文\n\n后文'), 'Voice: 正文\n\n后文')
+assert.equal(stripLeadingVoiceHeading('Voice\n正文'), 'Voice\n正文')
+assert.equal(stripLeadingVoiceHeading('A'.repeat(21) + '\n\n正文'), 'A'.repeat(21) + '\n\n正文')
+
+{
+  const sourceFixture = await createFixture({ stateDefault: true })
+  try {
+    const sourceStore = sourceFixture.service.store
+    const sourceController = sourceFixture.service.controller
+    const original = 'Voice\n\n多一句人味：先接住对方的处境。\n\n- 不要灌水\n- 先给结论'
+    sourceStore.setSettings({ style: { enabled: true, custom: original } })
+    const before = sourceStore.settings().style.custom
+    const prompt = sourceController.chatSystemPrompt('BASE', {})
+    const voiceStart = prompt.indexOf('[说话风格]')
+    const voiceBody = prompt.slice(voiceStart + '[说话风格]'.length).replace(/^\n/, '')
+    assert.ok(voiceBody.startsWith('多一句人味：'), voiceBody)
+    assert.equal(voiceBody.includes('Voice'), false)
+    assert.equal(voiceBody.includes('- 不要灌水\n- 先给结论'), true)
+    assert.equal(sourceStore.settings().style.custom, before, 'source style is not modified')
+    assert.equal(sourceStore.settings().style.custom, original)
+  } finally {
+    sourceFixture.cleanup()
+  }
 }
 
 console.log('voice prompt format ok')

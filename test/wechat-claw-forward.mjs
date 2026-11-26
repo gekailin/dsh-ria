@@ -219,7 +219,9 @@ function makeClaw({ stateDir, send, sendImage, imageOptions = { inbound: true, o
     }
     const retried = await service.handleWechatClawInbound()
     assert.ok(retried >= 1)
-    assert.equal(service.outbox.entry(deferred.id).status, 'delivered')
+    assert.equal(service.outbox.entry(deferred.id).status, 'pending', 'inbound only re-arms; it must not flush the outbox')
+    await service.tickOutbox()
+    assert.equal(service.outbox.entry(deferred.id).status, 'delivered', 'the normal tick delivers without relying on inbound')
   } finally {
     service.wechatClaw.sendAssistantNote = original
     fixture.cleanup()

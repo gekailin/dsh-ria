@@ -23,6 +23,13 @@ try {
   assert.ok(reconciled)
   assert.equal(reconciled.payload.autoPauseDisabled, true)
 
+  // A user's manual pause is never cleared by the auto-pause reconcile.
+  service.wechatClaw.setPaused(true, { by: 'manual', reason: 'user paused Claw' })
+  assert.equal(service.wechatClaw.reconcileAutoPauseSetting(), false)
+  assert.equal(service.wechatClaw.paused, true)
+  assert.equal(service.wechatClaw.pausedBy, 'manual')
+  service.wechatClaw.setPaused(false, { by: 'manual', reason: 'test reset' })
+
   service.wechatClaw.paused = true
   service.wechatClaw.pausedBy = 'channel'
   assert.equal(service.wechatClaw.reconcileAutoPauseSetting(), true)

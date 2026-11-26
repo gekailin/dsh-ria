@@ -31,6 +31,14 @@ try {
     action: 'add', sessionId: coManaged, cwd: '/tmp', allowDispatch: false,
   })
   assert.equal(registered.ok, true, JSON.stringify(registered))
+  // Co-managed is the user's own context: installing its executor role must not
+  // add the managed Executor prompt or the ria_executor_report tool.
+  controller.install(fixture.agentFor(coManaged), 'executor')
+  assert.equal(fixture.assembleSystemPrompt(coManaged), '')
+  assert.equal(fixture.visibleTools(coManaged).includes('ria_executor_report'), false)
+  // Managed Executor keeps its direct prompt and report tool.
+  assert.match(fixture.assembleSystemPrompt(executor), /你是直管 Executor/)
+  assert.equal(fixture.visibleTools(executor).includes('ria_executor_report'), true)
   const agentOf = id => fixture.agentFor(id)
   const preStep = (id, messages) => controller.onPreStep(
     { agent: agentOf(id), turn: 1 },

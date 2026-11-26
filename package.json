@@ -37,6 +37,7 @@
     "lib/shared",
     "lib/tickets.mjs",
     "lib/topics.mjs",
+    "lib/board-completed.mjs",
     "lib/router-events.mjs",
     "lib/grants.mjs",
     "lib/turn-end.mjs",

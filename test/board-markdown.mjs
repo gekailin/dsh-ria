@@ -86,11 +86,12 @@ const sample = {
   primaryTopicId: 'topic_1', unknownFutureField: 'keep me'
 }
 const sections = ticketDetailSections(sample, { ticket: sample, lastResult: { text: 'ok', turn: 1, outcome: 'completed' } })
-assert.deepEqual(sections.map(section => section.id), ['basic', 'report', 'history', 'metadata'])
+assert.deepEqual(sections.map(section => section.id), ['report', 'basic', 'history', 'metadata'])
 const keys = sections.flatMap(section => section.entries.map(entry => entry.key))
 assert.equal(new Set(keys).size, keys.length, 'no field is assigned to two sections')
 for (const key of Object.keys(sample)) assert.ok(keys.includes(key), 'missing field: ' + key)
-assert.ok(keys.includes('lastResult'), 'detail lastResult is rendered')
+assert.ok(!keys.includes('lastResult'), 'executor lastResult is omitted from detail dialog')
+assert.equal(sections[0].entries[0].key, 'resolution', 'resolution is placed first in detail dialog')
 assert.ok(sections.find(section => section.id === 'metadata').entries.some(entry => entry.key === 'unknownFutureField'))
 assert.equal(sections.find(section => section.id === 'report').entries.find(entry => entry.key === 'resolution').kind, 'resolution')
 assert.equal(sections.find(section => section.id === 'basic').entries.find(entry => entry.key === 'goal').kind, 'markdown')

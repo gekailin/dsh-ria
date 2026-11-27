@@ -93,6 +93,10 @@ try {
   assert.equal(proposalSearch.status, 200)
   assert.equal(proposalSearch.body.total, 1)
   assert.match(proposalSearch.body.items[0].body, /beta/)
+  const proposalScope = await get('/cognition/proposals?scope=project%3Adsh-ria&limit=20')
+  assert.equal(proposalScope.status, 200)
+  assert.equal(proposalScope.body.total, 1)
+  assert.equal(proposalScope.body.items[0].scope, 'project:dsh-ria')
 
   // Invalid input is rejected before the store is queried.
   for (const path of [

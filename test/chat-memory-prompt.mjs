@@ -20,7 +20,7 @@ try {
   replaceMemory('用户偏好：先给结论，再展开。')
   const first = prompt()
   assert.ok(first.includes('你是 Chat（Ria 的快脑）'), 'base Chat prompt is still present')
-  assert.ok(first.includes('以下为长期记忆摘要（仅 user:preference / user:agreement 的 active 条目'))
+  assert.ok(first.includes('以下为长期记忆（所有 user:preference / user:agreement 的 active 条目'))
   assert.ok(first.includes('ria_chat_cognition_search'), 'the digest points at the read-only search tool')
   assert.ok(first.includes('用户偏好：先给结论，再展开。'))
 
@@ -55,16 +55,16 @@ try {
   assert.equal(step.messages.length, 0)
   assert.equal(step.messages.some(item => item && item.source && item.source.form === 'chat-memory'), false)
 
-  // 6. The 2.8k budget covers the whole memory block including the marker;
-  // chatDigest itself caps SQLite memory at 1600 chars.
-  const db = cognition.openDb()
+  // 6. Chat long-term memory is injected in full without truncation.
   for (let index = 0; index < 20; index += 1) {
-    cognition.upsertEntry({ scope: 'user:preference', body: 'X'.repeat(200), cause: 'test', sources: [{ type: 'file', ref: 'test' }] })
+    const res = cognition.upsertEntry({ scope: 'user:preference', body: `条目${index}: ` + 'X'.repeat(200), cause: 'test', sources: [{ type: 'file', ref: 'test' }] })
+    assert.equal(res.ok, true, JSON.stringify(res))
   }
   const long = prompt()
   const block = long.slice(long.indexOf('[长期记忆摘要]'))
-  assert.ok(block.length <= 2800, 'memory block length ' + block.length)
-  assert.ok(block.includes('已截断'))
+  assert.ok(block.length > 2800, 'full memory block is not truncated: ' + block.length)
+  assert.equal(block.includes('已截断'), false, 'no truncation marker')
+  assert.ok(block.includes('条目0:') && block.includes('条目19:'), 'all active user memory entries are included')
 
   console.log('state chat memory prompt ok')
 } finally {

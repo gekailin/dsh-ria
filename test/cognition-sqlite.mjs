@@ -98,6 +98,15 @@ try {
   assert.equal(byPrefix.scope, 'project:dsh-ria')
 
   const count = store.searchEntries({}).length
+  // body accepts up to 400 chars and rejects > 400 chars.
+  const ok400 = store.upsertEntry({ ...entry, body: '字'.repeat(400) })
+  assert.equal(ok400.ok, true, JSON.stringify(ok400))
+  const tooLong401 = store.upsertEntry({ ...entry, body: '字'.repeat(401) })
+  assert.equal(tooLong401.ok, false)
+  assert.equal(tooLong401.code, 'cognition_invalid')
+  assert.equal(tooLong401.field, 'body')
+  const countAfter400 = store.searchEntries({}).length
+  assert.equal(countAfter400, count + 1)
   for (const missing of [
     { ...entry, scope: '' }, { ...entry, body: '' }, { ...entry, cause: '' }, { ...entry, sources: [] },
     { ...entry, sources: [{ type: 'unknown', ref: 'x' }] },
@@ -107,7 +116,7 @@ try {
     assert.equal(invalid.code, 'cognition_invalid')
     assert.ok(invalid.field)
   }
-  assert.equal(store.searchEntries({}).length, count, 'invalid entries are not written')
+  assert.equal(store.searchEntries({}).length, countAfter400, 'invalid entries are not written')
   store.db.close()
 
   // No backend configuration: SQLite is the only store; missing DB is a hard error.

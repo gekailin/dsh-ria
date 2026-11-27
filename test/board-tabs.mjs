@@ -6,9 +6,9 @@ const start = source.indexOf('/* board-tabs:start */')
 const end = source.indexOf('/* board-tabs:end */')
 assert.ok(start >= 0 && end > start, 'client board-tabs markers')
 const block = source.slice(start, end)
-const api = new Function(block + '\nreturn { BOARD_TAB_KEY, BOARD_TABS, BOARD_COGNITION_PAGE_SIZE, BOARD_COGNITION_STATUS, isBoardTab, boardTabFromStorage, rememberBoardTab, nextBoardTab, cognitionQuery, cognitionEntryView, cognitionProposalView };')()
+const api = new Function(block + '\nreturn { BOARD_TAB_KEY, BOARD_TABS, BOARD_COGNITION_PAGE_SIZE, BOARD_COGNITION_STATUS, isBoardTab, boardTabFromStorage, rememberBoardTab, nextBoardTab, cognitionQuery, cognitionEntryView, cognitionProposalView, cognitionScopeBadge, cognitionKindLabel, cognitionFormatSources };')()
 
-const { BOARD_TAB_KEY, BOARD_TABS, BOARD_COGNITION_PAGE_SIZE, BOARD_COGNITION_STATUS, isBoardTab, boardTabFromStorage, rememberBoardTab, nextBoardTab, cognitionQuery, cognitionEntryView, cognitionProposalView } = api
+const { BOARD_TAB_KEY, BOARD_TABS, BOARD_COGNITION_PAGE_SIZE, BOARD_COGNITION_STATUS, isBoardTab, boardTabFromStorage, rememberBoardTab, nextBoardTab, cognitionQuery, cognitionEntryView, cognitionProposalView, cognitionScopeBadge, cognitionKindLabel, cognitionFormatSources } = api
 
 assert.equal(BOARD_TAB_KEY, 'dsh.ria.board.tab.v1')
 assert.deepEqual(BOARD_TABS.map(tab => tab.id), ['tickets', 'cognition', 'executors'])
@@ -165,3 +165,19 @@ assert.match(source, /copyNotice \|\| "复制"/)
 assert.doesNotMatch(source, /data-ria-cognition-expanded/)
 assert.doesNotMatch(source, /height: expanded \?/)
 assert.doesNotMatch(source, /data-ria-ticket-open-executor/)
+
+// Cognition card scope/project badge, kind labels, and full tooltip metadata.
+assert.deepEqual(cognitionScopeBadge('project:dsh-ria'), { kind: 'project', label: '项目: dsh-ria', slug: 'dsh-ria', raw: 'project:dsh-ria' })
+assert.deepEqual(cognitionScopeBadge('domain:ui'), { kind: 'domain', label: '领域: ui', slug: 'ui', raw: 'domain:ui' })
+assert.deepEqual(cognitionScopeBadge('global'), { kind: 'global', label: '全局', raw: 'global' })
+assert.deepEqual(cognitionScopeBadge('principle'), { kind: 'principle', label: '原则', raw: 'principle' })
+assert.deepEqual(cognitionScopeBadge('user:preference'), { kind: 'user', label: '用户偏好', raw: 'user:preference' })
+assert.equal(cognitionKindLabel('experience'), '经验')
+assert.equal(cognitionKindLabel('preference'), '偏好')
+assert.deepEqual(cognitionFormatSources([{ type: 'ticket', ref: 't_1' }, { type: 'file', ref: 'a.mjs' }]), ['ticket:t_1', 'file:a.mjs'])
+assert.match(source, /"data-ria-cognition-card-scope": scopeInfo\.raw/)
+assert.match(source, /"data-ria-cognition-tooltip-body": "1"/)
+assert.match(source, /"data-ria-cognition-tooltip-sources":/)
+assert.match(source, /"data-ria-cognition-tooltip-meta": "1"/)
+assert.match(source, /className: "ria-cognition-grid"/)
+assert.doesNotMatch(source, /executor 最后回复/)

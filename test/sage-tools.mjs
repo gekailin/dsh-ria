@@ -18,7 +18,7 @@ const SAGE_FORBIDDEN = [
   'schedule_create', 'skill', 'todo_write', 'workflow', 'working_directory',
 ]
 const CHAT_TOOLS = [
-  'ria_chat_co_manage', 'ria_chat_cognition_search', 'ria_chat_executor_config', 'ria_chat_forward', 'ria_chat_grant', 'ria_chat_models', 'ria_chat_new_session',
+  'ria_chat_answer', 'ria_chat_approval_decide', 'ria_chat_co_manage', 'ria_chat_cognition_search', 'ria_chat_executor_config', 'ria_chat_forward', 'ria_chat_grant', 'ria_chat_models', 'ria_chat_new_session',
   'ria_chat_propose', 'ria_chat_read', 'ria_chat_reflect', 'ria_chat_request', 'ria_chat_resume',
   'ria_chat_send_file', 'ria_chat_send_image', 'ria_chat_session_config', 'ria_chat_sessions', 'ria_chat_status', 'ria_chat_steer', 'ria_chat_stop_ticket',
 ]

@@ -56,3 +56,22 @@
   - 串行保护尚未绑定 Executor 或跨异步边界改变工单状态的入口（`plan / resume / stop`），防止并发 `resume` 重复派发两个 Executor 或 `plan` 中途被 `stop` 后误派发。
 - **单向嵌套（防死锁）**：
   - 永远只允许 `ticketLock(T)` → `executorLock(E)`，绝不允许反向；`settle` 只持有 `executorLock(E)` 并通过同步原子的 `transitionTicket()` 迁移状态。
+
+## 7. Chat 侧单次审批与会话回答工具
+
+Chat 有两个受限决定入口（**仅 Chat 角色注册**；工具名已登记在 `lib/tools/tool-catalog.mjs`）。它们都不新建状态机、不直改工单，只把决定交给既有路径。
+
+### 7.1 `ria_chat_approval_decide`
+
+- 参数：`approvalId`（必填）、`decision`（必填，`approve` / `deny`）、`reason`（`deny` 必填）。
+- 语义：等价于人在 GUI 点「批准/拒绝」——只 settle **这一条**已挂起的 `approval/request`（复用 `pendingSettlers`），随后由宿主 `approval/decided` 事件走既有迁移：批准 → `blocked(waitingOn=approval)` → `open` → `working`；拒绝 → 保持 `blocked` 并记录 failure。
+- 边界：**不触碰 `sandboxMode` / `approvalPolicy`**，不走 `ria_chat_grant`，不改变风险分级与审批触发时机。
+- 错误：`approval_not_found` / `approval_already_decided` / `approval_expired`（请求已不在等待，例如执行回合已结束）/ `approval_not_applicable`（工单已不处于 `blocked(waitingOn=approval)`）；`deny` 缺 `reason` 返回参数错误。
+- 审计：`approval/chat-decided`（`actorSource=chat`、`approvalId`、`ticketId`、`sessionId`、`toolName`、`decision`、`outcome`、`reason`、`at`），另有 `approval.chat_decided` 路由事件。
+
+### 7.2 `ria_chat_answer`
+
+- 参数：`sessionId` 或 `title`（二选一）、`answer`（必填）、`requestId`（可选）。
+- 语义：仅当会话实时状态 `pendingInput` 包含 `question` 时，把回答经既有投递路径（与 `ria_chat_forward` 相同的 `injectUserMessage`）投递给该会话并解除等待。
+- 错误：`answer_target_required` / `answer_target_conflict` / `answer_target_ambiguous` / `answer_target_not_found` / `answer_not_pending`（附当前 `running` 与 `pendingInput`）/ `answer_send_failed`。
+- 审计：`chat.answer.sent`（`actorSource=chat`、`sessionId`、`title`、`requestId`、`answerChars`、`answerDigest`、`at`），不落全量正文。

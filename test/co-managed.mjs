@@ -289,3 +289,40 @@ async function setup() {
     console.log('co-managed requires a WorkOrder ok')
   } finally { fixture.cleanup() }
 }
+
+// 7) Auto-deriving tags when allowDispatch=true and tags are omitted.
+{
+  const fixture = await createFixture({
+    state: true,
+    extraSessions: [
+      { sessionId: 'session-ui-cm', running: false, blank: false, updatedAt: 10, cwd: '/work/dsh-ria', projections: { values: { title: '前端看板优化' } } },
+      { sessionId: 'session-observe-only', running: false, blank: false, updatedAt: 11, cwd: '/work/dsh-ria', projections: { values: { title: '只看进展' } } },
+    ],
+  })
+  try {
+    await fixture.service.ensure()
+    const chat = fixture.service.controller.state.chatSessionId
+    const state = fixture.service.controller.state
+    // Seed a recent ticket executed by session-ui-cm with routingTags.
+    const prev = fixture.service.store.addTicket({ goal: '优化看板 UI', status: 'open', executor: 'session-ui-cm' })
+    state.setTicketMeta(prev.ticketId, { routingTags: ['board-ui', 'frontend'] })
+    // allowDispatch=false leaves tags empty when omitted.
+    const observeOnly = await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'add', sessionId: 'session-observe-only', allowDispatch: false })
+    assert.equal(observeOnly.ok, true, JSON.stringify(observeOnly))
+    assert.deepEqual(observeOnly.watch.tags, [], 'allowDispatch=false does not force derived tags')
+    // Flipping allowDispatch to true via set backfills tags from title + recent tasks.
+    const enabled = await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'set', sessionId: 'session-observe-only', allowDispatch: true })
+    assert.equal(enabled.ok, true, JSON.stringify(enabled))
+    assert.ok(enabled.watch.tags.includes('只看进展'), 'title token derived when enabling allowDispatch: ' + JSON.stringify(enabled.watch.tags))
+    // Adding with allowDispatch=true derives tags from recent ticket routingTags + title.
+    const added = await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'add', sessionId: 'session-ui-cm', allowDispatch: true })
+    assert.equal(added.ok, true, JSON.stringify(added))
+    assert.ok(added.watch.tags.includes('board-ui') && added.watch.tags.includes('frontend'), 'recent ticket routingTags derived: ' + JSON.stringify(added.watch.tags))
+    assert.ok(added.watch.tags.includes('前端看板优化'), 'title token derived: ' + JSON.stringify(added.watch.tags))
+    // Explicit tags: [] stays empty (never overridden).
+    const cleared = await fixture.callAs(chat, 'ria_chat_co_manage', { action: 'set', sessionId: 'session-ui-cm', tags: [] })
+    assert.equal(cleared.ok, true)
+    assert.deepEqual(cleared.watch.tags, [], 'explicit empty tags array is respected')
+    console.log('co-managed auto-derived tags ok')
+  } finally { fixture.cleanup() }
+}

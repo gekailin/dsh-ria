@@ -52,3 +52,31 @@
    - 自动标出含「待修 / 未修 / 先不开单 / TODO / 暂缓」字样的 `active` 条目、`overview` 过短或与 `workspaces` 矛盾的项目档案；
    - `disputed` 超过 48 小时的条目进入「待用户拍板」清单，推动尽快转为 `active` 或 `retired`，杜绝长期悬空。
 5. **反思执行隔离**：每次反思新建独立的一次性只读 Reflection Executor，通过 `ria_reflect_report` 提交报告草稿与 `cognitionActions`（最多 5 条），由宿主写入规范路径报告并将 `cognitionActions` 转为 `priority=high` 提案唤醒 Sage，用完即归档。
+
+## Chat 只读检索工具：`ria_chat_cognition_search`
+
+`chatDigest()` 只把 `user:preference` / `user:agreement` 的 active 条目注入 Chat 提示词，**最多约 1600 字且可能被截断**（`MAX_DIGEST` / `CHAT_MEMORY_LIMIT`），也不覆盖 `project:*` / `domain:*` / `principle`。为让 Chat 能按需读取**完整**条目，新增只注册给 Chat 的只读工具 `ria_chat_cognition_search`。
+
+### 参数
+
+| 参数 | 语义 |
+|---|---|
+| `query` | 大小写不敏感，LIKE 匹配 `body` / `cause` / `scope`（`%`/`_` 已转义，`ESCAPE`）。 |
+| `scope` | 精确匹配，或前缀匹配：`project:dsh-ria` 命中所有 `project:dsh-ria*`。 |
+| `status` | `active` / `disputed` / `retired`。 |
+| `limit` | 页大小，默认 10，上限 50（超出收敛为 50；非法值回落默认）。 |
+| `offset` | 跳过行数，默认 0。 |
+
+**至少提供 `query` / `scope` / `status` 之一**：三者都缺时返回 `{ok:false, code:"cognition_query_required"}`，绝不返回全库。
+
+### 返回
+
+- `items[]`：`id`、`scope`、`body`（**完整原样，不截断，不经过任何摘要/裁剪函数**）、`cause`、`status`、`createdAt`、`updatedAt`、`supersededBy`。
+- `total`（满足条件总条数）、`truncated`（`offset + items.length < total`）、`limit`、`offset`。
+- 排序固定 `updated_at DESC, id ASC`（稳定）。
+
+### 约束
+
+- **严格只读**：只执行 `SELECT COUNT(*)` 与分页 `SELECT`，不写库、不建提案、不触发裁决、不经过 Sage 写入路径。
+- **仅 Chat 角色注册**：Executor / Advisor / Sage / Reflection 的工具面均不含该工具（注册点在 `lib/tools/registry.mjs` 的 `isChatRole(role)` 分支）。
+- 提示词约束（`CHAT_MEMORY_NOTICE`）：摘要被截断、条目较多、或需要精确定位/核对某条认知（含 `cog_<N>`）时，必须先检索再行动，不得只凭摘要下结论。

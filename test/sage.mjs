@@ -109,7 +109,7 @@ try {
   cognition.openDb().prepare("DELETE FROM cognition_entries WHERE scope='user:preference'").run()
   cognition.upsertEntry({ scope: 'user:preference', body: '用户偏好：先给结论，再展开。', cause: 'test', sources: [{ type: 'file', ref: 'test' }] })
   const chatPrompt = fixture.assembleSystemPrompt(chat, { scope: chatAgent })
-  assert.ok(chatPrompt.includes('以下为长期记忆摘要，可能滞后；细节以 cognition 文件为准'))
+  assert.ok(chatPrompt.includes('ria_chat_cognition_search'), 'the memory block names the read-only search tool')
   assert.ok(chatPrompt.includes('用户偏好：先给结论，再展开。'))
   const decision = () => ({ kind: 'enter', messages: [] })
   const firstStep = await controller.onPreStep({ agent: chatAgent, turn: 1 }, async () => decision())

@@ -20,7 +20,8 @@ try {
   replaceMemory('用户偏好：先给结论，再展开。')
   const first = prompt()
   assert.ok(first.includes('你是 Chat（Ria 的快脑）'), 'base Chat prompt is still present')
-  assert.ok(first.includes('以下为长期记忆摘要，可能滞后'))
+  assert.ok(first.includes('以下为长期记忆摘要（仅 user:preference / user:agreement 的 active 条目'))
+  assert.ok(first.includes('ria_chat_cognition_search'), 'the digest points at the read-only search tool')
   assert.ok(first.includes('用户偏好：先给结论，再展开。'))
 
   // 2. Re-assembling reflects a later SQLite change without any event.

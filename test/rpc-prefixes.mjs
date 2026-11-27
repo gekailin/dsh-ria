@@ -39,17 +39,20 @@ try {
   assert.match(decision.messages[0].source.rpcId, /^ria_steer_/)
   assert.equal(decision.messages[0].source.ticketId, ticket.ticketId)
 
-  // 3) The managed-executor direct-user guard is still a Ria namespace message,
-  // so it can be told apart from a real user direct message.
+  // 3) The managed-executor direct-user guard drops the turn with zero LLM call
+  // and zero surface writes (messages: []) while recording a router audit event.
   const direct = {
     id: 'msg_direct_rpc', role: 'user', content: [{ type: 'text', text: 'user direct' }],
     source: { kind: 'user', rpcId: 'user-rpc-1' },
   }
   const guarded = await fixture.emit('agent/pre-step', { agent: fixture.agentFor(executor), turn: 1, step: 3 },
     async () => ({ kind: 'enter', messages: [direct] }))
-  assert.equal(guarded.messages.length, 1)
-  assert.equal(guarded.messages[0].source.kind, 'ria-task-host')
-  assert.match(guarded.messages[0].source.rpcId, /^ria_/)
+  assert.deepEqual(guarded.messages, [])
+  assert.ok(events().some(event => event.event === 'direct_user.blocked' && event.sessionId === executor))
+  // Host-originated messages still carry the ria_ namespace.
+  const hostMsg = fixture.service.hostMessage('nudge', 'test-nudge')
+  assert.equal(hostMsg.source.kind, 'ria-task-host')
+  assert.match(hostMsg.source.rpcId, /^ria_/)
   console.log('rpc prefixes ok')
 } finally {
   fixture.cleanup()

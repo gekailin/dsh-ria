@@ -47,12 +47,18 @@ try {
   const direct = rpcId => message(rpcId)
   const assertBlocked = async (id, fixed = FIXED_REPLY) => {
     const before = fixture.prompts.length
+    const beforeEvents = fixture.service.routerEvents.query({ limit: 200 }).events.length
     const result = await preStep(id, [direct('user-' + id)])
-    assert.equal(result.messages.length, 1)
-    assert.equal(result.messages[0].source.kind, 'ria-task-host')
-    assert.ok(result.messages[0].content[0].text.includes(fixed))
-    assert.equal(result.messages[0].content[0].text.includes('run this direct command'), false)
+    // Zero-LLM, zero-surface-write block: empty messages array closes turn cleanly.
+    assert.equal(result.kind, 'enter')
+    assert.deepEqual(result.messages, [])
     assert.equal(fixture.prompts.length, before, 'interception must not notify Chat')
+    const events = fixture.service.routerEvents.query({ limit: 200 }).events
+    assert.ok(events.length > beforeEvents, 'direct_user.blocked audit event recorded')
+    const latest = events.filter(item => item.event === 'direct_user.blocked' && item.sessionId === id).at(-1)
+    assert.ok(latest, 'direct_user.blocked event present for ' + id)
+    assert.equal(latest.payload.hint, fixed)
+    assert.equal(latest.payload.excerpt, 'run this direct command')
   }
 
   assert.equal(fixture.service.store.settings().blockDirectUserMessages, true)
@@ -62,6 +68,20 @@ try {
   await assertBlocked(executor)
   await assertBlocked(reflection)
   await assertBlocked(sage, SAGE_REPLY)
+
+  // directUserGuardsSnapshot matches the exact same guard predicate (used by
+  // GET /plugins/dsh-ria/api/session-guards for conversation.composer takeover).
+  {
+    const snap = controller.directUserGuardsSnapshot()
+    assert.equal(snap.riaSessionId, chat)
+    assert.equal(snap.sessions[advisor]?.role, 'advisor')
+    assert.equal(snap.sessions[executor]?.role, 'executor')
+    assert.equal(snap.sessions[reflection]?.role, 'executor')
+    assert.equal(snap.sessions[sage]?.role, 'sage')
+    assert.equal(snap.sessions[sage]?.hint, SAGE_REPLY)
+    assert.equal(snap.sessions[coManaged], undefined, 'co-managed must never be composer-blocked')
+    assert.equal(snap.sessions[chat], undefined, 'chat must never be composer-blocked')
+  }
 
   // Co-managed sessions are user-owned: direct user messages are normal input.
   {
@@ -73,11 +93,11 @@ try {
     assert.equal(fixture.service.controller.state.executor(coManaged).currentTicketId, null)
   }
 
-  // Sage also rejects direct input; host_ injection is allowed.
+  // Sage also rejects direct input with zero model call; host_ injection is allowed.
   {
     const input = [direct('user-sage-direct')]
     const result = await preStep(sage, input)
-    assert.ok(result.messages[0].content[0].text.includes(SAGE_REPLY))
+    assert.deepEqual(result.messages, [])
     const hostInput = [message('host_sage', 'internal proposal', 'user')]
     assert.equal((await preStep(sage, hostInput)).messages, hostInput)
   }
@@ -91,11 +111,45 @@ try {
 
   // Ria steer/forward injections carry explicit source kinds and pass the
   // direct-user guard for both managed and co-managed targets. A plain user
-  // message still gets blocked on a managed executor.
+  // message still gets blocked (messages: []) on a managed executor.
   for (const id of [executor, coManaged]) {
     const injected = [message('ria_injected', 'injected by Ria', 'user')]
     assert.equal((await preStep(id, injected)).messages, injected, 'rpcId ria_ injection must pass for ' + id)
-    assert.equal((await preStep(id, [direct('user-' + id)])).messages[0].source.kind, id === coManaged ? 'user' : 'ria-task-host')
+    const afterDirect = await preStep(id, [direct('user-' + id)])
+    if (id === coManaged) {
+      assert.equal(afterDirect.messages[0].source.kind, 'user')
+    } else {
+      assert.deepEqual(afterDirect.messages, [])
+    }
+  }
+
+  // Hijacked turn settlement guard: a direct user message during an active
+  // working ticket returns messages: [] AND does not park the ticket as empty_turn.
+  {
+    const workingTicket = fixture.service.store.addTicket({
+      status: 'working',
+      executor: executor,
+      waitingOn: 'executor',
+      goal: 'active task must survive direct message',
+    })
+    controller.state.setTicketMeta(workingTicket.ticketId, { phase: 'working', executorId: executor })
+    controller.state.addExecutor(executor, { status: 'working', currentTicketId: workingTicket.ticketId })
+    const hijacked = await controller.onPreStep(
+      { agent: agentOf(executor), turn: 9 },
+      async () => decisionWith([direct('user-mid-ticket')]),
+    )
+    assert.deepEqual(hijacked.messages, [])
+    const settled = await controller.settleCompletedTurn(
+      fixture.service.store.ticket(workingTicket.ticketId),
+      executor,
+      { type: 'turn/end', data: { turn: 9, reason: { kind: 'completed' } } },
+    )
+    assert.equal(settled.settled, false)
+    assert.equal(settled.reason, 'hijacked_turn')
+    assert.equal(fixture.service.store.ticket(workingTicket.ticketId).status, 'working', 'working ticket stays working')
+    // Cleanup ticket for subsequent assertions.
+    fixture.service.store.transitionTicket(workingTicket.ticketId, 'cancelled', { actor: 'user', resolution: { kind: 'cancelled', reason: 'cleanup' }, reason: 'cleanup' })
+    controller.state.addExecutor(executor, { status: 'idle', currentTicketId: null })
   }
 
   // waitingOn=user: the user must be able to answer the clarification.

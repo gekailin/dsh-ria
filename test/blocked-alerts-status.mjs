@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { createFixture } from './support/ria-fixture.mjs'
+import { noticeText } from '../lib/core/notice.mjs'
 
 const flush = () => new Promise(resolve => setTimeout(resolve, 0))
 
@@ -12,7 +13,7 @@ try {
   const events = []
   const logs = []
   const originalEvent = controller.routerEvent.bind(controller)
-  controller.notifyChat = async message => { notices.push(message); return true }
+  controller.notifyChat = async message => { notices.push(noticeText(message)); return true }
   controller.routerEvent = event => { events.push(event); originalEvent(event) }
   controller.log = (level, message) => { logs.push(level + ': ' + message) }
 
@@ -64,7 +65,7 @@ try {
   assert.equal(failedBlock.ticket.status, 'blocked')
   await flush()
   assert.equal(notices.length, 2, 'failed delivery did not add a notice')
-  controller.notifyChat = async message => { notices.push(message); return true }
+  controller.notifyChat = async message => { notices.push(noticeText(message)); return true }
   await controller.drainPendingNotices()
   assert.equal(notices.length, 3, 'same tick retried once after transport recovery')
   assert.ok(notices[2].includes('确认'))

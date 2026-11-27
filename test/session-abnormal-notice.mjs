@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { createFixture } from './support/ria-fixture.mjs'
+import { noticeText } from '../lib/core/notice.mjs'
 
 // A ticket-free co-managed session that ends abnormally must notify Chat once,
 // without entering any ticket/no_report settlement path.
@@ -10,8 +11,8 @@ try {
   const id = 'session-53d5a84b-def1-4dc3-8df2-ef9e2463c63a'
   const notices = []
   const clawNotices = []
-  controller.notifyChat = async (message) => { notices.push(String(message)); return true }
-  controller.notifyClawStatus = async (message) => { clawNotices.push(String(message)); return true }
+  controller.notifyChat = async (message) => { notices.push(noticeText(message)); return true }
+  controller.notifyClawStatus = async (message) => { clawNotices.push(noticeText(message)); return true }
   const ticketsBefore = fixture.service.store.tickets().length
   const ensureExecutor = () => controller.state.addExecutor(id, {
     kind: 'co-managed', executorType: 'work', status: 'idle', currentTicketId: null, cwd: '/tmp',

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { createFixture } from './support/ria-fixture.mjs'
+import { noticeText } from '../lib/core/notice.mjs'
 
 // The restart notice is a single Chat message driven by the boot marker:
 // first boot stays silent, a different pid announces with both pids, a missing
@@ -11,7 +12,7 @@ try {
   const service = fixture.service
   const controller = service.controller
   const notices = []
-  controller.queueChatNotice = message => { notices.push(String(message)) }
+  controller.queueChatNotice = message => { notices.push(noticeText(message)) }
   const restartEvents = () => service.routerEvents.query({ types: ['ria.restarted'], limit: 20 }).events
 
   // 1) First boot (no previous marker): nothing to announce.

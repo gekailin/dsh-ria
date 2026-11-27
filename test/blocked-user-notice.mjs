@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { createFixture } from './support/ria-fixture.mjs'
+import { noticeText } from '../lib/core/notice.mjs'
 
 const fixture = await createFixture({ stateDefault: true })
 const tick = () => new Promise(resolve => setTimeout(resolve, 40))
@@ -8,8 +9,8 @@ try {
   const store = fixture.service.store
   const chatNotices = []
   const clawNotices = []
-  controller.notifyChat = async (message) => { chatNotices.push(String(message)); return true }
-  controller.notifyClawStatus = async (message) => { clawNotices.push(String(message)); return true }
+  controller.notifyChat = async (message) => { chatNotices.push(noticeText(message)); return true }
+  controller.notifyClawStatus = async (message) => { clawNotices.push(noticeText(message)); return true }
   const question = '需要你拍板：a) 是否先精修 chunk 位姿；b) 是否做跨 chunk 联合优化；c) 相机高度是否作为硬约束；d) roll/pitch 自由度；e) 是否产出逐帧位姿。'
   const ticket = store.addTicket({
     status: 'blocked', waitingOn: 'user', executor: 'session-blocked',

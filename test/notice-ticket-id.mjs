@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { formatStatusNotice, formatTicketRef } from '../lib/core/notifications.mjs'
 import { chunk, protectChunkBoundary } from '../lib/wechat/outbound.mjs'
+import { noticeText, renderNotice } from '../lib/core/notice.mjs'
 import { createFixture } from './support/ria-fixture.mjs'
 
 // Every user-facing ticket notice must carry the COMPLETE ticket id, because the
@@ -71,17 +72,17 @@ try {
   })
 
   // 需要你决定 (blocked.user edge) goes through blockedUserNoticeText.
-  const needsYou = controller.renderTicketNotice(ticket, { edge: 'blocked.user', ticketId: ticket.ticketId })
+  const needsYou = renderNotice(controller.renderTicketNotice(ticket, { edge: 'blocked.user', ticketId: ticket.ticketId }))
   assertCarriesFullId(needsYou, ticket.ticketId, 'blocked.user notice')
 
   // 审批 (approval.asked edge) goes through formatStatusNotice.
-  const approval = controller.renderTicketNotice(ticket, { edge: 'approval.asked', ticketId: ticket.ticketId, approvalId: 'approval_missing' })
+  const approval = renderNotice(controller.renderTicketNotice(ticket, { edge: 'approval.asked', ticketId: ticket.ticketId, approvalId: 'approval_missing' }))
   assertCarriesFullId(approval, ticket.ticketId, 'approval.asked notice')
   assert.match(approval, /waitingOn=approval/)
 
   // Session-level approval notice names the bound ticket with its full id.
   const notices = []
-  controller.queueChatNotice = message => { notices.push(String(message)) }
+  controller.queueChatNotice = message => { notices.push(noticeText(message)) }
   controller.notifySessionApproval(executor, { toolName: 'bash', reason: '需要写文件' })
   assert.equal(notices.length, 1)
   // The session-level notice names the ticket bound to the executor, with its

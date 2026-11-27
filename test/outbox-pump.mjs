@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { createFixture } from './support/ria-fixture.mjs'
+import { noticeText } from '../lib/core/notice.mjs'
 import { WECHAT_ASSISTANT_NOTE_KIND, WECHAT_ASSISTANT_RETRY_DELAYS_MS } from '../lib/outbox.mjs'
 
 const fixture = await createFixture({ state: true })
@@ -54,7 +55,7 @@ try {
 
   assert.deepEqual(WECHAT_ASSISTANT_RETRY_DELAYS_MS, [10_000, 30_000, 60_000, 180_000, 300_000])
   const chat = []
-  service.controller.notifyChat = async text => { chat.push(text); return true }
+  service.controller.notifyChat = async text => { chat.push(noticeText(text)); return true }
   service.checkOutboxDeferredBacklog(Array.from({ length: 5 }, (_, index) => ({
     id: 'deferred-' + index, kind: WECHAT_ASSISTANT_NOTE_KIND, status: 'pending', eventAt: Date.now() - 1000,
   })))

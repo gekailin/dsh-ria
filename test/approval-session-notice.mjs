@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { Controller } from '../lib/core/controller.mjs'
 import { chatPrompt } from '../lib/prompts/shared.mjs'
+import { noticeText } from '../lib/core/notice.mjs'
 
 const base = (overrides = {}) => {
   const notices = []
@@ -12,7 +13,7 @@ const base = (overrides = {}) => {
     workingTicketFor: () => null,
     approvalBlockedTicketFor: () => null,
     coManagement: { active: () => null },
-    queueChatNotice: message => notices.push(message),
+    queueChatNotice: message => notices.push(noticeText(message)),
     queued: notices,
     log: () => {},
     approvalKey: () => 'approval-key',

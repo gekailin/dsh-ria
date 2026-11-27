@@ -103,6 +103,40 @@ try {
   assert.equal(card.counts.unreviewed, 0)
   assert.equal(card.counts.reviewed, 3)
 
+  // 7b. Unclassified bucket (both unlinked tickets and tickets whose primary
+  // topic was merged away) can be reviewed via unclassified:<groupKey>.
+  const mergedSource = store.addTopic({ title: 'Merged Old Topic' })
+  const tUnlinked = store.addTicket({ goal: 'Unlinked completed task', status: 'open' })
+  store.transitionTicket(tUnlinked.ticketId, 'done', { resolution: { summary: 'unlinked done' } })
+  const tMerged = store.addTicket({ goal: 'Merged-topic completed task', status: 'open' })
+  store.transitionTicket(tMerged.ticketId, 'done', { resolution: { summary: 'merged done' } })
+  store.linkTicket(mergedSource.topicId, tMerged.ticketId, 'primary')
+  // Simulate a stale/dangling link to a merged topic (e.g., from legacy data).
+  fixture.service.store.runtime.db.prepare('UPDATE topics SET merged_into = ? WHERE id = ?').run(topic.topicId, mergedSource.topicId)
+  store.data.topics.find(t => t.topicId === mergedSource.topicId).mergedInto = topic.topicId
+
+  board = await get('/board?limit=200')
+  const unclassifiedCard = board.body.projects
+    .flatMap(p => p.topics)
+    .find(t => t.unclassified && String(t.topicId || '').startsWith('unclassified:'))
+  assert.ok(unclassifiedCard, 'unclassified card exists on board')
+  assert.equal(unclassifiedCard.counts.unreviewed, 2, 'both unlinked and merged-primary tickets appear in unclassified')
+
+  const topicModalUnclassified = await get('/board/topic?topicId=' + encodeURIComponent(unclassifiedCard.topicId))
+  assert.equal(topicModalUnclassified.status, 200)
+  assert.equal(topicModalUnclassified.body.counts.unreviewed, 2, 'boardTopic matches boardData for unclassified bucket')
+
+  const reviewUnclassified = await post('/tickets/review', { topicId: unclassifiedCard.topicId, reviewed: true })
+  assert.equal(reviewUnclassified.status, 200, JSON.stringify(reviewUnclassified.body))
+  assert.equal(reviewUnclassified.body.count, 2, 'review-all on unclassified bucket marks all unclassified tickets')
+
+  board = await get('/board?limit=200')
+  const unclassifiedAfter = board.body.projects
+    .flatMap(p => p.topics)
+    .find(t => t.topicId === unclassifiedCard.topicId)
+  assert.equal(unclassifiedAfter.counts.unreviewed, 0)
+  assert.equal(unclassifiedAfter.counts.reviewed, 2)
+
   // 8. Client markers for review UI, topic modal filters, and SayDialog clipboard paste.
   const client = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
   assert.match(client, /data-ria-topic-review-all/)

@@ -95,7 +95,7 @@ assert.equal(edge.recentCount, 1)
 
 const client = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
 assert.match(client, /function renderTopicGroup/)
-assert.match(client, /renderTopicGroup\(\{ key: "done"/)
+assert.match(client, /renderTopicGroup\(\{ key: "unreviewed"/)
 assert.match(client, /items: completedShown/)
 assert.doesNotMatch(client, /cards\(completedShown\)/)
 assert.match(client, /ellipsisRow\(omitted, opts\.count\)/)
@@ -126,10 +126,10 @@ const legacyTickets = [
   { ticketId: 'ticket-old', status: 'done', closedAt: now - 30 * hour, createdAt: now - 31 * hour },
 ]
 const legacy = layout.topicTicketLayout(legacyTickets)
-const legacyFinished = legacy.groups.find(group => group.key === 'finished')
-assert.equal(legacyFinished.tickets.length, 5, 'detail shows every completed ticket, including the 30h one')
-assert.equal(legacyFinished.label, '已完成与已结束')
-assert.equal(legacyFinished.countText, undefined)
+const legacyUnreviewed = legacy.groups.find(group => group.key === 'unreviewed')
+assert.equal(legacyUnreviewed.tickets.length, 5, 'detail shows every unreviewed completed ticket, including the 30h one')
+assert.equal(legacyUnreviewed.label, '待阅')
+assert.equal(legacyUnreviewed.countText, undefined)
 
 const empty = layout.topicTicketLayout([])
 assert.equal(empty.groups.length, 0, 'empty topic has no completed section in the original detail behavior')

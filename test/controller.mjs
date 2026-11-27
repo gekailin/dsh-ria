@@ -330,7 +330,7 @@ try {
   const closed = fixture.service.store.ticket(created.ticketId)
   assert.equal(closed.status, 'done')
   assert.equal(closed.resolution.summary, 'summary written')
-  assert.ok(fixture.prompts.some(item => item.sessionId === chat && item.content[0].text.includes('#' + created.ticketId.slice(-6) + ' done ·')))
+  assert.ok(fixture.prompts.some(item => item.sessionId === chat && item.content[0].text.includes('#' + created.ticketId.slice(-6) + '（' + created.ticketId + '） done ·')))
   const afterDoneGrants = await fixture.callAs(chat, 'ria_chat_grant', { action: 'list' })
   assert.deepEqual(afterDoneGrants.grants, [])
 

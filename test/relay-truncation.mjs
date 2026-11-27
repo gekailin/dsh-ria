@@ -10,7 +10,7 @@ const long = '长'.repeat(3000)
 const longOut = formatRelayBody(long, 400, { ticketId: 'ticket_abc123' })
 assert.ok([...longOut].length <= 400, 'long relay must be <=400 chars')
 assert.ok(longOut.startsWith('长'.repeat(300)), 'long relay keeps 300-char head')
-assert.ok(longOut.includes('完整内容见工单 #abc123'))
+assert.ok(longOut.includes('完整内容见工单 ticket_abc123'), 'the folded hint carries the complete ticket id')
 assert.equal(longOut.includes('完整内容可 ria_chat_read'), false)
 
 const report = '## 状态：done\n\n' + '正文'.repeat(1000) + '\n\n证据：artifact.md\n\n第三段'
@@ -18,7 +18,7 @@ assert.equal(isReportLike(report), true)
 const reportOut = formatRelayBody(report, 400, { ticketId: 'ticket_abc123' })
 assert.ok(reportOut.includes('## 状态：done'))
 assert.ok(reportOut.includes('报告较长，已折叠'))
-assert.ok(reportOut.includes('完整内容见工单 #abc123'))
+assert.ok(reportOut.includes('完整内容见工单 ticket_abc123'))
 assert.equal(reportOut.includes('证据：artifact.md'), false)
 assert.equal(reportOut.includes('第三段'), false)
 
@@ -28,7 +28,7 @@ const noTicket = formatRelayBody(long, 400)
 assert.ok(noTicket.includes('完整内容已记入会话记录'))
 
 const status = formatStatusNotice({ ticketId: 'ticket_abc123', status: 'done', summary: long })
-assert.ok(status.text.startsWith('#abc123 done · '))
+assert.ok(status.text.startsWith('#abc123（ticket_abc123） done · '))
 assert.ok([...status.text].length <= 120)
 assert.equal(status.text.includes('长'.repeat(300)), false)
 
@@ -47,7 +47,7 @@ try {
   assert.ok(relayed.text.includes('完整内容已记入会话记录'))
   assert.equal(relayed.fullBody, long, 'full body remains in relay log/session record')
   const managed = await controller.notifyTicketStatus('ticket_abc123', 'done', long)
-  assert.ok(managed.text.startsWith('#abc123 done · '))
+  assert.ok(managed.text.startsWith('#abc123（ticket_abc123） done · '))
   assert.ok([...managed.text].length <= 120)
   assert.equal(managed.text.includes('长'.repeat(300)), false)
 

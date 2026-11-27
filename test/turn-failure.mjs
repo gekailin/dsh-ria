@@ -48,7 +48,7 @@ const noticesAbout = (fixture, chat) => fixture.prompts
   .filter(prompt => {
     if (String(prompt.sessionId) !== chat) return false
     const body = promptText(prompt)
-    return body.includes('需要你决定') || /#[0-9a-f]{6} failed ·/.test(body)
+    return body.includes('需要你决定') || /#[0-9a-f]{6}（ticket_[^）]+） failed ·/.test(body)
   })
 
 // 1. reason.kind=error -> failed with the raw error text, executor released,

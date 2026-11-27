@@ -23,7 +23,10 @@ try {
   assert.equal(chatNotices.length, 1, JSON.stringify(chatNotices))
   assert.equal(clawNotices.length, 1)
   assert.match(chatNotices[0], /^🔔 #工单 需要你决定：/)
-  assert.ok(chatNotices[0].length <= '🔔 #工单 需要你决定：'.length + 40)
+  // The notice carries the complete ticket id (reference + separator) and the
+  // question is clipped to 40 chars.
+  assert.ok(chatNotices[0].includes(ticket.ticketId), 'the decision notice names the complete ticket id')
+  assert.ok(chatNotices[0].length <= '🔔 #工单 需要你决定：'.length + ticket.ticketId.length + 16 + 40)
   assert.equal(chatNotices[0].includes('需要你拍板'), true)
 
   // Same blocked state re-reported ten times is not a transition edge: it must

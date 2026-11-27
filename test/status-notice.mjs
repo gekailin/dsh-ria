@@ -16,10 +16,11 @@ import { Outbound } from '../lib/wechat/outbound.mjs'
     goal: 'this goal must not leak',
     evidence: ['secret.md'],
   })
-  assert.equal(done.ticketId, '123456')
+  assert.equal(done.ticketId, 'ticket_abcdef123456', 'the notice carries the complete id')
+  assert.equal(done.ref, '#123456（ticket_abcdef123456）')
   assert.equal(done.status, 'done')
   assert.ok(done.summary.length <= 30)
-  assert.match(done.text, /^#123456 done · /)
+  assert.match(done.text, /^#123456（ticket_abcdef123456） done · /)
   assert.ok(done.text.length <= STATUS_NOTICE_MAX_CHARS)
   assert.equal(done.text.includes('第二句'), false)
   assert.equal(done.text.includes('secret.md'), false)
@@ -52,7 +53,7 @@ import { Outbound } from '../lib/wechat/outbound.mjs'
     reason: '确认是否允许重启。证据不应出现',
     evidence: ['secret'],
   })
-  assert.equal(blocked.ticketId, '654321')
+  assert.equal(blocked.ticketId, 'ticket_abcdef654321')
   assert.equal(blocked.status, 'blocked')
   assert.equal(blocked.waitingOn, 'user')
   assert.equal(blocked.text.split('\n').length, 2)
@@ -211,7 +212,7 @@ import { Outbound } from '../lib/wechat/outbound.mjs'
     await controller.notifyTicketStatus(ticket.ticketId, 'working', '做到一半。证据: secret')
     await new Promise(resolve => setTimeout(resolve, 20))
     const text = sent.at(-1)
-    assert.ok(text.startsWith('🔔 #' + ticket.ticketId.slice(-6) + ' working · '))
+    assert.ok(text.startsWith('🔔 #' + ticket.ticketId.slice(-6) + '（' + ticket.ticketId + '） working · '))
     assert.equal(text.includes('完整正文'), false)
     assert.equal(text.includes('secret'), false)
     assert.ok(text.length <= STATUS_NOTICE_MAX_CHARS)
@@ -243,7 +244,7 @@ import { Outbound } from '../lib/wechat/outbound.mjs'
     await controller.sendWatchRelay({ sessionId: id, titleSnapshot: 'CM Done', watchId: 'watch-done' }, '完整正文\n证据: secret\n代码块', {})
     await new Promise(resolve => setTimeout(resolve, 20))
     assert.ok(chat.some(text => text.includes('完整正文')), 'ticket-free reply body is relayed')
-    assert.equal(chat.some(text => text.startsWith('🔔 #' + ticket.ticketId.slice(-6) + ' done · ')), false, 'historical done ticket is not re-notified')
+    assert.equal(chat.some(text => text.startsWith('🔔 #' + ticket.ticketId.slice(-6) + '（' + ticket.ticketId + '） done · ')), false, 'historical done ticket is not re-notified')
     const blocked = fixture.service.store.addTicket({
       status: 'blocked', executor: id, waitingOn: 'user',
       blockedReason: '需要用户决定下一步怎么办', goal: 'blocked work',
@@ -255,7 +256,7 @@ import { Outbound } from '../lib/wechat/outbound.mjs'
     await controller.sendWatchRelay({ sessionId: id, titleSnapshot: 'CM Done', watchId: 'watch-blocked' }, '完整正文', {})
     await new Promise(resolve => setTimeout(resolve, 20))
     assert.ok(chat.some(text => text.includes('完整正文')), 'ticket-free blocked reply body is relayed')
-    assert.equal(chat.some(text => text.startsWith('🔔 #' + blocked.ticketId.slice(-6) + ' blocked · ')), false, 'historical blocked ticket is not re-notified')
+    assert.equal(chat.some(text => text.startsWith('🔔 #' + blocked.ticketId.slice(-6) + '（' + blocked.ticketId + '） blocked · ')), false, 'historical blocked ticket is not re-notified')
   } finally { fixture.cleanup() }
 }
 
